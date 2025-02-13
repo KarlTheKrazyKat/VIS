@@ -17,7 +17,7 @@ y = (hs/2) - (h/2)
 root.geometry('%dx%d+%d+%d' % (w, h, x, y))
 root.title("Placeholder Title")
 root.minsize(1080,720)
-#root.iconbitmap("L:/WOM/PYWOM/Images/Icons/<some_icon>")
+#root.iconbitmap("<project>/Images/Icons/<some_icon>")
 
 #Screen Elements
 

@@ -37,6 +37,12 @@ match inp[1]:
     case "add" | "Add" | "a" | "A":
         match inp[2]:
             case "screen" | "Screen" | "s" | "S":
+
+                screen = inp[3]
+                print("elements container ",screen," exists") if os.path.exists(wd+"/Screens/"+screen) else os.mkdir(wd+"/Screens/"+screen)
+                print("module ",screen," exists") if os.path.exists(wd+"/modules/"+screen) else os.mkdir(wd+"/modules/"+screen)
+                print("Screen ",screen," exists") if os.path.exists(wd+screen+".py") else shutil.copyfile(wd+"/Templates/screen.txt",wd+"/"+screen+".py") 
+                
                 if len(inp) >= 5:
                     match inp[4]:
                         case "menu" | "Menu" | "m" | "M":
