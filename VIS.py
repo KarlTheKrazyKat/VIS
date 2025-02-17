@@ -6,11 +6,11 @@ import shutil
 
 #Need to get current python location where VIS is installed
 vl = subprocess.check_output('python -c "import os, sys; print(os.path.dirname(sys.executable))"').decode().strip("\r\n")+"\\"
-print(vl)
+#print(vl)
 
 
 inp = sys.argv
-print("entered ",inp[1]," as ",inp)
+#print("entered ",inp[1]," as ",inp)
 wd = os.getcwd()
 
 #Copied from source
