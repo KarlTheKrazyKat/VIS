@@ -10,7 +10,7 @@ print(vl)
 
 
 inp = sys.argv
-print(inp[1])
+print("entered ",inp[1]," as ",inp)
 wd = os.getcwd()
 
 #Copied from source
@@ -48,10 +48,11 @@ match inp[1]:
                         case "menu" | "Menu" | "m" | "M":
                             print("Add screen menu")
                         case "elements" | "Elements" | "e" | "E":
-                            print("Add screen elements")
+                            subprocess.call("python " + vl.replace("\\","/")+"Lib/site-packages/VIS/VIS/elements.py "+ wd + " "+ screen + " " + inp[5])
                 else:
                     print("Add Screen")
     case "patch" | "Patch" | "p" | "P":
-        print("patch")
+        subprocess.call("python " + vl.replace("\\","/")+"Lib/site-packages/VIS/VIS/patch.py " + inp[2].replace("\\","/")+"/Screens/"+inp[3]+"/"+inp[4]+".py")
     case "stitch" | "Stitch" | "s" | "S":
-        print("stitch")
+        print("python " + vl.replace("\\","/")+"Lib/site-packages/VIS/VIS/stitch.py "+ inp[2] + " " +inp[3])
+        subprocess.call("python "  + vl.replace("\\","/")+"Lib/site-packages/VIS/VIS/stitch.py "+ inp[2] + " " +inp[3])
