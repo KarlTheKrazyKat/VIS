@@ -54,5 +54,4 @@ match inp[1]:
     case "patch" | "Patch" | "p" | "P":
         subprocess.call("python " + vl.replace("\\","/")+"Lib/site-packages/VIS/VIS/patch.py " + inp[2].replace("\\","/")+"/Screens/"+inp[3]+"/"+inp[4]+".py")
     case "stitch" | "Stitch" | "s" | "S":
-        print("python " + vl.replace("\\","/")+"Lib/site-packages/VIS/VIS/stitch.py "+ inp[2] + " " +inp[3])
         subprocess.call("python "  + vl.replace("\\","/")+"Lib/site-packages/VIS/VIS/stitch.py "+ inp[2] + " " +inp[3])
