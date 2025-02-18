@@ -1,9 +1,10 @@
 import sys
 import re
 import glob
+import project as vp
 
-project = sys.argv[1].replace("\\","/")
-screen = sys.argv[2]
+project = vp.getPath()
+screen = sys.argv[1]
 with open(project+"/"+screen+".py","r") as f:
     text = f.read()
 
@@ -23,6 +24,7 @@ pattern = r"#Screen Modules.*#Handle Arguments"
 replacement = glob.glob(project+"/modules/"+screen+'/m_*')
 for i in range(0,len(replacement),1):
     replacement[i] = replacement[i].replace("\\","/")
+    print("stitching\t",replacement[i].strip(project),"\tto\t",screen)
     replacement[i] = replacement[i].replace(project+"/modules/"+screen+"/","modules."+screen+".")[:-3]
 #print(replacement)
 replacement = "from " + " import *\nfrom ".join(replacement) + " import *\n"
@@ -32,3 +34,4 @@ text = re.sub(pattern, "#Screen Modules\n" + replacement + "\n#Handle Arguments"
 
 with open(project+"/"+screen+".py","w") as f:
     f.write(text)
+    print("stitched\t",screen,"\twith\tall")

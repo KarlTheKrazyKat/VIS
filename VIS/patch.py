@@ -8,3 +8,4 @@ with open(file,"r") as f:
 text = text.replace("<frame>","f_"+frame)
 with open(file,"w") as f:
     f.write(text)
+    print("patched\t",frame)
