@@ -12,7 +12,7 @@ vl = subprocess.check_output('python -c "import os, sys; print(os.path.dirname(s
 
 inp = sys.argv
 #print("entered ",inp[1]," as ",inp)
-wd = vp.getPath()
+(wd := os.getcwd()) if inp[1] in ["new","New","N","n"] else (wd := vp.getPath())
 
 #Copied from source
 #https://stackoverflow.com/a/75246706
@@ -41,8 +41,8 @@ match inp[1]:
             case "screen" | "Screen" | "s" | "S":
 
                 screen = inp[3]
-                print("Screens/"+screen,"\t exists") if os.path.exists(wd+"/Screens/"+screen) else os.mkdir(wd+"/Screens/"+screen)
-                print("modules/"+screen,"\t exists") if os.path.exists(wd+"/modules/"+screen) else os.mkdir(wd+"/modules/"+screen)
+                print("Screens/"+screen+"\t exists") if os.path.exists(wd+"/Screens/"+screen) else os.mkdir(wd+"/Screens/"+screen)
+                print("modules/"+screen+"\t exists") if os.path.exists(wd+"/modules/"+screen) else os.mkdir(wd+"/modules/"+screen)
                 print(screen+".py\t\t exists") if os.path.exists(wd+screen+".py") else shutil.copyfile(wd+"/Templates/screen.txt",wd+"/"+screen+".py") 
                 
                 if len(inp) >= 5:
@@ -50,13 +50,13 @@ match inp[1]:
                         case "menu" | "Menu" | "m" | "M":
                             print("Add screen menu")
                         case "elements" | "Elements" | "e" | "E":
-                            subprocess.call("python " + vl.replace("\\","/")+"VIS/elements.py "+ screen + " " + inp[5])
+                            subprocess.call("python " + vl.replace("\\","/")+"/elements.py "+ screen + " " + inp[5])
                 else:
                     print("Add Screen")
     case "patch" | "Patch" | "p" | "P":
-        subprocess.call("python " + vl.replace("\\","/")+"VIS/patch.py " + wd+"/Screens/"+inp[2]+"/"+inp[3]+".py")
+        subprocess.call("python " + vl.replace("\\","/")+"/patch.py " + inp[2])
     case "stitch" | "Stitch" | "s" | "S":
-        subprocess.call("python " + vl.replace("\\","/")+"VIS/stitch.py "+ inp[2])
+        subprocess.call("python " + vl.replace("\\","/")+"/stitch.py "+ inp[2])
 
 #pyinstaller --onefile VIS.py
 #python cleanup.py
