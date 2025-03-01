@@ -6,7 +6,7 @@ import shutil
 import VIS.project as vp
 
 #Need to get current python location where VIS is installed
-vl = subprocess.check_output('python -c "import os, sys; print(os.path.dirname(sys.executable))"').decode().strip("\r\n")+"\\Lib\\site-packages\\VIS\\"
+vl = subprocess.check_output('python -c "import os, sys; print(os.path.dirname(sys.executable))"').decode().strip("\r\n")+"\\Lib\\site-packages\\VIS\\VIS\\"
 #print(vl)
 
 
