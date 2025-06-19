@@ -3,7 +3,7 @@ from tkinter import *
 from tkinter import ttk
 import subprocess
 import sys
-from pywomlib.pywomlib import paths
+import os
 
 if str.upper(sys.platform)=="WIN32":
     cfp = 'win'
@@ -16,7 +16,7 @@ class Item(Menu):
     def __init__(self,root,_root,path,nav,*args,**kwargs):
         self.button = ttk.Button(root, *args, **kwargs)
         self.root = root
-        self.path = paths[cfp]["wom"]+path
+        self.path = path
         self._root = _root
         self.nav = nav
         self.button.config(command = self.itemPath)
@@ -24,11 +24,11 @@ class Item(Menu):
 
     def itemPath(self):
         self.root.destroy()
-        self._root.destroy()
         if ".exe" in self.path:
-            subprocess.call("start "+self.path)
+            os.startfile(self.path)
         else:
             subprocess.call("pythonw.exe "+self.path)
+        self._root.destroy()
             
     
 

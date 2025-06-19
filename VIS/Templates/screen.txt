@@ -36,5 +36,6 @@ def loop():
 
 #Update Loop
 while root.winfo_exists:
-    loop()
+    try:loop()
+    except:pass
     root.update()
