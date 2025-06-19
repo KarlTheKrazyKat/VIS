@@ -25,7 +25,10 @@ class Item(Menu):
     def itemPath(self):
         self.root.destroy()
         self._root.destroy()
-        subprocess.call("pythonw.exe "+self.path)
+        if ".exe" in self.path:
+            subprocess.call("start "+self.path)
+        else:
+            subprocess.call("pythonw.exe "+self.path)
             
     
 
