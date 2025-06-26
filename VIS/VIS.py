@@ -4,6 +4,7 @@ import zipfile
 import subprocess
 import shutil
 import VIS.project as vp
+from importlib import metadata
 
 #Need to get current python location where VIS is installed
 vl = subprocess.check_output('python -c "import os, sys; print(os.path.dirname(sys.executable))"').decode().strip("\r\n")+"\\Lib\\site-packages\\VIS\\VIS\\"
@@ -11,7 +12,11 @@ vl = subprocess.check_output('python -c "import os, sys; print(os.path.dirname(s
 
 inp = sys.argv
 #print("entered ",inp[1]," as ",inp)
-(wd := os.getcwd()) if inp[1] in ["new","New","N","n"] else (wd := vp.getPath())
+try:
+    (wd := os.getcwd()) if inp[1] in ["new","New","N","n"] else (wd := vp.getPath())
+except:
+    print(f"VIS running version {metadata.version("VIS")}")
+    sys.exit()
 
 #Copied from source
 #https://stackoverflow.com/a/75246706
@@ -21,6 +26,7 @@ def unzip_without_overwrite(src_path, dst_dir):
             file_path = os.path.join(dst_dir, member.filename)
             if not os.path.exists(file_path):
                 zf.extract(member, dst_dir)
+
 
 match inp[1]:
     case "new"|"New"|"N"|"n":#Create a new VIS project

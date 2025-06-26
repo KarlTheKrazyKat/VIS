@@ -5,7 +5,6 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "VIS"
 version = "0.3.0"
-url="https://github.com/KarlTheKrazyKat/VIS"
 dependencies = ["tk"]
 description = "Visual Interfacing Structure for tkinter"
 requires-python = ">=3.13"
@@ -15,7 +14,6 @@ authors = [
 maintainers = [
   {name = "Elijah Love", email = "elijah2005l@gmail.com"},
 ]
-description = "A python library to build apps with a GUI"
 readme = "README.md"
 keywords = ["python","gui"]
 classifiers = [
@@ -28,6 +26,8 @@ Documentation = "https://google.com"
 Repository = "https://google.com"
 "Bug Tracker" = "https://google.com"
 Changelog = "https://google.com"
+[project.scripts]
+VIS = "VIS.VIS.py:__main__"
 [tool.setuptools]
 packages = ["VIS"]
 ext-modules = []
