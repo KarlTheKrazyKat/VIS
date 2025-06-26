@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools","setuptools-scm"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "VIS"
+version = "0.3.0"
+url="https://github.com/KarlTheKrazyKat/VIS"
+dependencies = ["tk"]
+description = "Visual Interfacing Structure for tkinter"
+requires-python = ">=3.13"
+authors = [
+  {name = "Elijah Love", email = "elijah2005l@gmail.com"},
+]
+maintainers = [
+  {name = "Elijah Love", email = "elijah2005l@gmail.com"},
+]
+description = "A python library to build apps with a GUI"
+readme = "README.md"
+keywords = ["python","gui"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Programming Language :: Python"
+]
+[project.urls]
+Homepage = "https://google.com"
+Documentation = "https://google.com"
+Repository = "https://google.com"
+"Bug Tracker" = "https://google.com"
+Changelog = "https://google.com"
+[tool.setuptools]
+packages = ["VIS"]
+ext-modules = []

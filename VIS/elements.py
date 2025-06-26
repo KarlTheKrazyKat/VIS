@@ -2,7 +2,7 @@ import sys
 import shutil
 import os
 import subprocess
-import project as vp
+import VIS.project as vp
 
 screen = sys.argv[1]
 elements = sys.argv[2]
