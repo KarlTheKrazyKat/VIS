@@ -1,20 +1,16 @@
 import os
-
 def getPath():
-
-    Project=False
+    """Searches for .VIS folder and returns from path.cfg
+    """
     sto = 0
-    while Project==False:
-        step=""
-        for i in range(0,sto,1):
-            step = "../" + step
-        #print(step+".VIS/")
-        if os.path.exists(step+".VIS/"):
-            #print("found project at ", step+".VIS/")
-            project = open(step+".VIS/path.cfg","r").read().replace("\\","/")
-            #print(project)
-            Project = True
-        else:
-            sto += 1
-
-    return project
+    while True:
+        try:
+            step=""
+            for i in range(0,sto,1): #iterate on sto to step backwards and search for project info
+                step = "../" + step
+            if os.path.exists(step+".VIS/"):
+                return open(step+".VIS/path.cfg","r").read().replace("\\","/") #return stored path
+            else:
+                sto += 1
+        except:
+            return None #if failed return none

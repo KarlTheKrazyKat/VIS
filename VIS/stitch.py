@@ -1,7 +1,7 @@
 import sys
 import re
 import glob
-import project as vp
+import VIS.project as vp
 
 project = vp.getPath()
 screen = sys.argv[1]

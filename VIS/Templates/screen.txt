@@ -35,7 +35,11 @@ def loop():
     1+1
 
 #Update Loop
-while root.winfo_exists:
-    try:loop()
-    except:pass
-    root.update()
+while True: 
+    try:
+        if root.winfo_exists():
+            try:loop()
+            except:pass
+            root.update()
+    except:
+        break
