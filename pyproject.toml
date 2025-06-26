@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "VIS"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = ["tk"]
 description = "Visual Interfacing Structure for tkinter"
 requires-python = ">=3.13"
@@ -27,7 +27,7 @@ Repository = "https://google.com"
 "Bug Tracker" = "https://google.com"
 Changelog = "https://google.com"
 [project.scripts]
-VIS = "VIS.VIS.py:__main__"
+VIS = "VIS.VIS:__main__"
 [tool.setuptools]
 packages = ["VIS"]
 ext-modules = []
