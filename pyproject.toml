@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "VIS"
 version = "0.3.3"
 dependencies = ["tk"]
-description = "Visual Interfacing Structure for tkinter"
+description = "Visual Interfacing Structure for python using tkinter"
 requires-python = ">=3.13"
 authors = [
   {name = "Elijah Love", email = "elijah2005l@gmail.com"},
@@ -21,11 +21,11 @@ classifiers = [
   "Programming Language :: Python"
 ]
 [project.urls]
-Homepage = "https://google.com"
-Documentation = "https://google.com"
-Repository = "https://google.com"
-"Bug Tracker" = "https://google.com"
-Changelog = "https://google.com"
+Homepage = "https://github.com/KarlTheKrazyKat/VIS/blob/master/README.md"
+Documentation = "https://github.com/KarlTheKrazyKat/VIS/blob/master/documentation.md"
+Repository = "https://github.com/KarlTheKrazyKat/VIS/"
+"Bug Tracker" = "https://github.com/KarlTheKrazyKat/VIS/blob/master/knownissues.md"
+Changelog = "https://github.com/KarlTheKrazyKat/VIS/blob/master/changelog.md"
 [project.scripts]
 VIS = "VIS.VIS:__main__"
 [tool.setuptools]

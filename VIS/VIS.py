@@ -71,9 +71,10 @@ def __main__():
                                 info[name]["Screens"][sc_name]["release"] = "FALSE"
                         ictf =input("What is the icon for this screen (or none)?: ")
                         if ".ICO" in ictf.upper():
-                            info[name]["Screens"][sc_name]["icon"] = ictf
+                            info[name]["Screens"][sc_name]["icon"] = ictf.strip(".ico")
                         with open(wd+"/.VIS/project.json","w") as f:
                             json.dump(info,f,indent=4)
+                    #somewhere in this process we can attempt to replace "Placeholder Title" and the root.iconbitmap
                         
 
                     if len(inp) >= 5:

@@ -1,8 +1,0 @@
-0.3.1
-Added release command to release version of project
-
-0.3.2
-Using internal project.json to build spec file to create release
-
-0.3.3
-Adding a screen will add it to the json via a series of prompts
