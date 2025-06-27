@@ -2,15 +2,18 @@ import sys
 from project import *
 import subprocess
 import json
+import shutil
 
 root = getPath()
+info = {}
+with open(root+"/.VIS/project.json","r") as f:
+    info = json.load(f)
+name = list(info.keys())[0]
 
 def build(version:str=""):
     """Build project spec file with specific version
     """
-    info = {}
-    with open(root+"/.VIS/project.json","r") as f:
-        info = json.load(f)
+    
     with open(root+"/.VIS/Templates/spec.txt","r") as f:
         spec = f.read()
     with open(root+"/.VIS/Templates/collect.txt","r") as f:
@@ -18,7 +21,7 @@ def build(version:str=""):
     
     spec_list = []
     name_list = []
-    name = list(info.keys())[0]
+    
     for i in info[name]["Screens"].keys():
         if info[name]["Screens"][i]["release"] == "TRUE":
             name_list.append(i)
@@ -47,22 +50,32 @@ def build(version:str=""):
         f.writelines(spec_list)
         f.write(collect)
 
+def clean(version:str=""):
+    try:
+        shutil.rmtree(root+"/.VIS/build/")
+        print(f"\n\nReleased new{version}build of {name}!")
+    except:pass
+
 version = sys.argv[1]
 match version:
     case "a":
         build("alpha")
         subprocess.call("pyinstaller project.spec --noconfirm --distpath "+root+"/dist/")
+        clean(" alpha ")
     case "b":
         build("beta")
         subprocess.call("pyinstaller project.spec --noconfirm --distpath "+root+"/dist/")
+        clean(" beta ")
     case "c":
         build()
         subprocess.call("pyinstaller project.spec --noconfirm --distpath "+root+"/dist/")
+        clean()
     case _:
         inp = input(f"Release Project Version {version}?")
         match inp:
             case "y" | "Y" | "yes" | "Yes":
                 build(version)
                 subprocess.call("pyinstaller project.spec --noconfirm --distpath "+root+"/dist/")
+                clean(f" {version} ")
             case _:
                 print(f"Could not release Project Version {version}")
