@@ -1,2 +1,5 @@
 0.3.1
 Added release command to release version of project
+
+0.3.2
+Using internal project.json to build spec file to create release

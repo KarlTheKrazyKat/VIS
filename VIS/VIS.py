@@ -40,6 +40,9 @@ def __main__():
                 title = input("Enter a name for the VIS project:")
                 info = {}
                 info[title] = {}
+                info[title]["Screens"]={}
+                info[title]["defaults"]={}
+                info[title]["defaults"]["icon"]="VIS"#default icon
                 os.mkdir(wd+"\\.VIS\\project.json")
                 with open(wd+"/.VIS/project.json","w") as f:
                     json.dump(info,f,indent=4)

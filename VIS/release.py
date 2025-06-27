@@ -4,42 +4,65 @@ import subprocess
 import json
 
 root = getPath()
-print(root)
 
-def setVersion(vers:str=""):
-    """Sets name in project.spec
+def build(version:str=""):
+    """Build project spec file with specific version
     """
-    spec = ""
-    with open(root+"/.VIS/project.spec","r") as f:
+    info = {}
+    with open(root+"/.VIS/project.json","r") as f:
+        info = json.load(f)
+    with open(root+"/.VIS/Templates/spec.txt","r") as f:
         spec = f.read()
-    setup = spec.split("COLLECT")[0]
-    collect = spec.split("COLLECT")[1]
-    name = collect.split("name=")[1]
-    collect = collect.split("name=")[0]
-    with open(root+"/.VIS/project.json","r") as p: #get project name from json file
-        info = json.load(p)
-        name = f"name='{list(info.keys())[0]+vers}')"#
-    collect = collect + name
-    spec = setup + "COLLECT" + collect
+    with open(root+"/.VIS/Templates/collect.txt","r") as f:
+        collect = f.read()
+    
+    spec_list = []
+    name_list = []
+    name = list(info.keys())[0]
+    for i in info[name]["Screens"].keys():
+        if info[name]["Screens"][i]["release"] == "TRUE":
+            name_list.append(i)
+            file = info[name]["Screens"][i]["script"]
+            #icon = "du"
+            if not info[name]["Screens"][i].get("icon") == None:
+                icon = info[name]["Screens"][i]["icon"]
+            else:
+                icon = info[name]["defaults"]["icon"]#should probably package VIS with a default icon?
+            spec_list.append(spec.replace("$name$",i))
+            spec_list[len(spec_list)-1] = spec_list[len(spec_list)-1].replace("$icon$",icon)
+            spec_list[len(spec_list)-1] = spec_list[len(spec_list)-1].replace("$file$",file)
+            spec_list.append("\n\n")
+
+    insert = ""
+    for i in name_list:
+        insert=insert+"\n\t"+i+"_exe,\n\t"+i+"_a.binaries,\n\t"+i+"_a.zipfiles,\n\t"+i+"_a.datas,"
+    collect = collect.replace("$insert$",insert)
+    collect = collect.replace("$version$",name+"-"+version) if not version == "" else collect.replace("$version$",name)
+    
+    header = "# -*- mode: python ; coding: utf-8 -*-\n\n\n"
+
     with open(root+"/.VIS/project.spec","w") as f:
-        f.write(spec)
+        f.write(header)
+    with open(root+"/.VIS/project.spec","a") as f:
+        f.writelines(spec_list)
+        f.write(collect)
 
 version = sys.argv[1]
 match version:
     case "a":
-        setVersion("-alpha")
+        build("alpha")
         subprocess.call("pyinstaller project.spec --noconfirm --distpath "+root+"/dist/")
     case "b":
-        setVersion("-beta")
+        build("beta")
         subprocess.call("pyinstaller project.spec --noconfirm --distpath "+root+"/dist/")
     case "c":
-        setVersion()
+        build()
         subprocess.call("pyinstaller project.spec --noconfirm --distpath "+root+"/dist/")
     case _:
         inp = input(f"Release Project Version {version}?")
         match inp:
             case "y" | "Y" | "yes" | "Yes":
-                setVersion("-"+version)
+                build(version)
                 subprocess.call("pyinstaller project.spec --noconfirm --distpath "+root+"/dist/")
             case _:
                 print(f"Could not release Project Version {version}")
