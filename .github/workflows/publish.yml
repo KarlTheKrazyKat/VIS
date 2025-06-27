@@ -1,4 +1,4 @@
-name: Publish to PyPI and TestPyPI
+name: Publish to PyPI
 
 on: push
 
@@ -32,7 +32,7 @@ jobs:
   publish-to-pypi:
     name: >-
       Publish to PyPI
-    if: startsWith(github.ref, 'refs/tags/')  # only publish to PyPI on tag pushes
+    if: startsWith(github.ref, '0')  # only publish to PyPI on version number pushes
     needs:
     - build
     runs-on: ubuntu-latest
