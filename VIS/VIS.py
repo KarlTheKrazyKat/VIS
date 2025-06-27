@@ -52,11 +52,30 @@ def __main__():
         case "add" | "Add" | "a" | "A":
             match inp[2]:
                 case "screen" | "Screen" | "s" | "S":
-                    screen = inp[3]
+                    screen = inp[3] #File & directory creation for VIS structure
                     print("Screens/"+screen+"\t exists") if os.path.exists(wd+"/Screens/"+screen) else os.mkdir(wd+"/Screens/"+screen)
                     print("modules/"+screen+"\t exists") if os.path.exists(wd+"/modules/"+screen) else os.mkdir(wd+"/modules/"+screen)
                     print(screen+".py\t\t exists") if os.path.exists(wd+screen+".py") else shutil.copyfile(wd+"/.VIS/Templates/screen.txt",wd+"/"+screen+".py") 
                     
+                    with open(wd+"/.VIS/project.json","r") as f:
+                        info = json.load(f)
+                    name = list(info.keys())[0]
+                    if info[name]["Screens"].get(screen) == None:
+                        sc_name = input("What is the name of this screen?: ")
+                        info[name]["Screens"][sc_name] ={}
+                        info[name]["Screens"][sc_name]["script"] = screen+".py"
+                        match input("Should this screen have its own .exe?: "):
+                            case "Yes" | "yes" | "Y" | "y":
+                                info[name]["Screens"][sc_name]["release"] = "TRUE"
+                            case _:
+                                info[name]["Screens"][sc_name]["release"] = "FALSE"
+                        ictf =input("What is the icon for this screen (or none)?: ")
+                        if ".ICO" in ictf.upper():
+                            info[name]["Screens"][sc_name]["icon"] = ictf
+                        with open(wd+"/.VIS/project.json","w") as f:
+                            json.dump(info,f,indent=4)
+                        
+
                     if len(inp) >= 5:
                         match inp[4]:
                             case "menu" | "Menu" | "m" | "M":

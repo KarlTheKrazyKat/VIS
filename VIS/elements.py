@@ -12,7 +12,7 @@ project = vp.getPath()
     
 for e in elements:
     if not os.path.exists(project+"/Screens/"+screen+"/f_"+e+".py"):
-        shutil.copyfile(project+"/Templates/f_element.txt",project+"/Screens/"+screen+"/f_"+e+".py")
+        shutil.copyfile(project+"/.VIS/Templates/f_element.txt",project+"/Screens/"+screen+"/f_"+e+".py")
         print("element\tf_"+e+".py\tcreated in\tScreens/"+screen+"/")
         subprocess.call("VIS patch "+project+"/Screens/"+screen+"/"+e+".py")
 
@@ -21,7 +21,7 @@ for e in elements:
         print("module\tm_"+e+".py\tcreated in\tScreens/"+screen+"/")
 
     if not os.path.exists(project+"/"+screen+".py"):#cannot create elements without screen so will create screen if it doesnt exist
-        shutil.copyfile(project+"/Templates/screen.txt"+project+"/"+screen+".py")
+        shutil.copyfile(project+"/.VIS/Templates/screen.txt"+project+"/"+screen+".py")
         print("screen\t"+e+".py \tcreated in\troot")
 
 subprocess.call("VIS stitch "+screen)
