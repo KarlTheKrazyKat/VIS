@@ -5,6 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "VIS"
 version = "0.3.3"
+license = {file="LICENSE"}
 dependencies = ["tk"]
 description = "Visual Interfacing Structure for python using tkinter"
 requires-python = ">=3.13"
