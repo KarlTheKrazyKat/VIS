@@ -69,7 +69,7 @@ match version:
     case "c":
         build()
         subprocess.call("pyinstaller project.spec --noconfirm --distpath "+root+"/dist/")
-        clean()
+        clean(" ")
     case _:
         inp = input(f"Release Project Version {version}?")
         match inp:
