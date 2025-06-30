@@ -30,7 +30,7 @@ def build(version:str=""):
             if not info[name]["Screens"][i].get("icon") == None:
                 icon = info[name]["Screens"][i]["icon"]
             else:
-                icon = info[name]["defaults"]["icon"]#should probably package VIS with a default icon?
+                icon = info[name]["defaults"]["icon"]
             spec_list.append(spec.replace("$name$",i))
             spec_list[len(spec_list)-1] = spec_list[len(spec_list)-1].replace("$icon$",icon)
             spec_list[len(spec_list)-1] = spec_list[len(spec_list)-1].replace("$file$",file)
@@ -60,22 +60,22 @@ version = sys.argv[1]
 match version:
     case "a":
         build("alpha")
-        subprocess.call("pyinstaller project.spec --noconfirm --distpath "+root+"/dist/")
+        subprocess.call(f"pyinstaller {root}/.VIS/project.spec --noconfirm --distpath {root}/dist/")
         clean(" alpha ")
     case "b":
         build("beta")
-        subprocess.call("pyinstaller project.spec --noconfirm --distpath "+root+"/dist/")
+        subprocess.call(f"pyinstaller {root}/.VIS/project.spec --noconfirm --distpath {root}/dist/")
         clean(" beta ")
     case "c":
         build()
-        subprocess.call("pyinstaller project.spec --noconfirm --distpath "+root+"/dist/")
+        subprocess.call(f"pyinstaller {root}/.VIS/project.spec --noconfirm --distpath {root}/dist/")
         clean(" ")
     case _:
         inp = input(f"Release Project Version {version}?")
         match inp:
             case "y" | "Y" | "yes" | "Yes":
                 build(version)
-                subprocess.call("pyinstaller project.spec --noconfirm --distpath "+root+"/dist/")
+                subprocess.call(f"pyinstaller {root}/.VIS/project.spec --noconfirm --distpath {root}/dist/")
                 clean(f" {version} ")
             case _:
                 print(f"Could not release Project Version {version}")
