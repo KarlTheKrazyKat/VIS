@@ -3,7 +3,7 @@ requires = ["setuptools","setuptools-scm"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "VIS"
+name = "VIStk"
 version = "0.3.5"
 license = {file="LICENSE"}
 dependencies = ["tk"]
