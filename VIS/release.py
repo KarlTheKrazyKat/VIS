@@ -3,6 +3,7 @@ from project import *
 import subprocess
 import json
 import shutil
+from os.path import exists
 
 root = getPath()
 info = {}
@@ -51,10 +52,17 @@ def build(version:str=""):
         f.write(collect)
 
 def clean(version:str=""):
-    try:
-        shutil.rmtree(root+"/.VIS/build/")
-        print(f"\n\nReleased new{version}build of {name}!")
-    except:pass
+    if version == "":
+        if exists(f"{root}/dist/{name}/Icons/"): shutil.rmtree(f"{root}/dist/{name}/Icons/")
+        if exists(f"{root}/dist/{name}/Images/"): shutil.rmtree(f"{root}/dist/{name}/Images/")
+        shutil.copytree(root+"/Icons/",f"{root}/dist/{name}/Icons/",dirs_exist_ok=True)
+        shutil.copytree(root+"/Images/",f"{root}/dist/{name}/Images/",dirs_exist_ok=True)
+    else:
+        if exists(f"{root}/dist/{name}/Icons/"): shutil.rmtree(f"{root}/dist/{name}/Icons/")
+        if exists(f"{root}/dist/{name}/Images/"): shutil.rmtree(f"{root}/dist/{name}/Images/")
+        shutil.copytree(root+"/Icons/",f"{root}/dist/{name}-{version.strip(" ")}/Icons/",dirs_exist_ok=True)
+        shutil.copytree(root+"/Images/",f"{root}/dist/{name}-{version.strip(" ")}/Images/",dirs_exist_ok=True)
+    print(f"\n\nReleased new{version}build of {name}!")
 
 version = sys.argv[1]
 match version:
@@ -69,7 +77,7 @@ match version:
     case "c":
         build()
         subprocess.call(f"pyinstaller {root}/.VIS/project.spec --noconfirm --distpath {root}/dist/")
-        clean(" ")
+        clean()
     case _:
         inp = input(f"Release Project Version {version}?")
         match inp:
