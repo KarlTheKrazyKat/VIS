@@ -14,13 +14,17 @@
 
 - Adding a screen will add it to the json via a series of prompts
 
+0.3.4
+
+- Changed icons to relative path
+
+0.3.5:
+
+- Removed unecessary delete attempt that failed every time
+
 ## Upcoming
 
 ### Pre Official Release
-
-0.3.4:
-
-- Changed icons to relative path
 
 0.3.X:
 
