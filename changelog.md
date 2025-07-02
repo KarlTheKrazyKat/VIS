@@ -22,6 +22,10 @@
 
 - Removed unecessary delete attempt that failed every time
 
+0.3.6
+
+- Added ```VIS remove sync``` to sync alpha beta and current
+
 ## Upcoming
 
 ### Pre Official Release
@@ -31,6 +35,7 @@
 - Auto title screens on creation
 - Auto add icon to screen on creation
 - Edit screen settings
+- Some sort of version management with releases (beyond alpha/beta/current)
 
 0.4.X
 

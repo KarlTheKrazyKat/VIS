@@ -15,6 +15,8 @@ def build(version:str=""):
     """Build project spec file with specific version
     """
     
+    print(f"Creating project.spec for {name}")
+
     with open(root+"/.VIS/Templates/spec.txt","r") as f:
         spec = f.read()
     with open(root+"/.VIS/Templates/collect.txt","r") as f:
@@ -51,7 +53,12 @@ def build(version:str=""):
         f.writelines(spec_list)
         f.write(collect)
 
-def clean(version:str=""):
+    print(f"Setup project.spec for {name} {version if not version =="" else "current"}")#advanced version will improve this
+
+def clean(version:str=" "):
+    """Cleans up build environment to save space
+    """
+    print("Cleaning up build environment")
     if version == "":
         if exists(f"{root}/dist/{name}/Icons/"): shutil.rmtree(f"{root}/dist/{name}/Icons/")
         if exists(f"{root}/dist/{name}/Images/"): shutil.rmtree(f"{root}/dist/{name}/Images/")
@@ -68,22 +75,33 @@ version = sys.argv[1]
 match version:
     case "a":
         build("alpha")
-        subprocess.call(f"pyinstaller {root}/.VIS/project.spec --noconfirm --distpath {root}/dist/")
+        subprocess.call(f"pyinstaller {root}/.VIS/project.spec --noconfirm --distpath {root}/dist/ --log-level FATAL")
         clean(" alpha ")
     case "b":
         build("beta")
-        subprocess.call(f"pyinstaller {root}/.VIS/project.spec --noconfirm --distpath {root}/dist/")
+        subprocess.call(f"pyinstaller {root}/.VIS/project.spec --noconfirm --distpath {root}/dist/ --log-level FATAL")
         clean(" beta ")
     case "c":
         build()
-        subprocess.call(f"pyinstaller {root}/.VIS/project.spec --noconfirm --distpath {root}/dist/")
+        subprocess.call(f"pyinstaller {root}/.VIS/project.spec --noconfirm --distpath {root}/dist/ --log-level FATAL")
         clean()
+    case "sync":
+        build("alpha")
+        subprocess.call(f"pyinstaller {root}/.VIS/project.spec --noconfirm --distpath {root}/dist/ --log-level FATAL")
+        clean(" alpha ")
+        build("beta")
+        subprocess.call(f"pyinstaller {root}/.VIS/project.spec --noconfirm --distpath {root}/dist/ --log-level FATAL")
+        clean(" beta ")
+        build()
+        subprocess.call(f"pyinstaller {root}/.VIS/project.spec --noconfirm --distpath {root}/dist/ --log-level FATAL")
+        clean()
+        print("\t- alpha\n\t- beta\n\t- current")
     case _:
         inp = input(f"Release Project Version {version}?")
         match inp:
             case "y" | "Y" | "yes" | "Yes":
                 build(version)
-                subprocess.call(f"pyinstaller {root}/.VIS/project.spec --noconfirm --distpath {root}/dist/")
+                subprocess.call(f"pyinstaller {root}/.VIS/project.spec --noconfirm --distpath {root}/dist/ --log-level FATAL")
                 clean(f" {version} ")
             case _:
                 print(f"Could not release Project Version {version}")
