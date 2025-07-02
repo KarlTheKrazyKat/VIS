@@ -59,7 +59,7 @@ def clean(version:str=" "):
     """Cleans up build environment to save space
     """
     print("Cleaning up build environment")
-    if version == "":
+    if version == " ":
         if exists(f"{root}/dist/{name}/Icons/"): shutil.rmtree(f"{root}/dist/{name}/Icons/")
         if exists(f"{root}/dist/{name}/Images/"): shutil.rmtree(f"{root}/dist/{name}/Images/")
         shutil.copytree(root+"/Icons/",f"{root}/dist/{name}/Icons/",dirs_exist_ok=True)
