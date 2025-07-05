@@ -26,6 +26,12 @@
 
 - Added ```VIS remove sync``` to sync alpha beta and current
 
+0.3.7
+
+- VIS now uses mostly project.py to manage everything
+- - this is much sleaker and faster 
+- - aiming to remove the need to use any subprocess.call
+
 ## Upcoming
 
 ### Pre Official Release
