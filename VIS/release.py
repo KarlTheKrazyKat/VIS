@@ -1,5 +1,5 @@
 import sys
-from project import *
+from VIS.project import *
 import subprocess
 import json
 import shutil
@@ -26,7 +26,7 @@ def build(version:str=""):
     name_list = []
     
     for i in info[name]["Screens"].keys():
-        if info[name]["Screens"][i]["release"] == "TRUE":
+        if info[name]["Screens"][i]["release"]:
             name_list.append(i)
             file = info[name]["Screens"][i]["script"]
             #icon = "du"
