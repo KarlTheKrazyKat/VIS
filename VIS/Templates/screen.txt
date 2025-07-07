@@ -6,8 +6,6 @@ import sys
 #File Specific Imports
 
 #Configure Screen
-print(cfp)
-
 w = 1080
 h = 720
 ws = root.winfo_screenwidth()
