@@ -95,6 +95,11 @@
 - Crash Logs
 - Grid manager
 - Tutorial?
+- VIS GUI
+- - GUI for VIS default settings
+- - GUI for VIS project settings (defaults)
+- - - GUI for VIS screens settings (name, icons, other)
+- Auto updating of things like icon and script when changes are made
 
 ### Working with VIScode extension
 
