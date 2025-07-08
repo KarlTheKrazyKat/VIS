@@ -1,13 +1,9 @@
 import sys
 import os
 import zipfile
-import subprocess
-import shutil
 from VIS.project import *
 from importlib import metadata
-import json
-
-
+from VIS.release import newRelease
 
 inp = sys.argv
 print(f"VIS Version {metadata.version("VIStk")}")
@@ -51,5 +47,4 @@ def __main__():
                 print("Screen does not exist")
 
         case "release" | "Release" | "r" | "R":
-            project = VINFO()
-            subprocess.call("python " + project.p_vis+"/release.py " + inp[2])
+            newRelease(inp[2])

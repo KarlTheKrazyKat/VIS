@@ -82,6 +82,7 @@ class VINFO():
             info[title]["Screens"]={}
             info[title]["defaults"]={}
             info[title]["defaults"]["icon"]="VIS"#default icon
+            self.d_icon = "VIS"
             with open(wd+"/.VIS/project.json","w") as f:
                 f.write("{}")
                 json.dump(info,f,indent=4)
@@ -95,11 +96,17 @@ class VINFO():
         self.p_project = getPath()
         self.p_vinfo = self.p_project + "/.VIS"
         self.p_sinfo = self.p_vinfo + "/project.json"
-        with open(self.p_sinfo,"r") as f: self.title = list(json.load(f).keys())[0]
+        with open(self.p_sinfo,"r") as f: 
+            info = json.load(f)
+            self.title = list(info.keys())[0]
+            
+        self.screenlist = []
         self.p_screens = self.p_project +"/Screens"
         self.p_modules = self.p_project +"/modules"
         self.p_templates = self.p_vinfo + "/Templates"
-        self.screenlist=[]
+        self.p_icons = self.p_project + "/Icons"
+        self.p_images = self.p_project + "/Images"
+        
 
 class Screen(VINFO):
     """A VIS screen object
@@ -212,8 +219,10 @@ class Project(VINFO):
                 scr = Screen(screen,
                              info[self.name]["Screens"][screen]["script"],
                              info[self.name]["Screens"][screen]["release"],
-                             info[self.name]["Screens"][screen].get("icon"))
+                             info[self.name]["Screens"][screen].get("icon"),
+                             exists=True)
                 self.screenlist.append(scr)
+            self.d_icon = info[self.name]["defaults"]["icon"]
     
     def newScreen(self,screen:str) -> int:
         """Creates a new screen with some prompting

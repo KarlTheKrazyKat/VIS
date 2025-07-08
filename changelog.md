@@ -29,8 +29,14 @@
 0.3.7
 
 - VIS now uses mostly project.py to manage everything
-- - this is much sleaker and faster 
+- - this is much sleaker and faster
 - - aiming to remove the need to use any subprocess.call
+
+0.3.8
+
+- releasing now uses the project.py modules and its classes
+- project now stores default icon as an attribute
+- no longer any subprocess.call()s anywhere
 
 ## Upcoming
 
