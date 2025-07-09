@@ -47,4 +47,7 @@ def __main__():
                 print("Screen does not exist")
 
         case "release" | "Release" | "r" | "R":
-            newRelease(inp[2])
+            if len(inp) == 4:
+                newRelease(inp[2],inp[3])
+            else:
+                newRelease(inp[2])

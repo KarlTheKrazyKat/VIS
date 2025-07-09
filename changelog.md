@@ -40,6 +40,13 @@
 
 ## Upcoming
 
+0.3.9
+
+- version numbering
+- auto version increasing on beta/alpha creation
+- metadata on exes
+- descriptions of screens on creation
+
 ### Pre Official Release
 
 0.3.X:
@@ -47,7 +54,6 @@
 - Auto title screens on creation
 - Auto add icon to screen on creation
 - Edit screen settings
-- Some sort of version management with releases (beyond alpha/beta/current)
 
 0.4.X
 

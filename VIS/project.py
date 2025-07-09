@@ -76,17 +76,37 @@ class VINFO():
             #DO NOT MESS WITH THE TEMPLATE HEADERS
 
             title = input("Enter a name for the VIS project: ")
-            
+            self.title = title
             info = {}
-            info[title] = {}
-            info[title]["Screens"]={}
-            info[title]["defaults"]={}
-            info[title]["defaults"]["icon"]="VIS"#default icon
+            info[self.title] = {}
+            info[self.title]["Screens"]={}
+            info[self.title]["defaults"]={}
+            info[self.title]["defaults"]["icon"]="VIS"#default icon
             self.d_icon = "VIS"
+            self[self.title]["metadata"]={}
+            comp = input("What company is this for(or none)? ")
+            if not comp in ["none","None"]:
+                info[self.title]["metadata"]["company"] = comp
+                self.company = comp
+            else:
+                info[self.title]["metadata"]["company"] = None
+                self.company = None
+
+            version = input("What is the initial version for the project (0.0.1 default): ")
+            vers = version.split(".")
+            if len(vers)==3:
+                if vers[0].isnumeric() and vers[1].isnumeric() and vers[2].isnumeric():
+                    self.version = version
+                else:
+                    self.version = "0.0.1"
+            else:
+                self.version = "0.0.1"
+            info[self.title]["metadata"]["version"] = self.version
+
             with open(wd+"/.VIS/project.json","w") as f:
                 f.write("{}")
                 json.dump(info,f,indent=4)
-            print(f"Setup project.json for project {title} in {wd}/.VIS/")
+            print(f"Setup project.json for project {self.title} in {wd}/.VIS/")
 
 
         #Need to get current python location where VIS is installed
@@ -99,6 +119,8 @@ class VINFO():
         with open(self.p_sinfo,"r") as f: 
             info = json.load(f)
             self.title = list(info.keys())[0]
+            self.version = info[self.title]["metadata"]["version"]
+            self.company = info[self.title]["metadata"]["company"]
             
         self.screenlist = []
         self.p_screens = self.p_project +"/Screens"
@@ -107,34 +129,54 @@ class VINFO():
         self.p_icons = self.p_project + "/Icons"
         self.p_images = self.p_project + "/Images"
         
+    def setVersion(self,version:str):
+        """Sets a new project version
+        """
+        with open(self.p_sinfo,"r") as f: 
+            info = json.load(f)
+
+        info[self.title]["metadata"]["version"] = version
+
+        with open(self.p_sinfo,"w") as f:
+            json.dump(info,f,indent=4)
+
 
 class Screen(VINFO):
     """A VIS screen object
     """
-    def __init__(self,name:str,script:str,release:bool=False,icon:str=None,exists:bool=True):
+    def __init__(self,name:str,script:str,release:bool=False,icon:str=None,exists:bool=True,desc:str=None):
         super().__init__()
         self.name=name
         self.script=script
         self.release=release
         self.icon=icon
-        self.path = self.p_screens+"/"+name
-        self.m_path = self.p_modules+"/"+name
+        self.path = self.p_screens+"/"+self.name
+        self.m_path = self.p_modules+"/"+self.name
 
         if not exists:
             with open(self.p_sinfo,"r") as f:
                 info = json.load(f)
 
-            info[self.title]["Screens"][name] = {"script":script,"release":release}
+            info[self.title]["Screens"][self.name] = {"script":script,"release":release}
             if not icon == None:
-                info[self.title]["Screens"][name]["icon"] = icon
+                info[self.title]["Screens"][self.name]["icon"] = icon
+            
+            if not desc == None:
+                info[self.title]["Screens"][self.name]["desc"] = desc
+            else:
+                info[self.title]["Screens"][self.name]["desc"] = "A VIS Created Executable"
 
             with open(self.p_sinfo,"w") as f:
                 json.dump(info,f,indent=4)
 
             shutil.copyfile(self.p_templates+"/screen.txt",self.p_project+"/"+script)
-            os.mkdir(self.p_screens+"/"+name)
-            os.mkdir(self.p_modules+"/"+name)
-        #can use this info to create something about a new screen
+            os.mkdir(self.p_screens+"/"+self.name)
+            os.mkdir(self.p_modules+"/"+self.name)
+
+        with open(self.p_sinfo,"r") as f:
+                info = json.load(f)
+        self.desc = info[self.title]["Screens"][self.name]["desc"]
+        
 
     def addElement(self,element:str) -> int:
         if validName(element):
@@ -257,7 +299,8 @@ class Project(VINFO):
                     release = False
             ictf =input("What is the icon for this screen (or none)?: ")
             icon = ictf.strip(".ico") if ".ICO" in ictf.upper() else None
-            self.screenlist.append(Screen(screen,script,release,icon,False))
+            desc = input("Write a description for this screen: ")
+            self.screenlist.append(Screen(screen,script,release,icon,False,desc))
 
             return 1
         else:

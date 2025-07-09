@@ -2,6 +2,7 @@ from VIS.project import *
 import subprocess
 import shutil
 from os.path import exists
+import time
 
 root = getPath()
 info = {}
@@ -32,6 +33,19 @@ def build(version:str=""):
             spec_list.append(spec.replace("$name$",i.name))
             spec_list[len(spec_list)-1] = spec_list[len(spec_list)-1].replace("$icon$",icon)
             spec_list[len(spec_list)-1] = spec_list[len(spec_list)-1].replace("$file$",i.script)
+
+            #build meta
+            with open(project.p_templates+"/meta.txt","r") as f:
+                meta = f.read()
+            meta = meta.replace("$version$",project.version)
+            if project.company != None:
+                meta = meta.replace("$company$",project.company)
+            else:
+                meta = meta.replace("\tcompany='$company$',\n","")
+            meta = meta.replace("$name$",project.title)
+            meta = meta.replace("$description$",i.desc)
+            print(meta)
+            spec_list[len(spec_list)-1] = spec_list[len(spec_list)-1].replace("$meta$",meta)
             spec_list.append("\n\n")
 
     insert = ""
@@ -66,7 +80,27 @@ def clean(version:str=" "):
         shutil.copytree(root+"/Images/",f"{root}/dist/{project.name}-{version.strip(" ")}/Images/",dirs_exist_ok=True)
     print(f"\n\nReleased new{version}build of {project.name}!")
 
-def newRelease(version):
+def newVersion(version:str):
+    """Updates the project version, permanent, cannot be undone
+    """
+    project = VINFO()
+    old = str(project.version)
+    vers = project.version.split(".")
+    if version == "Major":
+        vers[0] = str(int(vers[0])+1)
+        vers[1] = str(0)
+        vers[2] = str(0)
+    if version == "Minor":
+        vers[1] = str(int(vers[1])+1)
+        vers[2] = str(0)
+    if version == "Patch":
+        vers[2] = str(int(vers[2])+1)
+
+    project.setVersion(f"{vers[0]}.{vers[1]}.{vers[2]}")
+    project = VINFO()
+    print(f"Updated Version {old}=>{project.version}")
+
+def newRelease(version,type:str="Patch"):
     """Releases a version of your project
     """
     match version:
@@ -79,6 +113,7 @@ def newRelease(version):
             subprocess.call(f"pyinstaller {root}/.VIS/project.spec --noconfirm --distpath {root}/dist/ --log-level FATAL")
             clean(" beta ")
         case "c":
+            newVersion(type)
             build()
             subprocess.call(f"pyinstaller {root}/.VIS/project.spec --noconfirm --distpath {root}/dist/ --log-level FATAL")
             clean()
@@ -94,11 +129,4 @@ def newRelease(version):
             clean()
             print("\t- alpha\n\t- beta\n\t- current")
         case _:
-            inp = input(f"Release Project Version {version}?")
-            match inp:
-                case "y" | "Y" | "yes" | "Yes":
-                    build(version)
-                    subprocess.call(f"pyinstaller {root}/.VIS/project.spec --noconfirm --distpath {root}/dist/ --log-level FATAL")
-                    clean(f" {version} ")
-                case _:
-                    print(f"Could not release Project Version {version}")
+            print(f"Could not release Project Version {version}")
