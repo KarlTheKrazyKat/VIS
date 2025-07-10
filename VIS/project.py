@@ -166,6 +166,10 @@ class Screen(VINFO):
             else:
                 info[self.title]["Screens"][self.name]["desc"] = "A VIS Created Executable"
 
+            info[self.title]["Screens"][self.name]["version"] = "1.0.0"#always making first major version of screen
+
+            info[self.title]["Screens"][self.name]["current"] = None#always making first major version of screen
+
             with open(self.p_sinfo,"w") as f:
                 json.dump(info,f,indent=4)
 
@@ -176,6 +180,8 @@ class Screen(VINFO):
         with open(self.p_sinfo,"r") as f:
                 info = json.load(f)
         self.desc = info[self.title]["Screens"][self.name]["desc"]
+        self.s_version = info[self.title]["Screens"][self.name]["version"]
+        self.current = info[self.title]["Screens"][self.name]["current"]
         
 
     def addElement(self,element:str) -> int:
@@ -244,7 +250,27 @@ class Screen(VINFO):
         print("Stitched: ")
         for i in stitched:
             print(f"\t{i} to {self.name}")
-            
+
+    def syncVersion(self) -> int:
+        """Syncs the version stored in sinfo with the version in memory
+        """
+        with open(self.p_sinfo,"r") as f:
+            info = json.load(f)
+        info[self.title]["Screens"][self.name]["current"] = self.current
+        with open(self.p_sinfo,"w") as f:
+            json.dump(info,f)
+        return 1
+
+    def crntVersion(self) -> int:
+        """Checks if the version needs to be synced and returns 1 if its synced
+        """
+        if not self.s_version == self.current:
+            self.current = self.version
+            self.syncVersion()
+            return 1
+        else:
+            return 0
+
 
 class Project(VINFO):
     """VIS Project Object
