@@ -36,16 +36,19 @@
 
 - releasing now uses the project.py modules and its classes
 - project now stores default icon as an attribute
-- no longer any subprocess.call()s anywhere
+- no longer any subprocess.call()s anywhere but releasing
+- releaseing now feature version metadata
+- autoincreases the version on release current
+- descriptions of screens now taken on creation
 
 ## Upcoming
 
 0.3.9
 
-- version numbering
-- auto version increasing on beta/alpha creation
-- metadata on exes
-- descriptions of screens on creation
+- version numbering for screens control
+- Auto title screens on creation
+- Auto add icon to screen on creation
+- Edit screen settings
 
 ### Pre Official Release
 

@@ -21,10 +21,7 @@ Known work-arounds:
 Found 0.3.3
 Fixed 0.3.6
 
-### Project Setup
-
 #### Form Extracts Wrong
 
 Found 0.3.6
 Fixed 0.3.7
-
