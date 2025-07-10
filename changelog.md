@@ -44,6 +44,10 @@
 - autoincreases the version on release current
 - descriptions of screens now taken on creation
 
+0.3.10
+
+- just messed up the version number
+
 ## Upcoming
 
 0.3.10
