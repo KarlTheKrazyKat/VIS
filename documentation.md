@@ -14,9 +14,9 @@ Will provide a series of prompts in order to setup a blank project
 
 Accepted as:
 
-- ```New```
-- ```new```
-- ```N```
+- `New`
+- `new`
+- `N`
 - `n`
 
 ### Screen Creation
@@ -28,6 +28,20 @@ VIS add screen <screen_name>
 ```
 
 Will setup a new blank screen ready for compiling to .exe if assigned. A series of prompts will aid creation.
+
+Accepted as:
+
+- `Add`
+- `add`
+- `A`
+- `a`
+
+and
+
+- `Screen`
+- `screen`
+- `S`
+- `s`
 
 ### Element Creation
 
@@ -44,3 +58,10 @@ To add multiple elements in one call the element names should be seperated by "-
 ```cmd
 VIS add screen <screen_name> elements <element_1>-<element_2>-<element_3>
 ```
+
+Accepted as:
+
+- `Elements`
+- `elements`
+- `E`
+- `e`
