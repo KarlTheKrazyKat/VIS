@@ -14,16 +14,16 @@ Will provide a series of prompts in order to setup a blank project
 
 Accepted as:
 
-- ```txt New```
-- ```txt new```
-- ```txt N```
-- ```txt n```
+- ```New```
+- ```new```
+- ```N```
+- ```n```
 
 ### Screen Creation
 
 Initialize a new screen in the project
 
-```cmd
+```batch
 VIS add screen <screen_name>
 ```
 
