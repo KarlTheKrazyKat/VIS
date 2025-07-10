@@ -17,13 +17,13 @@ Accepted as:
 - ```New```
 - ```new```
 - ```N```
-- ```n```
+- `n`
 
 ### Screen Creation
 
 Initialize a new screen in the project
 
-```batch
+```cmd
 VIS add screen <screen_name>
 ```
 
