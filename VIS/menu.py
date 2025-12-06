@@ -14,6 +14,13 @@ class Item(Menu):
     """Each item in the menu is created from the corresponding .json file. Each path should be given relative to xyz/WOM/
     """
     def __init__(self,root,_root,path,nav,*args,**kwargs):
+        """Create an item in a row on the menu
+        Args:
+            root (Tk): Master root for destruction on redirect
+            _root (Toplevel): Toplevel object to create menu items in
+            path (str): Name of .exe or absolute path to python script
+            nav (str): Navigation character to click button
+        """
         self.button = ttk.Button(root, *args, **kwargs)
         self.root = root
         self.path = path
@@ -23,6 +30,8 @@ class Item(Menu):
         #self.button.pack()
 
     def itemPath(self):
+        """Opens the given path or exe for the button
+        """
         self.root.destroy()
         if ".exe" in self.path:
             os.startfile(self.path)
@@ -37,7 +46,13 @@ class Menu:
 
     Has two roots because can destory both main window and subwindow on redirect.
     """
-    def __init__(self, root, _root, path):
+    def __init__(self, root:Tk, _root:Toplevel, path:str):
+        """
+        Args:
+            root (Tk): Master root for destruction on redirect
+            _root (Toplevel): Toplevel object to create menu on
+            path (str): Path to .json file describing menu
+        """
         root.focus_force()#use to force window into focus
         self.path = path
         self.n_dict = {}
@@ -61,6 +76,3 @@ class Menu:
         k=happ.char
         if self.n_dict.get(k) != None:
             self.n_dict[k].itemPath()
-
-            
-        
