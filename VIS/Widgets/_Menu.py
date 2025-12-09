@@ -16,8 +16,13 @@ class Menu():
             path (str): Path to .json file describing menu
             destroyOnRedirect (bool): If True the root window will be destroyed on redicet
         """
+        #Popout Window
         root.focus_force()#use to force window into focus
+        self.root = root
+        self.menu_root = Toplevel(root)
+        self.menu_root.focus_force()
         self.path = path
+        self.ob_dict = []
         self.n_dict = {}
         with open(path) as file:
             self.dict = json.load(file)
@@ -25,12 +30,13 @@ class Menu():
 
         for item in self.dict:
 
-            ob = MenuItem(root,_root,
+            ob = MenuItem(root,
                       path= self.dict[item]["path"],
                       nav = self.dict[item]["nav"],
                       text = self.dict[item]["text"]
                       )
             ob.button.pack()
+            self.ob_dict.append(ob)
             self.n_dict[ob.nav]=ob
 
         root.bind("<KeyPress>",self.menuNav)
