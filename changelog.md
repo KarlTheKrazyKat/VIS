@@ -53,6 +53,7 @@
 - new wrapper class for root
 - new wrapper class for toplevel
 - new window geometry class to control window sizing easily
+- new menu window widget
 
 ## Upcoming
 
