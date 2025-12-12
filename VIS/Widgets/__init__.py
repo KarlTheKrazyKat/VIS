@@ -1,4 +1,6 @@
-from _Menu import Menu
-from _MenuItem import MenuItem
+from VIS.Widgets._MenuItem import MenuItem
+from VIS.Widgets._VISMenu import Menu
 
-__all__ = ["Menu","MenuItem"]
+from VIS.Widgets._MenuWindow import MenuWindow
+
+__all__ = ["Menu","MenuItem","MenuWindow"]

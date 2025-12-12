@@ -6,7 +6,7 @@ import os
 class MenuItem():
     """Each item in the menu is created from the corresponding .json file. Each path should be given relative to xyz/WOM/
     """
-    def __init__(self,root,_root,path,nav,*args,**kwargs):
+    def __init__(self,parent:Frame|Toplevel|LabelFrame|Tk,path,nav,*args,**kwargs):
         """Create an item in a row on the menu
         Args:
             root (Tk): Master root for destruction on redirect
@@ -14,10 +14,10 @@ class MenuItem():
             path (str): Name of .exe or absolute path to python script
             nav (str): Navigation character to click button
         """
-        self.button = ttk.Button(root, *args, **kwargs)
-        self.root = root
+        self.button = Button(master=parent, *args, **kwargs)
+        self.parent = parent
+        self.root = parent.winfo_toplevel()
         self.path = path
-        self._root = _root
         self.nav = nav
         self.button.config(command = self.itemPath)
         #self.button.pack()
@@ -25,9 +25,8 @@ class MenuItem():
     def itemPath(self):
         """Opens the given path or exe for the button
         """
-        self.root.destroy()
         if ".exe" in self.path:
             os.startfile(self.path)
         else:
             subprocess.call("pythonw.exe "+self.path)
-        self._root.destroy()
+        self.root.destroy()

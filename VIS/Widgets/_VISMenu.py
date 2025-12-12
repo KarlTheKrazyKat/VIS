@@ -3,12 +3,12 @@ from tkinter import *
 from tkinter import ttk
 from VIS.Widgets import MenuItem
 
-class Menu():
+class VISMenu():
     """The menu class drawings a column of buttons with subprocess calls to paths defined in a corresponding .json file.
 
     Has two roots because can destory both main window and subwindow on redirect.
     """
-    def __init__(self, root:Tk, path:str, destroyOnRedirect:bool=True):
+    def __init__(self, parent:Frame|LabelFrame|Toplevel|Tk, path:str):
         """
         Args:
             root (Tk): Master root for destruction on redirect
@@ -16,21 +16,19 @@ class Menu():
             path (str): Path to .json file describing menu
             destroyOnRedirect (bool): If True the root window will be destroyed on redicet
         """
-        #Popout Window
-        root.focus_force()#use to force window into focus
-        self.root = root
-        self.menu_root = Toplevel(root)
-        self.menu_root.focus_force()
+
+        self.parent = parent
+        self.root = self.parent.winfo_toplevel()
         self.path = path
         self.ob_dict = []
         self.n_dict = {}
+
+        #Open json file for menu structure
         with open(path) as file:
             self.dict = json.load(file)
 
-
         for item in self.dict:
-
-            ob = MenuItem(root,
+            ob = MenuItem(self.parent,
                       path= self.dict[item]["path"],
                       nav = self.dict[item]["nav"],
                       text = self.dict[item]["text"]
@@ -39,9 +37,9 @@ class Menu():
             self.ob_dict.append(ob)
             self.n_dict[ob.nav]=ob
 
-        root.bind("<KeyPress>",self.menuNav)
+        self.root.bind("<KeyPress>",self.menuNav)
     
-    def menuNav(self,happ):
+    def menuNav(self,happ:Event):
         k=happ.char
         if self.n_dict.get(k) != None:
             self.n_dict[k].itemPath()

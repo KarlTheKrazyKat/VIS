@@ -1,10 +1,15 @@
 from tkinter import *
 from VIS.Objects import *
+from VIS.Widgets import *
 import time
 
 root = Root()
-for i in range(1,101,1):
-    root.WindowGeometry.setGeometry(width=i,height=i,align="nw",size_style="screen_relative")
-    root.update()
-    time.sleep(0.1)
+root.WindowGeometry.setGeometry(width=40,height=40,align="center",size_style="screen_relative")
+
+def subWindow():
+    subroot = MenuWindow(root,"test.json")
+
+vb_test = Button(root, text="Open Submenu", command=subWindow)
+vb_test.grid(row=1,column=1,sticky=(N, S, E, W))
+
 root.mainloop()
