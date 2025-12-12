@@ -48,9 +48,15 @@
 
 - just messed up the version number
 
+0.3.11
+
+- new wrapper class for root
+- new wrapper class for toplevel
+- new window geometry class to control window sizing easily
+
 ## Upcoming
 
-0.3.10
+0.3.12
 
 - version numbering for screens control
 - Auto title screens on creation
