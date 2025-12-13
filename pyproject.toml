@@ -30,5 +30,5 @@ Changelog = "https://github.com/KarlTheKrazyKat/VIS/blob/master/changelog.md"
 [project.scripts]
 VIS = "VIS.VIS:__main__"
 [tool.setuptools]
-packages = ["VIS","VIS.Widgets","VIS.Objects"]
+packages = ["VIS"]
 ext-modules = []
