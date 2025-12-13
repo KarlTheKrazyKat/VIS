@@ -55,6 +55,14 @@
 - new window geometry class to control window sizing easily
 - new menu window widget
 
+0.3.12
+
+- highlight menu buttons on hover
+
+0.3.12.1
+
+- fix default color after menu button unhighlight
+
 ## Upcoming
 
 0.3.12

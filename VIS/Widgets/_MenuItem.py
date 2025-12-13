@@ -21,7 +21,7 @@ class MenuItem():
         self.nav = nav
         self.button.config(command = self.itemPath)
         enter = lambda event: event.widget.configure(background="dodger blue")
-        leave = lambda event: event.widget.configure(background="snow")
+        leave = lambda event: event.widget.configure(background="gray94")
         self.button.bind("<Enter>", enter)
         self.button.bind("<Leave>", leave)
         #self.button.pack()
