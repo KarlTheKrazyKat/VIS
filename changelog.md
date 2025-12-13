@@ -55,7 +55,7 @@
 - new window geometry class to control window sizing easily
 - new menu window widget
 
-0.3.12
+0.3.12 Adding more Widgets!!
 
 - highlight menu buttons on hover
 
@@ -69,7 +69,7 @@
 
 ## Upcoming
 
-0.3.12
+0.3.13
 
 - version numbering for screens control
 - Auto title screens on creation
