@@ -6,15 +6,18 @@ import time
 root = Root()
 root.WindowGeometry.setGeometry(width=40,height=40,align="center",size_style="screen_relative")
 
+def warnWindow():
+    newroot = WarningWindow(parent=root,
+                             warning="Warning: Something!!!",
+                            )
+
 def subWindow():
     subroot = QuestionWindow(parent=root,
                              question=["Some info...",
                                        "Additional information given",
                                        "Do you want to continue"],
                              answer = "xu",
-                             ycommand=print,
-                             droplist=["test",
-                                       "aagin"]
+                             ycommand=warnWindow
                             )
 
 vb_test = Button(root, text="Open Submenu", command=subWindow)

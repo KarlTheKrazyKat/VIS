@@ -5,7 +5,7 @@ from VIS.Objects import SubRoot
 
 class QuestionWindow(SubRoot):
     """An empty popout window"""
-    def __init__(self, question:str|list[str], answer:str, parent:Toplevel|Tk, ycommand, droplist:list=None, *args,**kwargs):
+    def __init__(self, question:str|list[str], answer:str, parent:Toplevel|Tk, ycommand=None, droplist:list=None, *args,**kwargs):
         """Will create a question window
             y = yes
             n = no
@@ -41,25 +41,25 @@ class QuestionWindow(SubRoot):
         for i in range(0,len(self.elements),1):
             match self.elements[i]:
                 case "y":
-                    self.screen_elements.append(Button(self, text="Yes", command=ycommand))
+                    self.screen_elements.append(Button(self, text="Yes", command = lambda: self.ycom(ycommand)))
                     self.screen_elements[i].grid(row=rs,column=i,sticky=(N,S,E,W))
                 case "n":
-                    self.screen_elements.append(Button(self, text="No"))
+                    self.screen_elements.append(Button(self, text="No", command = self.xcom))
                     self.screen_elements[i].grid(row=rs,column=i,sticky=(N,S,E,W))
                 case "r":
-                    self.screen_elements.append(Button(self, text="Return"))
+                    self.screen_elements.append(Button(self, text="Return", command = self.xcom))
                     self.screen_elements[i].grid(row=rs,column=i,sticky=(N,S,E,W))
                 case "u":
-                    self.screen_elements.append(Button(self, text="Continue", command=ycommand))
+                    self.screen_elements.append(Button(self, text="Continue", command = lambda: self.ycom(ycommand)))
                     self.screen_elements[i].grid(row=rs,column=i,sticky=(N,S,E,W))
                 case "b":
-                    self.screen_elements.append(Button(self, text="Back"))
+                    self.screen_elements.append(Button(self, text="Back", command = self.xcom))
                     self.screen_elements[i].grid(row=rs,column=i,sticky=(N,S,E,W))
                 case "x":
-                    self.screen_elements.append(Button(self, text="Close"))
+                    self.screen_elements.append(Button(self, text="Close", command = self.xcom))
                     self.screen_elements[i].grid(row=rs,column=i,sticky=(N,S,E,W))
                 case "c":
-                    self.screen_elements.append(Button(self, text="Confirm", command=ycommand))
+                    self.screen_elements.append(Button(self, text="Confirm", command = lambda: self.ycom(ycommand)))
                     self.screen_elements[i].grid(row=rs,column=i,sticky=(N,S,E,W))
                 case "d":
                     self.screen_elements.append(ttk.Combobox(self, values=droplist))
@@ -79,3 +79,11 @@ class QuestionWindow(SubRoot):
                                         align="center",
                                         size_style="window_relative",
                                         window_ref=parent)
+
+    def ycom(self,command):
+        self.destroy()
+        if not command is None:
+            command()
+
+    def xcom(self):
+        self.destroy()
