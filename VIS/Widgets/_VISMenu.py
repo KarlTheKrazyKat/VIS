@@ -25,17 +25,23 @@ class VISMenu():
 
         #Open json file for menu structure
         with open(path) as file:
-            self.dict = json.load(file)
+            self.dict:dict = json.load(file)
+        self.parent.grid_columnconfigure(0,weight=1)
+        for i in range(0, len(self.dict.keys()), 1):
+            self.parent.grid_rowconfigure(i,weight=1)
 
+        x = 0
         for item in self.dict:
             ob = MenuItem(self.parent,
                       path= self.dict[item]["path"],
                       nav = self.dict[item]["nav"],
-                      text = self.dict[item]["text"]
+                      text = self.dict[item]["text"],
+                      relief="flat"
                       )
-            ob.button.pack()
+            ob.button.grid(row=x, column=0, sticky=(N,S,E,W))
             self.ob_dict.append(ob)
             self.n_dict[ob.nav]=ob
+            x += 1
 
         self.root.bind("<KeyPress>",self.menuNav)
     
