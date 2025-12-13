@@ -63,6 +63,10 @@
 
 - fix default color after menu button unhighlight
 
+0.3.12.2
+
+- new widget question window (dropdown list not accessable yet)
+
 ## Upcoming
 
 0.3.12

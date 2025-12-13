@@ -7,7 +7,15 @@ root = Root()
 root.WindowGeometry.setGeometry(width=40,height=40,align="center",size_style="screen_relative")
 
 def subWindow():
-    subroot = MenuWindow(root,"test.json")
+    subroot = QuestionWindow(parent=root,
+                             question=["Some info...",
+                                       "Additional information given",
+                                       "Do you want to continue"],
+                             answer = "xu",
+                             ycommand=print,
+                             droplist=["test",
+                                       "aagin"]
+                            )
 
 vb_test = Button(root, text="Open Submenu", command=subWindow)
 vb_test.grid(row=1,column=1,sticky=(N, S, E, W))
