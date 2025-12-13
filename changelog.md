@@ -67,6 +67,14 @@
 
 - new widget question window (dropdown list not accessable yet)
 
+0.3.12.3
+
+- lowered required python version
+
+0.3.12.4
+
+- trying a fix for linux version
+
 ## Upcoming
 
 0.3.13
