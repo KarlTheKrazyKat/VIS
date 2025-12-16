@@ -18,7 +18,7 @@ maintainers = [
 readme = "README.md"
 keywords = ["python","gui"]
 classifiers = [
-  "Development Status :: 2 - Pre Alpha",
+  "Development Status :: 2 - Pre-Alpha",
   "Programming Language :: Python"
 ]
 [project.urls]
