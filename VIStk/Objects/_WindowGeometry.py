@@ -2,7 +2,10 @@ from tkinter import *
 from typing import Literal
 
 query = Tk()
-query.state("zoomed")
+try: #On Linux
+    query.wm_attributes("-zoomed", True)
+except TclError: #On Windows
+    query.state('zoomed')
 query.update()
 global hs, ws
 ws = query.winfo_width()-2#Unclear about this offset
