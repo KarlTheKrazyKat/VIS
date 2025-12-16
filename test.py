@@ -1,6 +1,6 @@
 from tkinter import *
-from VIS.Objects import *
-from VIS.Widgets import *
+from VIStk.Objects import *
+from VIStk.Widgets import *
 import time
 
 root = Root()

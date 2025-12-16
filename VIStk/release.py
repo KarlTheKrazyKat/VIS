@@ -1,6 +1,6 @@
-from VIS.project import *
-from VIS.VINFO import *
-from VIS.screen import *
+from VIStk.project import *
+from VIStk.VINFO import *
+from VIStk.screen import *
 import subprocess
 import shutil
 from os.path import exists

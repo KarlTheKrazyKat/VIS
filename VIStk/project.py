@@ -1,6 +1,6 @@
 import json
-from VIS.VINFO import *
-from VIS.screen import *
+from VIStk.VINFO import *
+from VIStk.screen import *
 
 class Project(VINFO):
     """VIS Project Object

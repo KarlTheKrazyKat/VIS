@@ -1,5 +1,5 @@
-from VIS.Objects import *
-from VIS.Widgets._VISMenu import VISMenu
+from VIStk.Objects import *
+from VIStk.Widgets._VISMenu import VISMenu
 from tkinter import *
 
 class MenuWindow(SubRoot):

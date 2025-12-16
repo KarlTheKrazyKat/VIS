@@ -1,7 +1,7 @@
 import json
 from tkinter import *
 from tkinter import ttk
-from VIS.Widgets import MenuItem
+from VIStk.Widgets import MenuItem
 
 class VISMenu():
     """The menu class drawings a column of buttons with subprocess calls to paths defined in a corresponding .json file.

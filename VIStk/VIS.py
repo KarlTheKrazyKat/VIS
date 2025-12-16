@@ -1,9 +1,9 @@
 import sys
 import os
 import zipfile
-from VIS.project import *
+from VIStk.project import *
 from importlib import metadata
-from VIS.release import newRelease
+from VIStk.release import newRelease
 
 inp = sys.argv
 print(f"VIS Version {metadata.version("VIStk")}")

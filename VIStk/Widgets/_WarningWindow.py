@@ -1,4 +1,4 @@
-from VIS.Widgets._QuestionWindow import QuestionWindow
+from VIStk.Widgets._QuestionWindow import QuestionWindow
 from tkinter import *
 
 class WarningWindow(QuestionWindow):

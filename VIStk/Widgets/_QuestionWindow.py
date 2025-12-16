@@ -1,7 +1,7 @@
 from typing import Literal
 from tkinter import *
 from tkinter import ttk
-from VIS.Objects import SubRoot
+from VIStk.Objects import SubRoot
 
 class QuestionWindow(SubRoot):
     """An empty popout window"""

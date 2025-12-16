@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "VIStk"
-version = "0.3.12.5"
+version = "0.3.12.6"
 license = {file="LICENSE"}
 dependencies = ["tk"]
 description = "Visual Interfacing Structure for python using tkinter"
@@ -30,5 +30,5 @@ Changelog = "https://github.com/KarlTheKrazyKat/VIS/blob/master/changelog.md"
 [project.scripts]
 VIS = "VIS.VIS:__main__"
 [tool.setuptools]
-packages = ["VIS","VIS.Widgets","VIS.Objects"]
+packages = ["VIStk","VIStk.Widgets","VIStk.Objects"]
 ext-modules = []

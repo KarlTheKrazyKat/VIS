@@ -1,5 +1,5 @@
 from tkinter import *
-from VIS.Objects._WindowGeometry import WindowGeometry
+from VIStk.Objects._WindowGeometry import WindowGeometry
 
 class Root(Tk):
     """A wrapper for the Tk class with VIS attributes"""
