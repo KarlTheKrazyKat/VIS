@@ -1,7 +1,8 @@
 from tkinter import *
 from VIStk.Objects._WindowGeometry import WindowGeometry
+from VIStk.Objects._Window import Window
 
-class SubRoot(Toplevel):
+class SubRoot(Toplevel, Window):
     """A wrapper for the Toplevel class with VIS attributes"""
     def __init__(self,*args,**kwargs):
         super().__init__(*args,**kwargs)

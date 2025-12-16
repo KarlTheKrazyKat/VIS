@@ -18,7 +18,7 @@ def subWindow():
                                        "Do you want to continue"],
                              answer = "xu",
                              ycommand=warnWindow
-                            )
+                            ).fullscreen()
 
 vb_test = Button(root, text="Open Submenu", command=subWindow)
 vb_test.grid(row=1,column=1,sticky=(N, S, E, W))

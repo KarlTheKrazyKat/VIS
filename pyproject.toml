@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "VIStk"
-version = "0.3.12.9"
+version = "0.3.12.10"
 license = {file="LICENSE"}
 dependencies = ["tk"]
 description = "Visual Interfacing Structure for python using tkinter"
@@ -18,7 +18,7 @@ maintainers = [
 readme = "README.md"
 keywords = ["python","gui"]
 classifiers = [
-  "Development Status :: 4 - Beta",
+  "Development Status :: 2 - Pre Alpha",
   "Programming Language :: Python"
 ]
 [project.urls]
