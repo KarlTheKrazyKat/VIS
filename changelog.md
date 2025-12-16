@@ -75,6 +75,10 @@
 
 - trying a fix for linux version
 
+0.3.12.17
+
+- fixed an error on VIS project setup
+
 ## Upcoming
 
 0.3.13

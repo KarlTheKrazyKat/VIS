@@ -3,8 +3,9 @@ import json
 import zipfile
 import shutil
 import subprocess
+import sys
 
-VISROOT = os.environ.get("PYTHONPATH") + "/Lib/site-packages/VIStk/"
+VISROOT = min(sys.path, key=len) + "/Lib/site-packages/VIStk/"
 
 #Copied from source
 #https://stackoverflow.com/a/75246706
@@ -69,7 +70,7 @@ class VINFO():
             unzip_without_overwrite(VISROOT+"Form.zip",wd)
             print(f"Copied structure to {wd}")
 
-            shutil.copytree("./Templates",wd+"/.VIS/Templates",dirs_exist_ok=True)
+            shutil.copytree(VISROOT+"Templates",wd+"/.VIS/Templates",dirs_exist_ok=True)
             print(f"Loaded default templates into {wd}/.VIS/Templates/")
 
            
@@ -83,7 +84,7 @@ class VINFO():
             info[self.title]["defaults"]={}
             info[self.title]["defaults"]["icon"]="VIS"#default icon
             self.d_icon = "VIS"
-            self[self.title]["metadata"]={}
+            info[self.title]["metadata"]={}
             comp = input("What company is this for(or none)? ")
             if not comp in ["none","None"]:
                 info[self.title]["metadata"]["company"] = comp
@@ -104,7 +105,6 @@ class VINFO():
             info[self.title]["metadata"]["version"] = self.version
 
             with open(wd+"/.VIS/project.json","w") as f:
-                f.write("{}")
                 json.dump(info,f,indent=4)
             print(f"Setup project.json for project {self.title} in {wd}/.VIS/")
 
