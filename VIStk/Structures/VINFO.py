@@ -64,7 +64,7 @@ class VINFO():
             open(wd+"/.VIS/path.cfg","w").write(wd) if os.path.exists(wd+"/.VIS/path.cfg") else open(wd+"/.VIS/path.cfg", 'a').write(wd)
             print(f"Stored project path in path.cfg as {wd} in {wd}/.VIS/path.cfg")
 
-            unzip_without_overwrite("Form.zip",wd)
+            unzip_without_overwrite("./Form.zip",wd)
             print(f"Copied structure to {wd}")
 
             shutil.copytree("./Templates",wd+"/.VIS/Templates",dirs_exist_ok=True)
