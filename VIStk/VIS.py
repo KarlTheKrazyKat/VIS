@@ -1,9 +1,8 @@
 import sys
 import os
 import zipfile
-from VIStk.project import *
 from importlib import metadata
-from VIStk.release import newRelease
+from VIStk.Structures import *
 
 inp = sys.argv
 print(f"VIS Version {metadata.version("VIStk")}")
@@ -48,6 +47,8 @@ def __main__():
 
         case "release" | "Release" | "r" | "R":
             if len(inp) == 4:
-                newRelease(inp[2],inp[3])
+                #newRelease(inp[2],inp[3])
+                pass
             else:
-                newRelease(inp[2])
+                #newRelease(inp[2])
+                pass

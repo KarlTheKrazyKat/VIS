@@ -1,6 +1,6 @@
-from VIStk.project import *
-from VIStk.VINFO import *
-from VIStk.screen import *
+from VIStk.Structures.project import *
+from VIStk.Structures.VINFO import *
+from VIStk.Structures.screen import *
 import subprocess
 import shutil
 from os.path import exists

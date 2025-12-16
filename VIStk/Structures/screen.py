@@ -3,7 +3,7 @@ import json
 import shutil
 import re
 import glob
-from VIStk.VINFO import *
+from VIStk.Structures.VINFO import *
 import tkinter as TK
 
 class Screen(VINFO):
