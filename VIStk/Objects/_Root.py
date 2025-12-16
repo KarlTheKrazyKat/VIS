@@ -7,6 +7,3 @@ class Root(Tk, Window):
     def __init__(self,*args,**kwargs):
         super().__init__(*args,**kwargs)
         self.WindowGeometry = WindowGeometry(self)
-
-    def fullscreen(self):
-        """Makes the window fullscreen"""
