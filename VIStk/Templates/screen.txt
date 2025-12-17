@@ -1,33 +1,32 @@
-#Default Imports
+#%Default Imports
 from tkinter import *
 from tkinter import ttk
 from Screens.root import *
 import sys
-#File Specific Imports
+#%File Specific Imports
 
-#Configure Screen
-#Configure Screen
+#%Configure Screen
 root.Active = True
 root.WindowGeometry.setGeometry(width=66,height=66,align="center",size_style="screen_relative")
 root.title("<placeholder_title>")
 #root.iconbitmap("<project>/Images/Icons/<some_icon>")
 
-#Screen Elements
+#%Screen Elements
 
-#Screen Grid
+#%Screen Grid
 root.grid_columnconfigure(0,weight=1)
 root.grid_rowconfigure(0,weight=1)
 
-#Screen Modules
+#%Screen Modules
 
-#Handle Arguments
+#%Handle Arguments
 
-#Define Loop Modules
+#%Define Loop Modules
 def loop():
     #screen modules run here
     1+1
 
-#Update Loop
+#%Update Loop
 while True: 
     try:
         if root.Active:

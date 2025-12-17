@@ -87,7 +87,7 @@ class Screen(VINFO):
         with open(self.p_project+"/"+self.script,"r") as f: text = f.read()
         stitched = []
         #Elements
-        pattern = r"#Screen Elements.*#Screen Grid"
+        pattern = r"#%Screen Elements.*#%Screen Grid"
 
         elements = glob.glob(self.path+'/f_*')#get all elements
         for i in range(0,len(elements),1):#iterate into module format
@@ -96,10 +96,10 @@ class Screen(VINFO):
             stitched.append(elements[i])
         #combine and change text
         elements = "from " + " import *\nfrom ".join(elements) + " import *\n"
-        text = re.sub(pattern, "#Screen Elements\n" + elements + "\n#Screen Grid", text, flags=re.DOTALL)
+        text = re.sub(pattern, "#%Screen Elements\n" + elements + "\n#%Screen Grid", text, flags=re.DOTALL)
 
         #Modules
-        pattern = r"#Screen Modules.*#Handle Arguments"
+        pattern = r"#%Screen Modules.*#%Handle Arguments"
 
         modules = glob.glob(self.m_path+'/m_*')#get all modules
         for i in range(0,len(modules),1):#iterate into module format
@@ -108,7 +108,7 @@ class Screen(VINFO):
             stitched.append(modules[i])
         #combine and change text
         modules = "from " + " import *\nfrom ".join(modules) + " import *\n"
-        text = re.sub(pattern, "#Screen Modules\n" + modules + "\n#Handle Arguments", text, flags=re.DOTALL)
+        text = re.sub(pattern, "#%Screen Modules\n" + modules + "\n#%Handle Arguments", text, flags=re.DOTALL)
 
         #write out
         with open(self.p_project+"/"+self.script,"w") as f:
