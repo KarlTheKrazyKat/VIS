@@ -96,4 +96,4 @@ class Project(VINFO):
         new_screen = self.getScreen(screen)
         if not new_screen is None:
             root.Active=False
-            new_screen.load()
+            new_screen.load()#Why does this work differently?
