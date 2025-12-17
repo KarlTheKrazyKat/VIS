@@ -91,9 +91,4 @@ class Project(VINFO):
         scr = self.getScreen(screen)
         return scr
 
-    def switchScreen(self,screen:str,root:Root):
-        """Switches from the current screen to the selected screen"""
-        new_screen = self.getScreen(screen)
-        if not new_screen is None:
-            root.Active=False
-            new_screen.load()#Why does this work differently?
+    #removed switchscreen
