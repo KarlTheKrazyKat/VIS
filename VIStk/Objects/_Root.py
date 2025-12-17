@@ -8,9 +8,9 @@ class Root(Tk, Window):
         super().__init__(*args,**kwargs)
         self.WindowGeometry = WindowGeometry(self)
         self.Active = True
-        self.protocol("WM_DELETE_WINDOW", self.onclose)
+        self.protocol("WM_DELETE_WINDOW", self.unload)
     
-    def onclose(self):
+    def unload(self):
         """Closes the window neatly for VIStk"""
         for element in self.winfo_children():
             try:
@@ -18,4 +18,3 @@ class Root(Tk, Window):
             except: pass
         
         self.Active = False
-        
