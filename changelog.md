@@ -79,6 +79,17 @@
 
 - fixed an error on VIS project setup
 
+0.3.12.18
+
+- screen switching slightly functional
+- changed method of mainloop replacement
+
+0.3.12.19
+
+- Updated form.zip
+- changed from regular comments to `#%` pattern
+- - works in tandem with VIS extension to make VIS headers stand out
+
 ## Upcoming
 
 0.3.13
