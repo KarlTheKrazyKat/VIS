@@ -58,9 +58,10 @@ def validName(name:str):
     
 
 class VINFO():
-    """Overarching control structure within the /.VIS/ folder
-    """
+    """Overarching control structure within the /.VIS/ project folder"""
     def __init__(self):
+        """Creates an overarching control stricture within the /.VIS/ project folder
+        """
         if getPath() == None:
             wd = os.getcwd()
             os.mkdir(wd+"\\.VIS")
@@ -77,7 +78,7 @@ class VINFO():
             #DO NOT MESS WITH THE TEMPLATE HEADERS
 
             title = input("Enter a name for the VIS project: ")
-            self.title = title
+            self.title:str = title #Name of the project
             info = {}
             info[self.title] = {}
             info[self.title]["Screens"]={}

@@ -4,7 +4,9 @@ import shutil
 import re
 import glob
 from VIStk.Structures.VINFO import *
-import tkinter as TK
+from tkinter import *
+import importlib.util
+from pathlib import Path
 
 class Screen(VINFO):
     """A VIS screen object
@@ -135,7 +137,7 @@ class Screen(VINFO):
         else:
             return 0
 
-    def unLoad(self,root:TK.Tk) -> int:
+    def unload(self,root:Tk|Toplevel) -> int:
         """Unloads all elements on the screen"""
         for element in root.winfo_children():
             try:
@@ -144,10 +146,24 @@ class Screen(VINFO):
             #might fail to delete widgets that get deleted by earlier deletions
 
     def load(self) -> int:
-        """Loads a new screen onto the root"""
-        #should just need to run the python file now
-        #cant do that through subprocess.call when compiling
-        #can make python dlls? something like this for each screen
-        #then itll be easy to load/unload elements
-        #can even have these dlls take a parameter for the root
-        #then we can do splitscreen and windowed things if we want
+        """Loads loads this screen"""
+        spec = importlib.util.spec_from_file_location(f"{self.name}",Path(getPath()+"/"+self.script))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+    def switch(self, root:Tk|Toplevel, screen:str):
+        """Unloads the current screen and sets a new screen"""
+        self.unload(root)
+        findScreen(screen).load()
+
+def findScreen(screenname:str)->Screen:
+    """Finds a screen object from a screenname"""
+    project = VINFO()
+    #Load project info
+    with open(project.p_sinfo,"r") as f:
+        info = json.load(f)
+    
+    #Search project info
+    if not info[project.title]["Screens"].get(screenname) is None:
+        sinfo = info[project.title]["Screens"][screenname]
+        return Screen(screenname,script = sinfo["script"])

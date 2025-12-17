@@ -65,3 +65,9 @@ Accepted as:
 - `elements`
 - `E`
 - `e`
+
+## Building Screens and Modules
+
+One of the most important things to have screen switching properly function is to not destroy root. If root gets destroyed by a subprocess the program may not longer function correctly since VIStk will not be able to reuse the root to switch screens. Instead of calling root.destroy() you should set root.Active = False. The default template will break the while True loop when root.Active == False and python will stop the window by default since the script will reach its end.
+
+Therefore, equally as important is that root.mainloop() is not started. This will bypass the default screen behavior and can only be escaped on root.destroy(); Hence initiating the aforementioned error.

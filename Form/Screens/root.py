@@ -1,8 +1,9 @@
 from tkinter import *
 from tkinter import ttk
+from VIStk.Objects import Root
 import sys
 
-root = Tk()
+root = Root()
 root.title('New VIS Project')
 
 def do_focus(event=None):

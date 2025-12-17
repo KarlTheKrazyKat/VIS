@@ -6,15 +6,10 @@ import sys
 #File Specific Imports
 
 #Configure Screen
-w = 1080
-h = 720
-ws = root.winfo_screenwidth()
-hs = root.winfo_screenheight()
-x = (ws/2) - (w/2)
-y = (hs/2) - (h/2)
-root.geometry('%dx%d+%d+%d' % (w, h, x, y))
-root.title("Placeholder Title")
-root.minsize(1080,720)
+#Configure Screen
+root.Active = True
+root.WindowGeometry.setGeometry(width=66,height=66,align="center",size_style="screen_relative")
+root.title("<placeholder_title>")
 #root.iconbitmap("<project>/Images/Icons/<some_icon>")
 
 #Screen Elements
@@ -35,9 +30,11 @@ def loop():
 #Update Loop
 while True: 
     try:
-        if root.winfo_exists():
+        if root.Active:
             try:loop()
             except:pass
             root.update()
+        else:
+            break
     except:
         break

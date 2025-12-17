@@ -7,3 +7,15 @@ class Root(Tk, Window):
     def __init__(self,*args,**kwargs):
         super().__init__(*args,**kwargs)
         self.WindowGeometry = WindowGeometry(self)
+        self.Active = True
+        self.protocol("WM_DELETE_WINDOW", self.onclose)
+    
+    def onclose(self):
+        """Closes the window neatly for VIStk"""
+        for element in self.winfo_children():
+            try:
+                element.destroy()
+            except: pass
+        
+        self.Active = False
+        
