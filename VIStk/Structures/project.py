@@ -1,6 +1,7 @@
 import json
 from VIStk.Structures.VINFO import *
 from VIStk.Structures.screen import *
+from VIStk.Objects._Root import *
 
 class Project(VINFO):
     """VIS Project Object
@@ -90,3 +91,9 @@ class Project(VINFO):
         scr = self.getScreen(screen)
         return scr
 
+    def switchScreen(self,screen:str,root:Root):
+        """Switches from the current screen to the selected screen"""
+        new_screen = self.getScreen(screen)
+        if not new_screen is None:
+            root.Active=False
+            new_screen.load()

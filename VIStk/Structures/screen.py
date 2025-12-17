@@ -145,7 +145,7 @@ class Screen(VINFO):
             except: pass 
             #might fail to delete widgets that get deleted by earlier deletions
 
-    def load(self) -> int:
+    def load(self):
         """Loads loads this screen"""
         spec = importlib.util.spec_from_file_location(f"{self.name}",Path(getPath()+"/"+self.script))
         module = importlib.util.module_from_spec(spec)
