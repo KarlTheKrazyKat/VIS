@@ -22,7 +22,7 @@ class Root(Tk, Window):
     def exitQueue(self, action, *args, **kwargs):
         """Sets a function to call in the exit loop. Use for redirects."""
         self.exitAction = action
-        self.exitArgs = [*args]
+        self.exitArgs = tuple(*args)
         self.exitKwargs = {**kwargs}
 
     def exitAct(self):
