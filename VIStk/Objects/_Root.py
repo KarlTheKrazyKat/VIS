@@ -18,3 +18,14 @@ class Root(Tk, Window):
             except: pass
         
         self.Active = False
+
+    def exitQueue(self, action:function, *args, **kwargs):
+        """Sets a function to call in the exit loop. Use for redirects."""
+        self.exitAction = action
+        self.exitArgs = [*args]
+        self.exitKwargs = {**kwargs}
+
+    def exitAct(self):
+        """Executes the exitAction"""
+        if not self.exitAction is None:
+            self.exitAction(tuple(self.exitArgs),self.exitKwargs)
