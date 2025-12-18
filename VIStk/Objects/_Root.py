@@ -9,6 +9,9 @@ class Root(Tk, Window):
         self.WindowGeometry = WindowGeometry(self)
         self.Active = True
         self.protocol("WM_DELETE_WINDOW", self.unload)
+        self.exitAction = None
+        self.exitArgs = None
+        self.exitKwargs = None
     
     def unload(self):
         """Closes the window neatly for VIStk"""
