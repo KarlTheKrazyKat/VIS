@@ -156,6 +156,11 @@ class Screen(VINFO):
         self.unload(root)
         findScreen(screen).load()
 
+    def getModules(self) -> list[str]:
+        """Gets a list of all modules in the screens folder"""
+        modules = glob.glob(self.m_path+'/m_*')#get all modules
+        return modules
+
 def findScreen(screenname:str)->Screen:
     """Finds a screen object from a screenname"""
     project = VINFO()
