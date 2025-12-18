@@ -28,4 +28,12 @@ class Root(Tk, Window):
     def exitAct(self):
         """Executes the exitAction"""
         if not self.exitAction is None:
-            self.exitAction(tuple(self.exitArgs),self.exitKwargs)
+            if not self.exitArgs is None:
+                if not self.exitKwargs is None:
+                    self.exitAction(tuple(self.exitArgs),self.exitKwargs)
+                self.exitAction(tuple(self.exitArgs))
+            else:
+                if not self.exitKwargs is None:
+                    self.exitAction(self.exitKwargs)
+                else:
+                    self.exitAction()
