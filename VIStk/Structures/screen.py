@@ -156,9 +156,22 @@ class Screen(VINFO):
         self.unload(root)
         findScreen(screen).load()
 
-    def getModules(self) -> list[str]:
+    def getModules(self, script:str=None) -> list[str]:
         """Gets a list of all modules in the screens folder"""
-        modules = glob.glob(self.m_path+'/m_*')#get all modules
+        if script is None: script = self.script
+        path = self.p_project+"/"+script
+        with open(path,"r") as file:
+            modules=[]
+            for line in file:
+                splitline = line.split(" ")
+                if splitline[0] == "from" or splitline[0] == "import":
+                    if splitline[1].split(".")[0] in ["Screens", "modules"]:
+                        modulename = splitline[1].replace("\n","")
+                        modules.append(modulename)
+                        modulepath = modulename.replace(".","/")+".py"
+                        for i in self.getModules(modulepath):
+                            if not i in modules:
+                                modules.append(i)
         return modules
 
 def findScreen(screenname:str)->Screen:
