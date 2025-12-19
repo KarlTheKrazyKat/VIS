@@ -110,8 +110,8 @@ class Release():
         else:
             if exists(f"{self.project.p_project}/dist/{self.project.title}/Icons/"): shutil.rmtree(f"{self.project.p_project}/dist/{self.project.name}/Icons/")
             if exists(f"{self.project.p_project}/dist/{self.project.title}/Images/"): shutil.rmtree(f"{self.project.p_project}/dist/{self.project.name}/Images/")
-            shutil.copytree(self.project.p_project+"/Icons/",f"{self.project.p_project}/dist/{self.project.title}-{self.version.strip(" ")}/Icons/",dirs_exist_ok=True)
-            shutil.copytree(self.project.p_project+"/Images/",f"{self.project.p_project}/dist/{self.project.title}-{self.version.strip(" ")}/Images/",dirs_exist_ok=True)
+            shutil.copytree(self.project.p_project+"/Icons/",f"{self.project.p_project}/dist/{self.project.title}-{self.version.strip(' ')}/Icons/",dirs_exist_ok=True)
+            shutil.copytree(self.project.p_project+"/Images/",f"{self.project.p_project}/dist/{self.project.title}-{self.version.strip(' ')}/Images/",dirs_exist_ok=True)
         print(f"\n\nReleased new{self.version}build of {self.project.title}!")
 
     def newVersion(self):
