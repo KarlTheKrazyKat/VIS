@@ -7,6 +7,9 @@ from VIStk.Structures.VINFO import *
 from tkinter import *
 import importlib.util
 from pathlib import Path
+import sys
+import gc
+import os
 
 class Screen(VINFO):
     """A VIS screen object
@@ -142,14 +145,16 @@ class Screen(VINFO):
         for element in root.winfo_children():
             try:
                 element.destroy()
+                del element
             except: pass 
             #might fail to delete widgets that get deleted by earlier deletions
+        gc.collect()
 
     def load(self):
         """Loads loads this screen"""
-        spec = importlib.util.spec_from_file_location(f"{self.name}",Path(getPath()+"/"+self.script))
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
+        Path(getPath()+"/"+self.script)
+        os.execl(sys.executable, *(sys.executable,Path(getPath()+"/"+self.script)))
+        
 
     def switch(self, root:Tk|Toplevel, screen:str):
         """Unloads the current screen and sets a new screen"""
