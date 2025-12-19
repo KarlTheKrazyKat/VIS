@@ -94,7 +94,7 @@ class Release():
             f.writelines(spec_list)
             f.write(collect)
 
-        print(f"Finished creating project.spec for {self.project.title} {self.version if not self.version =="" else "current"}")#advanced version will improve this
+        print(f"Finished creating project.spec for {self.project.title} {self.version if not self.version =='' else 'current'}")#advanced version will improve this
 
     def clean(self):
         """Cleans up build environment to save space
