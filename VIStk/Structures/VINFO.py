@@ -111,7 +111,7 @@ class VINFO():
 
 
         #Need to get current python location where VIS is installed
-        self.p_vis = subprocess.check_output('python -c "import os, sys; print(os.path.dirname(sys.executable))"').decode().strip("\r\n")+"\\Lib\\site-packages\\VIS\\"
+        self.p_vis = subprocess.check_output('python -c "import os, sys; print(os.path.dirname(sys.executable))"',shell=True).decode().strip("\r\n")+"\\Lib\\site-packages\\VIS\\"
 
 
         self.p_project = getPath()
