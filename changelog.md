@@ -90,6 +90,10 @@
 - changed from regular comments to `#%` pattern
 - - works in tandem with VIS extension to make VIS headers stand out
 
+0.3.13
+
+- Screen load now uses `os.execl` to replace current process with one running the new screen
+
 ## Upcoming
 
 0.3.13
