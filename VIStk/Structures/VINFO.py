@@ -26,7 +26,11 @@ def getPath():
             for i in range(0,sto,1): #iterate on sto to step backwards and search for project info
                 step = "../" + step
             if os.path.exists(step+".VIS/"):
-                return open(step+".VIS/path.cfg","r").read().replace("\\","/") #return stored path
+                path = open(step+".VIS/path.cfg","r").read().replace("\\","/") #return stored path
+                if os.path.exists(path):
+                    return path
+                else:
+                    return step.replace("\\","/") #return location of .VIS
             else:
                 if os.path.exists(step):
                     sto += 1
