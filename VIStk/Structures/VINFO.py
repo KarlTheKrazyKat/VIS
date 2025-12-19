@@ -121,7 +121,7 @@ class VINFO():
         self.p_project = getPath()
         self.p_vinfo = self.p_project + "/.VIS"
         self.p_sinfo = self.p_vinfo + "/project.json"
-        with open(self.p_sinfo,"r") as f: 
+        with open(self.p_project+"/"+self.p_sinfo,"r") as f: 
             info = json.load(f)
             self.title = list(info.keys())[0]
             self.version = info[self.title]["metadata"]["version"]
