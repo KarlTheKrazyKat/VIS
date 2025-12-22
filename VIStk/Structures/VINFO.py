@@ -4,8 +4,9 @@ import zipfile
 import shutil
 import subprocess
 import sys
+import VIStk
 
-VISROOT = min(sys.path, key=len) + "/Lib/site-packages/VIStk/"
+VISROOT = VIStk.__file__.replace("__init__.pyc","").replace("__init__.py","")
 
 #Copied from source
 #https://stackoverflow.com/a/75246706
@@ -16,28 +17,16 @@ def unzip_without_overwrite(src_path, dst_dir):
             if not os.path.exists(file_path):
                 zf.extract(member, dst_dir)
 
-def getPath():
-    """Searches for .VIS folder and returns from path.cfg
+def getPath()->str:
+    """Searches for .VIS folder
     """
-    sto = 0
-    while True:
-        try:
-            step=""
-            for i in range(0,sto,1): #iterate on sto to step backwards and search for project info
-                step = "../" + step
-            if os.path.exists(step+".VIS/"):
-                path = open(step+".VIS/path.cfg","r").read().replace("\\","/") #return stored path
-                if os.path.exists(path):
-                    return path
-                else:
-                    return step.replace("\\","/") #return location of .VIS
-            else:
-                if os.path.exists(step):
-                    sto += 1
-                else:
-                    return None #return none if cant escape more
-        except:
-            return None #if failed return none
+    wd = os.path.abspath(__file__).replace("\\","/").split("/")
+    for i in range(len(wd),0,-1):
+        if os.path.exists("/".join(wd[:i])+"/.VIS/"):
+            return "/".join(wd[:i])
+    else:
+        return None
+
         
 def validName(name:str):
     """Checks if provided path is a valid filename
@@ -67,10 +56,8 @@ class VINFO():
         """Creates an overarching control stricture within the /.VIS/ project folder
         """
         if getPath() == None:
-            wd = os.getcwd()
+            wd = sys.argv[0]
             os.mkdir(wd+"\\.VIS")
-            open(wd+"/.VIS/path.cfg","w").write(wd) if os.path.exists(wd+"/.VIS/path.cfg") else open(wd+"/.VIS/path.cfg", 'a').write(wd)
-            print(f"Stored project path in path.cfg as {wd} in {wd}/.VIS/path.cfg")
 
             unzip_without_overwrite(VISROOT+"Form.zip",wd)
             print(f"Copied structure to {wd}")
@@ -114,9 +101,8 @@ class VINFO():
             print(f"Setup project.json for project {self.title} in {wd}/.VIS/")
 
 
-        #Need to get current python location where VIS is installed
-        self.p_vis = subprocess.check_output('python -c "import os, sys; print(os.path.dirname(sys.executable))"',shell=True).decode().strip("\r\n")+"\\Lib\\site-packages\\VIS\\"
-
+        #Get VIS Root location
+        self.p_vis = VIStk.__file__.replace("__init__.pyc","").replace("__init__.py","")
 
         self.p_project = getPath()
         self.p_vinfo = self.p_project + "/.VIS"
