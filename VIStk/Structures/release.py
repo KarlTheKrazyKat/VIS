@@ -11,12 +11,15 @@ info = {}
 
 class Release(Project):
     """A VIS Release object"""
-    def __init__(self, version:str="",type:str="",note:str=""):
+    def __init__(self, flag:str="",type:str="",note:str=""):
         """Creates a Release object to release or examine a releaes of a project"""
         super().__init__()
-        self.version = version
         self.type = type
+        self.flag = flag
         self.note = note
+
+        self.location = self.dist_location.replace(".",self.p_project)
+        self._internal = f"{self.location}{self.title}-{self.flag}/_internal/"
 
     def build(self):
         """Build project spec file for release
@@ -24,14 +27,32 @@ class Release(Project):
         
         print(f"Creating project.spec for {self.name}")
 
+        #Ensure spec template has excludes
+        with open(self.p_vinfo+"/Templates/spec.txt","r+") as f:
+            oldspec = f.readlines()
+            newspec=""
+            for line in oldspec:
+                if "excludes" in line:
+                    line = "\texcludes=" + str(self.excludes) + ",\n"
+                newspec = newspec + line
+            f.seek(0)
+            f.write(newspec)
+            f.truncate()
+        
+        #Load Spec & Collect
         with open(self.p_vinfo+"/Templates/spec.txt","r") as f:
             spec = f.read()
         with open(self.p_vinfo+"/Templates/collect.txt","r") as f:
             collect = f.read()
         
+        #Initialize locations for builds
         spec_list = []
         name_list = []
+        if os.path.exists(self.p_vinfo+"/Build"):
+            os.rmdir(self.p_vinfo+"/Build")
         os.mkdir(self.p_vinfo+"/Build")
+
+        #Loop and Build Screens as .txt
         for i in self.screenlist:
             if i.release:
                 name_list.append(i.name)
@@ -40,10 +61,10 @@ class Release(Project):
                 else:
                     icon = self.d_icon
                 spec_list.append(spec.replace("$name$",i.name))
-                spec_list[len(spec_list)-1] = spec_list[len(spec_list)-1].replace("$icon$",icon)
-                spec_list[len(spec_list)-1] = spec_list[len(spec_list)-1].replace("$file$",i.script)
+                spec_list[-1] = spec_list[-1].replace("$icon$",icon)
+                spec_list[-1] = spec_list[-1].replace("$file$",i.script)
 
-                #build metadata
+                #Load metadata template
                 with open(self.p_templates+"/version.txt","r") as f:
                     meta = f.read()
 
@@ -65,6 +86,7 @@ class Release(Project):
                 meta = meta.replace("$sm$",minor)
                 meta = meta.replace("$sp$",patch)
 
+                #Update Company Info
                 if self.company != None:
                     meta = meta.replace("$company$",self.company)
                     meta = meta.replace("$year$",str(datetime.datetime.now().year))
@@ -72,53 +94,86 @@ class Release(Project):
                     meta = meta.replace("            VALUE \"CompanyName\",      VER_COMPANYNAME_STR\n","")
                     meta = meta.replace("            VALUE \"LegalCopyright\",   VER_LEGALCOPYRIGHT_STR\n","")
                     meta = meta.replace("#define VER_LEGAL_COPYRIGHT_STR     \"Copyright © $year$ $company$\\0\"\n\n","")
+                
+                #Update Name & Description
                 meta = meta.replace("$name$",i.name)
                 meta = meta.replace("$desc$",i.desc)
                 
+                #Write Screen Version Metadata to .txt
                 with open(self.p_vinfo+f"/Build/{i.name}.txt","w") as f:
                     f.write(meta)
-                spec_list[len(spec_list)-1] = spec_list[len(spec_list)-1].replace("$meta$",self.p_vinfo+f"/Build/{i.name}.txt")
+
+                #Speclist point to correct path
+                spec_list[-1] = spec_list[-1].replace("$meta$",self.p_vinfo+f"/Build/{i.name}.txt")
                 spec_list.append("\n\n")
 
+        #Create _a, _pyz, _exe and insert into Collect
         insert = ""
         for i in name_list:
             insert=insert+"\n\t"+i+"_exe,\n\t"+i+"_a.binaries,\n\t"+i+"_a.zipfiles,\n\t"+i+"_a.datas,"
         collect = collect.replace("$insert$",insert)
-        collect = collect.replace("$version$",self.name+"-"+self.version) if not self.version == "" else collect.replace("$version$",self.name)
+
+        #Fill Collect Name
+        collect = collect.replace("$version$",self.name+"-"+self.flag) if not self.flag == "" else collect.replace("$version$",self.name)
         
+        #Header for specfile
         header = "# -*- mode: python ; coding: utf-8 -*-\n\n\n"
 
+        #Write Spec
         with open(self.p_vinfo+"/project.spec","w") as f:
             f.write(header)
-        with open(self.p_vinfo+"/project.spec","a") as f:
             f.writelines(spec_list)
             f.write(collect)
 
-        print(f"Finished creating project.spec for {self.title} {self.version if not self.version =='' else 'current'}")#advanced version will improve this
+        #Announce Completion
+        print(f"Finished creating project.spec for {self.title} {self.flag if not self.flag =='' else 'current'}")#advanced version will improve this
 
     def clean(self):
-        """Cleans up build environment to save space
-        """
+        """Cleans up build environment to save space and appends to _internal"""
+        #Announce Removal
         print("Cleaning up build environment")
-        shutil.rmtree(self.p_vinfo+"/Build")
+
+        #Remove Build Folder
+        if exists(self.p_vinfo+"/Build"):
+            shutil.rmtree(self.p_vinfo+"/Build")
+
+        #Announce Appending Screen Data
         print("Appending Screen Data To Environment")
-        if self.version == " ":
-            if exists(f"{self.p_project}/dist/{self.title}/Icons/"): shutil.rmtree(f"{self.p_project}/dist/{self.title}/Icons/")
-            if exists(f"{self.p_project}/dist/{self.title}/Images/"): shutil.rmtree(f"{self.p_project}/dist/{self.title}/Images/")
-            shutil.copytree(self.p_project+"/Icons/",f"{self.p_project}/dist/{self.title}/Icons/",dirs_exist_ok=True)
-            shutil.copytree(self.p_project+"/Images/",f"{self.p_project}/dist/{self.title}/Images/",dirs_exist_ok=True)
+
+        #Append Screen Data
+        if self.flag == "":
+            #Remove Pre-existing Folders for Icons & Images
+            if exists(f"{self.location}{self.title}/Icons/"): shutil.rmtree(f"{self.location}{self.title}/Icons/")
+            if exists(f"{self.location}{self.title}/Images/"): shutil.rmtree(f"{self.location}{self.title}/Images/")
+
+            #Copy Project Folder for Icons & Images
+            shutil.copytree(self.p_project+"/Icons/",f"{self.location}{self.title}/Icons/",dirs_exist_ok=True)
+            shutil.copytree(self.p_project+"/Images/",f"{self.location}{self.title}/Images/",dirs_exist_ok=True)
         else:
-            if exists(f"{self.p_project}/dist/{self.title}/Icons/"): shutil.rmtree(f"{self.p_project}/dist/{self.name}/Icons/")
-            if exists(f"{self.p_project}/dist/{self.title}/Images/"): shutil.rmtree(f"{self.p_project}/dist/{self.name}/Images/")
-            shutil.copytree(self.p_project+"/Icons/",f"{self.p_project}/dist/{self.title}-{self.version.strip(' ')}/Icons/",dirs_exist_ok=True)
-            shutil.copytree(self.p_project+"/Images/",f"{self.p_project}/dist/{self.title}-{self.version.strip(' ')}/Images/",dirs_exist_ok=True)
-        print(f"\n\nReleased new{self.version}build of {self.title}!")
+            #Remove Pre-existing Folders for Icons & Images
+            if exists(f"{self.location}{self.title}/Icons/"): shutil.rmtree(f"{self.location}{self.name}/Icons/")
+            if exists(f"{self.location}{self.title}/Images/"): shutil.rmtree(f"{self.location}{self.name}/Images/")
+
+            #Copy Project Folder for Icons & Images
+            shutil.copytree(self.p_project+"/Icons/",f"{self.location}{self.title}-{self.flag}/Icons/",dirs_exist_ok=True)
+            shutil.copytree(self.p_project+"/Images/",f"{self.location}{self.title}-{self.flag}/Images/",dirs_exist_ok=True)
+
+        #Append Excluded Modules to _internal
+        for i in self.excludes:
+            if os.path.exists(self._internal+i):
+                shutil.rmtree(self._internal+i)
+            shutil.copytree(src=VISROOT.replace("VIStk",i), dst=self._internal+i, dirs_exist_ok=True)
+
+        #Announce Completion
+        print(f"\n\nReleased a new{" "+self.flag+" " if not self.flag is None else ""}build of {self.title}!")
 
     def newVersion(self):
-        """Updates the project version, PERMANENT, cannot be undone
-        """
+        """Updates the project version, PERMANENT, cannot be undone"""
+        #Split Version for Addition
         old = str(self.version)
         vers = self.version.split(".")
+
+        #Interate Version Number
         if self.version == "Major":
             vers[0] = str(int(vers[0])+1)
             vers[1] = str(0)
@@ -128,38 +183,25 @@ class Release(Project):
             vers[2] = str(0)
         if self.version == "Patch":
             vers[2] = str(int(vers[2])+1)
-
+        
+        #Set Version Number
         self.setVersion(f"{vers[0]}.{vers[1]}.{vers[2]}")
-        self.project = VINFO()
+
+        #Announce Completation
         print(f"Updated Version {old}=>{self.version}")
 
-    def makeRelease(self):
-        """Releases a version of your project
-        """
-        match self.version:
-            case "a":
-                self.build("alpha")
-                subprocess.call(f"pyinstaller {self.p_vinfo}/project.spec --noconfirm --distpath {self.p_project}/dist/ --log-level FATAL")
-                self.clean(" alpha ")
-            case "b":
-                self.build("beta")
-                subprocess.call(f"pyinstaller {self.p_vinfo}/project.spec --noconfirm --distpath {self.p_project}/dist/ --log-level FATAL")
-                self.clean(" beta ")
-            case "c":
-                self.newVersion(type)
-                self.build()
-                subprocess.call(f"pyinstaller {self.p_vinfo}/project.spec --noconfirm --distpath {self.p_project}/dist/ --log-level FATAL")
-                self.clean()
-            case "sync":
-                self.build("alpha")
-                subprocess.call(f"pyinstaller {self.p_vinfo}/project.spec --noconfirm --distpath {self.p_project}/dist/ --log-level FATAL")
-                self.clean(" alpha ")
-                self.build("beta")
-                subprocess.call(f"pyinstaller {self.p_vinfo}/project.spec --noconfirm --distpath {self.p_project}/dist/ --log-level FATAL")
-                self.clean(" beta ")
-                self.build()
-                subprocess.call(f"pyinstaller {self.p_vinfo}/project.spec --noconfirm --distpath {self.p_project}/dist/ --log-level FATAL")
-                self.clean()
-                print("\t- alpha\n\t- beta\n\t- current")
-            case _:
-                print(f"Could not release Project Version {self.version}")
+    def release(self):
+        """Releases a version of your project"""
+        #Check Version
+        if self.type == "":
+            self.newVersion()
+
+        #Build
+        self.build()
+
+        #Announce and Run PyInstaller
+        print(f"Running PyInstaller for {self.name}")
+        subprocess.call(f"pyinstaller {self.p_vinfo}/project.spec --noconfirm --distpath {self.location} --log-level FATAL")
+
+        #Clean Environment
+        self.clean()

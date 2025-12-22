@@ -22,6 +22,9 @@ class Project(VINFO):
                              exists=True)
                 self.screenlist.append(scr)
             self.d_icon = info[self.name]["defaults"]["icon"]
+
+            self.excludes:list = info[self.name]["release_info"]["excludes"]
+            self.dist_location:str = info[self.name]["release_info"]["location"]
     
     def newScreen(self,screen:str) -> int:
         """Creates a new screen with some prompting
@@ -91,4 +94,9 @@ class Project(VINFO):
         scr = self.getScreen(screen)
         return scr
 
-    #removed switchscreen
+    def saveState(self)->None:
+        """Saves the current project state to project.json | WILL FINISH THIS LATER"""
+        with open(self.p_sinfo, "w") as f:
+            info = {}
+            info[self.name] = {}
+            info[self.name]["Screens"] = {}

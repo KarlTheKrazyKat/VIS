@@ -20,7 +20,7 @@ def unzip_without_overwrite(src_path, dst_dir):
 def getPath()->str:
     """Searches for .VIS folder
     """
-    wd = os.path.abspath(__file__).replace("\\","/").split("/")
+    wd = os.getcwd().replace("\\","/").split("/")
     for i in range(len(wd),0,-1):
         if os.path.exists("/".join(wd[:i])+"/.VIS/"):
             return "/".join(wd[:i])
@@ -56,7 +56,7 @@ class VINFO():
         """Creates an overarching control stricture within the /.VIS/ project folder
         """
         if getPath() == None:
-            wd = sys.argv[0]
+            wd = os.getcwd()
             os.mkdir(wd+"\\.VIS")
 
             unzip_without_overwrite(VISROOT+"Form.zip",wd)
@@ -127,6 +127,7 @@ class VINFO():
             info = json.load(f)
 
         info[self.title]["metadata"]["version"] = version
+        self.version = version
 
         with open(self.p_sinfo,"w") as f:
             json.dump(info,f,indent=4)
