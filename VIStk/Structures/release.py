@@ -148,7 +148,7 @@ class Release(Project):
             shutil.copytree(self.p_project+"/Images/",f"{self.location}{self.title}-{self.flag}/Images/",dirs_exist_ok=True)
 
         #Announce Completion
-        print(f"\n\nReleased a new{" "+self.flag+" " if not self.flag is None else ""}build of {self.title}!")
+        print(f"\n\nReleased a new{' '+self.flag+' ' if not self.flag is None else ''}build of {self.title}!")
 
     def newVersion(self):
         """Updates the project version, PERMANENT, cannot be undone"""

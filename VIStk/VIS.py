@@ -46,9 +46,27 @@ def __main__():
                 print("Screen does not exist")
 
         case "release" | "Release" | "r" | "R":
-            if len(inp) == 4:
-                #newRelease(inp[2],inp[3])
-                pass
-            else:
-                #newRelease(inp[2])
-                pass
+            flag:str=""
+            type:str=""
+            note:str=""
+
+            args = inp[2:]
+            i=0
+            while i < len(args):
+                if "-" == args[i][0]:
+                    match args[i][1:]:
+                        case "Flag" | "flag" | "F" | "f":
+                            flag = args[i+1]
+                            i += 2
+                        case "Type" | "type" | "T" | "t":
+                            type = args[i+1]
+                            i += 2
+                        case "Note" | "note" | "N" | "n":
+                            note = args[i+1]
+                            i += 2
+                        case _:
+                            print(f"Unknown Argument \"{args[i]}\"")
+                            return None
+            rel = Release(flag,type,note)
+            rel.release()
+            rel.clean()
