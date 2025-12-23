@@ -68,6 +68,4 @@ def __main__():
                             print(f"Unknown Argument \"{args[i]}\"")
                             return None
             rel = Release(flag,type,note)
-            rel.build()
             rel.release()
-            rel.clean()
