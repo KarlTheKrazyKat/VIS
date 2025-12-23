@@ -1,7 +1,7 @@
 from tkinter import *
 from tkinter import ttk
-import subprocess
 import os
+import sys
 
 class MenuItem():
     """Each item in the menu is created from the corresponding .json file. Each path should be given relative to xyz/WOM/
@@ -29,8 +29,11 @@ class MenuItem():
     def itemPath(self):
         """Opens the given path or exe for the button
         """
+        #Should have a more VIStk way to switch screens
         if ".exe" in self.path:
+            #os.execl(self.path,*(self.path))
             os.startfile(self.path)
         else:
-            subprocess.call("pythonw.exe "+self.path)
+            os.execl(sys.executable, *(sys.executable,self.path))
+            #subprocess.call("pythonw.exe "+self.path)
         self.root.destroy()
