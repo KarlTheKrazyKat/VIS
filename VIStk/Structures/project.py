@@ -23,7 +23,6 @@ class Project(VINFO):
                 self.screenlist.append(scr)
             self.d_icon = info[self.name]["defaults"]["icon"]
 
-            self.excludes:list = info[self.name]["release_info"]["excludes"]
             self.dist_location:str = info[self.name]["release_info"]["location"]
     
     def newScreen(self,screen:str) -> int:

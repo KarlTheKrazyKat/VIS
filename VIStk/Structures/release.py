@@ -25,19 +25,8 @@ class Release(Project):
         """Build project spec file for release
         """
         
+        #Announce Spec Creation
         print(f"Creating project.spec for {self.name}")
-
-        #Ensure spec template has excludes
-        with open(self.p_vinfo+"/Templates/spec.txt","r+") as f:
-            oldspec = f.readlines()
-            newspec=""
-            for line in oldspec:
-                if "excludes" in line:
-                    line = "\texcludes=" + str(self.excludes) + ",\n"
-                newspec = newspec + line
-            f.seek(0)
-            f.write(newspec)
-            f.truncate()
         
         #Load Spec & Collect
         with open(self.p_vinfo+"/Templates/spec.txt","r") as f:
@@ -157,12 +146,6 @@ class Release(Project):
             #Copy Project Folder for Icons & Images
             shutil.copytree(self.p_project+"/Icons/",f"{self.location}{self.title}-{self.flag}/Icons/",dirs_exist_ok=True)
             shutil.copytree(self.p_project+"/Images/",f"{self.location}{self.title}-{self.flag}/Images/",dirs_exist_ok=True)
-
-        #Append Excluded Modules to _internal
-        for i in self.excludes:
-            if os.path.exists(self._internal+i):
-                shutil.rmtree(self._internal+i)
-            shutil.copytree(src=VISROOT.replace("VIStk",i), dst=self._internal+i, dirs_exist_ok=True)
 
         #Announce Completion
         print(f"\n\nReleased a new{" "+self.flag+" " if not self.flag is None else ""}build of {self.title}!")
