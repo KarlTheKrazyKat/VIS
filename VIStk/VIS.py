@@ -5,7 +5,7 @@ from importlib import metadata
 from VIStk.Structures import *
 
 inp = sys.argv
-print(f"VIS Version {metadata.version("VIStk")}")
+print(f"VIS Version {metadata.version('VIStk')}")
 
 
 #Copied from source https://stackoverflow.com/a/75246706
