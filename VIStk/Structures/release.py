@@ -38,7 +38,7 @@ class Release(Project):
         spec_list = []
         name_list = []
         if os.path.exists(self.p_vinfo+"/Build"):
-            os.rmdir(self.p_vinfo+"/Build")
+            shutil.rmtree(self.p_vinfo+"/Build")
         os.mkdir(self.p_vinfo+"/Build")
 
         #Loop and Build Screens as .txt
