@@ -4,9 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "VIStk"
-version = "0.3.13.10"
+version = "0.3.13.11"
 license = {file="LICENSE"}
-dependencies = ["tk"]
+dependencies = [
+  "pyinstaller"
+]
 description = "Visual Interfacing Structure for python using tkinter"
 requires-python = ">=3.10"
 authors = [
