@@ -29,5 +29,5 @@ $name$_exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['../Icons/$icon$.ico'],
+    icon=['../Icons/$icon$'],
     version='$meta$')

@@ -49,6 +49,11 @@ class Release(Project):
                     icon = i.icon
                 else:
                     icon = self.d_icon
+                if str.upper(sys.platform)=="WIN32":
+                    ixt = ".ico"
+                else:
+                    ixt = ".xbm"
+                icon = icon + ixt
                 spec_list.append(spec.replace("$name$",i.name))
                 spec_list[-1] = spec_list[-1].replace("$icon$",icon)
                 spec_list[-1] = spec_list[-1].replace("$file$",i.script)
