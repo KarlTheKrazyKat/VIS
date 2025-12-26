@@ -187,6 +187,16 @@ class Release(Project):
         #Build
         self.build()
 
+        #Announce and Update Required Tools
+        print("Updating pip...")
+        subprocess.call(f"python -m pip install --upgrade pip",shell=True)
+
+        print("Updating setuptools...")
+        subprocess.call(f"python -m pip install --upgrade setuptools",shell=True)
+
+        print("Updating pyinstaller...")
+        subprocess.call(f"python -m pip install --upgrade pyinstaller",shell=True)
+
         #Announce and Run PyInstaller
         print(f"Running PyInstaller for {self.name}")
         subprocess.call(f"pyinstaller {self.p_vinfo}/project.spec --noconfirm --distpath {self.location} --log-level FATAL",shell=True)

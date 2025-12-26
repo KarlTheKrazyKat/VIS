@@ -96,63 +96,55 @@
 
 ## Upcoming
 
-0.3.13
+0.3.13.15
+
+- Create binary for single screen
+- auto screen/icon might exist alredy?
+
+### Pre Official Release
+
+0.3.X: Releases
 
 - version numbering for screens control
 - Auto title screens on creation
 - Auto add icon to screen on creation
+
+0.4.X Application Settings
+
 - Edit screen settings
-
-### Pre Official Release
-
-0.3.X:
-
-- Auto title screens on creation
-- Auto add icon to screen on creation
-- Edit screen settings
-
-0.4.X
-
-- Modify default imports
 - Set default screen size
 - Set specific screen size
 - Screen minsize option
 - Screen open location options
 - Open fullscreen (maybe)
 
-0.5.X
+0.5.X Defaults
 
-- Create _module() function by default on element creation
+- Modify default imports
+- Default templates
+
+0.6.X Keyboard Navigation
+
 - Enable/Disable Navigation
 - More Navigation tools
 
-0.6.X
+0.7.X Updating Tools
 
 - Update tools to ensure that updating VIS will not break code
-- Rework code to make simpler
-- Yes/No handler for prompts
-- More robust project.py
-- Consider where project name is stored
+- Tools to update created binaries
 
-0.7.X
+0.8.X Advanced Creation and Restoration
 
 - Create VIS project in new folder
 - Default .gitignore for VIS projects
 - Repair broken screens to use templates
-- Custom templates and template searching
 
-0.8.X
+0.9.X Vis Widgets
 
 - Expand custom frames
 - Scrollable frame
 - Scrollable menu
 - More menu options
-
-0.9.X
-
-- Explore .EXE options
-- - Using dlls?
-- - Passing root rather than destroying root to launch new windows
 
 1.0.0
 
