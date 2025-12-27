@@ -131,3 +131,15 @@ class VINFO():
 
         with open(self.p_sinfo,"w") as f:
             json.dump(info,f,indent=4)
+
+    def restoreAll(self):
+        """Undoes screen isolation"""
+        with open(self.p_sinfo,"r") as f:
+            info = json.load(f)
+
+        for i in info[self.title]["Screens"]:
+            if info[self.title]["Screens"][i]["release"] is None:
+                info[self.title]["Screens"][i]["release"] = True
+
+        with open(self.p_sinfo,"w") as f:
+            json.dump(info,f,indent=4)

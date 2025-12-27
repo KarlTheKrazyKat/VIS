@@ -155,7 +155,6 @@ class Screen(VINFO):
         Path(getPath()+"/"+self.script)
         os.execl(sys.executable, *(sys.executable,Path(getPath()+"/"+self.script)))
         
-
     def switch(self, root:Tk|Toplevel, screen:str):
         """Unloads the current screen and sets a new screen"""
         self.unload(root)
@@ -178,6 +177,24 @@ class Screen(VINFO):
                             if not i in modules:
                                 modules.append(i)
         return modules
+    
+    def isolate(self):
+        """Disabled releasing of other screens temporarily by settings them to None"""
+        with open(self.p_sinfo,"r") as f:
+            info = json.load(f)
+            
+        for i in info[self.title]["Screens"]:
+            if i == self.name:
+                if info[self.title]["Screens"][i]["release"] is True:
+                    pass
+                else:
+                    print("Screen is not setup to release.")
+            else:
+                if info[self.title]["Screens"][i]["release"] is True:
+                    info[self.title]["Screens"][i]["release"] = None
+
+        with open(self.p_sinfo,"w") as f:
+            json.dump(info,f,indent=4)
 
 def findScreen(screenname:str)->Screen:
     """Finds a screen object from a screenname"""
@@ -190,3 +207,4 @@ def findScreen(screenname:str)->Screen:
     if not info[project.title]["Screens"].get(screenname) is None:
         sinfo = info[project.title]["Screens"][screenname]
         return Screen(screenname,script = sinfo["script"])
+    return None

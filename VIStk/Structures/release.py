@@ -201,13 +201,13 @@ class Release(Project):
 
         #Announce and Update Required Tools
         print("Updating pip...")
-        subprocess.call(f"python -m pip install --upgrade pip",shell=True)
+        subprocess.call(f"python -m pip install --upgrade pip --quiet",shell=True)
 
         print("Updating setuptools...")
-        subprocess.call(f"python -m pip install --upgrade setuptools",shell=True)
+        subprocess.call(f"python -m pip install --upgrade setuptools --quiet",shell=True)
 
         print("Updating pyinstaller...")
-        subprocess.call(f"python -m pip install --upgrade pyinstaller",shell=True)
+        subprocess.call(f"python -m pip install --upgrade pyinstaller --quiet",shell=True)
 
         #Announce and Run PyInstaller
         print(f"Running PyInstaller for {self.name}")

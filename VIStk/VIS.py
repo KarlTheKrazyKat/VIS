@@ -49,8 +49,19 @@ def __main__():
             flag:str=""
             type:str=""
             note:str=""
+            argstart = 2
 
-            args = inp[2:]
+            if inp[2] in ["Screen", "screen","S","s"]:
+                argstart = 4
+                screen = findScreen(inp[3])
+                if not screen is None:
+                    screen.isolate()
+
+                else:
+                    print(f"Cannot Locate Screen: \"{inp[3]}\"")
+                    return None
+
+            args = inp[argstart:]
             i=0
             while i < len(args):
                 if "-" == args[i][0]:
@@ -67,5 +78,7 @@ def __main__():
                         case _:
                             print(f"Unknown Argument \"{args[i]}\"")
                             return None
+
             rel = Release(flag,type,note)
             rel.release()
+            rel.restoreAll()
