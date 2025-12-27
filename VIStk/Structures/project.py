@@ -24,6 +24,7 @@ class Project(VINFO):
             self.d_icon = info[self.name]["defaults"]["icon"]
 
             self.dist_location:str = info[self.name]["release_info"]["location"]
+            self.hidden_imports:list[str] = info[self.name]["release_info"]["hidden_imports"]
     
     def newScreen(self,screen:str) -> int:
         """Creates a new screen with some prompting

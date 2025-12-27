@@ -28,6 +28,18 @@ class Release(Project):
         #Announce Spec Creation
         print(f"Creating project.spec for {self.name}")
         
+        #Ensure spec template has hidden imports
+        with open(self.p_vinfo+"/Templates/spec.txt","r+") as f:
+            oldspec = f.readlines()
+            newspec=""
+            for line in oldspec:
+                if "hiddenimports" in line:
+                    line = "\thiddenimports=" + str(self.hidden_imports) + ",\n"
+                newspec = newspec + line
+            f.seek(0)
+            f.write(newspec)
+            f.truncate()
+
         #Load Spec & Collect
         with open(self.p_vinfo+"/Templates/spec.txt","r") as f:
             spec = f.read()
