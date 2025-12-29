@@ -53,33 +53,34 @@ def __main__():
             note:str=""
             argstart = 2
 
-            if inp[2] in ["Screen", "screen","S","s"]:
-                argstart = 4
-                screen = findScreen(inp[3])
-                if not screen is None:
-                    screen.isolate()
+            if len(inp) >= 2:
+                if inp[2] in ["Screen", "screen","S","s"]:
+                    argstart = 4
+                    screen = findScreen(inp[3])
+                    if not screen is None:
+                        screen.isolate()
 
-                else:
-                    print(f"Cannot Locate Screen: \"{inp[3]}\"")
-                    return None
+                    else:
+                        print(f"Cannot Locate Screen: \"{inp[3]}\"")
+                        return None
 
-            args = inp[argstart:]
-            i=0
-            while i < len(args):
-                if "-" == args[i][0]:
-                    match args[i][1:]:
-                        case "Flag" | "flag" | "F" | "f":
-                            flag = args[i+1]
-                            i += 2
-                        case "Type" | "type" | "T" | "t":
-                            type = args[i+1]
-                            i += 2
-                        case "Note" | "note" | "N" | "n":
-                            note = args[i+1]
-                            i += 2
-                        case _:
-                            print(f"Unknown Argument \"{args[i]}\"")
-                            return None
+                args = inp[argstart:]
+                i=0
+                while i < len(args):
+                    if "-" == args[i][0]:
+                        match args[i][1:]:
+                            case "Flag" | "flag" | "F" | "f":
+                                flag = args[i+1]
+                                i += 2
+                            case "Type" | "type" | "T" | "t":
+                                type = args[i+1]
+                                i += 2
+                            case "Note" | "note" | "N" | "n":
+                                note = args[i+1]
+                                i += 2
+                            case _:
+                                print(f"Unknown Argument \"{args[i]}\"")
+                                return None
 
             rel = Release(flag,type,note)
             rel.release()
