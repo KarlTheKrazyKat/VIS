@@ -110,7 +110,7 @@ class Release(Project):
                     f.write(meta)
 
                 #Speclist point to correct path
-                spec_list[-1] = spec_list[-1].replace("$meta$",self.p_vinfo+f"/Build/{i.name}.txt")
+                spec_list[-1] = spec_list[-1].replace("$meta$",f"./Build/{i.name}.txt")
                 spec_list.append("\n\n")
 
         #Create _a, _pyz, _exe and insert into Collect
@@ -213,7 +213,7 @@ class Release(Project):
 
         #Announce and Run PyInstaller
         print(f"Running PyInstaller for {self.name}")
-        subprocess.call(f"pyinstaller {self.p_vinfo}/project.spec --noconfirm --distpath {self.location} --log-level FATAL",shell=True)
+        subprocess.call(f"pyinstaller {self.p_vinfo}/project.spec --noconfirm --distpath {self.location} --log-level FATAL",shell=True,cwd=self.p_vinfo)
 
         #Clean Environment
         self.clean()
