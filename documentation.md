@@ -66,6 +66,42 @@ Accepted as:
 - `E`
 - `e`
 
+### Releasing Binaries
+
+Compile and release a binary for current operating system.
+
+For the entire project:
+
+```cmd
+VIS release -f <suffix> -t <type> -n <note>
+```
+
+For a single screen:
+
+```cmd
+VIS release Screen <screen_name> -f <suffix> -t <type> -n <note>
+```
+
+Accepted as:
+
+- `Release`
+- `release`
+- `R`
+- `r`
+
+and:
+
+- `Screen`
+- `screen`
+- `S`
+- `s`
+
+Where:
+
+- `<suffix>` is the desired suffix for the binary destination folder
+- `<type>` is the type of iteration. one of [Major, Minor, Patch]
+- `<note>` is a note for the release (dont think this is actually used)
+
 ## Building Screens and Modules
 
 ### Warnings

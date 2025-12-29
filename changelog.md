@@ -94,16 +94,11 @@
 
 - Screen load now uses `os.execl` to replace current process with one running the new screen
 
-## Upcoming
-
-0.3.13.15
+0.3.13.24
 
 - Create binary for single screen
-- auto screen/icon might exist alredy?
 
-### Pre Official Release
-
-0.3.X: Releases
+## Upcoming
 
 - version numbering for screens control
 - Auto title screens on creation
