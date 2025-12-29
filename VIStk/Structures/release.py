@@ -160,8 +160,8 @@ class Release(Project):
             shutil.copytree(self.p_project+"/Images/",f"{self.location}{self.title}/Images/",dirs_exist_ok=True)
         else:
             #Remove Pre-existing Folders for Icons & Images
-            if exists(f"{self.location}{self.title}/Icons/"): shutil.rmtree(f"{self.location}{self.name}/Icons/")
-            if exists(f"{self.location}{self.title}/Images/"): shutil.rmtree(f"{self.location}{self.name}/Images/")
+            if exists(f"{self.location}{self.title}-{self.flag}/Icons/"): shutil.rmtree(f"{self.location}{self.title}-{self.flag}/Icons/")
+            if exists(f"{self.location}{self.title}-{self.flag}/Images/"): shutil.rmtree(f"{self.location}{self.title}-{self.flag}/Images/")
 
             #Copy Project Folder for Icons & Images
             shutil.copytree(self.p_project+"/Icons/",f"{self.location}{self.title}-{self.flag}/Icons/",dirs_exist_ok=True)
@@ -212,9 +212,16 @@ class Release(Project):
         print("Updating pyinstaller...")
         subprocess.call(f"python -m pip install --upgrade pyinstaller --quiet",shell=True)
 
+        #Determine Binary Destination
+        if sys.platform == "linux":
+            destination = self.location+self.title
+            if not self.flag == "": destination = destination + "-" + self.flag
+        else:
+            destination = self.location
+
         #Announce and Run PyInstaller
-        print(f"Running PyInstaller for {self.name}")
-        subprocess.call(f"pyinstaller {self.p_vinfo}/project.spec --noconfirm --distpath {self.location} --log-level FATAL",shell=True,cwd=self.p_vinfo)
+        print(f"Running PyInstaller for {self.title}{' ' + self.flag if not self.flag =='' else ''}")
+        subprocess.call(f"pyinstaller {self.p_vinfo}/project.spec --noconfirm --distpath {destination} --log-level FATAL",shell=True,cwd=self.p_vinfo)
 
         #Clean Environment
         self.clean()
