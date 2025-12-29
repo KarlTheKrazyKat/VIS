@@ -53,7 +53,7 @@ def __main__():
             note:str=""
             argstart = 2
 
-            if len(inp) >= 2:
+            if len(inp) >= 3:
                 if inp[2] in ["Screen", "screen","S","s"]:
                     argstart = 4
                     screen = findScreen(inp[3])
