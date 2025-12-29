@@ -5,8 +5,6 @@ from importlib import metadata
 from VIStk.Structures import *
 
 inp = sys.argv
-print(f"VIS Version {metadata.version('VIStk')}")
-
 
 #Copied from source https://stackoverflow.com/a/75246706
 def unzip_without_overwrite(src_path, dst_dir):
@@ -15,8 +13,12 @@ def unzip_without_overwrite(src_path, dst_dir):
             file_path = os.path.join(dst_dir, member.filename)
             if not os.path.exists(file_path):
                 zf.extract(member, dst_dir)
+
 def __main__():
     match inp[1]:
+        case "-v"|"-V"|"-Version"|"-version":
+            print(f"VIS Version {metadata.version('VIStk')}")
+            
         case "new"|"New"|"N"|"n":#Create a new VIS project
             project = VINFO()
 

@@ -2,4 +2,5 @@ coll = COLLECT($insert$
     strip=False,
     upx=True,
     upx_exclude=[],
-    name='$version$')
+    name='$version$'
+)

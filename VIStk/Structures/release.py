@@ -114,14 +114,14 @@ class Release(Project):
                 spec_list.append("\n\n")
 
         #Create _a, _pyz, _exe and insert into Collect
-        insert = ""
-        for i in name_list:
-            insert=insert+"\n\t"+i+"_exe,\n\t"+i+"_a.binaries,\n\t"+i+"_a.zipfiles,\n\t"+i+"_a.datas,"
-        collect = collect.replace("$insert$",insert)
-
-        #Fill Collect Name
-        collect = collect.replace("$version$",self.name+"-"+self.flag) if not self.flag == "" else collect.replace("$version$",self.name)
-        
+        collect = ""
+        if not sys.platform == "Linux": #No Collects on Linux
+            insert = ""
+            for i in name_list:
+                insert=insert+"\n\t"+i+"_exe,\n\t"+i+"_a.binaries,\n\t"+i+"_a.zipfiles,\n\t"+i+"_a.datas,"
+            collect = collect.replace("$insert$",insert)
+            collect = collect.replace("$version$",self.name+"-"+self.flag) if not self.flag == "" else collect.replace("$version$",self.name)
+            
         #Header for specfile
         header = "# -*- mode: python ; coding: utf-8 -*-\n\n\n"
 

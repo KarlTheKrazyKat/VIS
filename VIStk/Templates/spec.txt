@@ -9,7 +9,8 @@ $name$_a = Analysis(
     runtime_hooks=[],
     excludes=[],
     noarchive=False,
-    optimize=0,)
+    optimize=0,
+)
 $name$_pyz = PYZ($name$_a.pure)
 $name$_exe = EXE(
     $name$_pyz,
@@ -30,4 +31,5 @@ $name$_exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon=['../Icons/$icon$'],
-    version='$meta$')
+    version='$meta$'
+)
