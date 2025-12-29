@@ -115,7 +115,7 @@ class Release(Project):
 
         #Create _a, _pyz, _exe and insert into Collect
         collect = ""
-        if not sys.platform == "Linux": #No Collects on Linux
+        if not sys.platform == "linux": #No Collects on Linux
             insert = ""
             for i in name_list:
                 insert=insert+"\n\t"+i+"_exe,\n\t"+i+"_a.binaries,\n\t"+i+"_a.zipfiles,\n\t"+i+"_a.datas,"

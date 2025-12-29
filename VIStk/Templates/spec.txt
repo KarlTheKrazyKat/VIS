@@ -12,6 +12,7 @@ $name$_a = Analysis(
     optimize=0,
 )
 $name$_pyz = PYZ($name$_a.pure)
+
 $name$_exe = EXE(
     $name$_pyz,
     $name$_a.scripts,
