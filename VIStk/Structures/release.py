@@ -261,7 +261,9 @@ class Release(Project):
         if os.path.exists(self.p_project+"/"+binstaller):
             os.remove(self.p_project+"/"+binstaller)
 
-        #shutil.move(self.location+f"dist/{binstaller}",self.p_project)
+        shutil.move(self.location+f"dist/{binstaller}",self.p_project)
 
         shutil.rmtree(self.location+"dist/")
+        shutil.rmtree(self.location+"build/")
         os.remove(self.location+"binaries.zip")
+        os.remove(self.location+f"{pendix}.spec")
