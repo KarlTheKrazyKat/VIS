@@ -4,7 +4,7 @@ from VIStk.Structures.screen import *
 import subprocess
 import shutil
 from os.path import exists
-import time
+from zipfile import *
 import datetime
 
 info = {}
@@ -151,21 +151,26 @@ class Release(Project):
 
         #Append Screen Data
         if self.flag == "":
-            #Remove Pre-existing Folders for Icons & Images
+            #Remove Pre-existing Folders for Icons, Images, & .VIS
             if exists(f"{self.location}{self.title}/Icons/"): shutil.rmtree(f"{self.location}{self.title}/Icons/")
             if exists(f"{self.location}{self.title}/Images/"): shutil.rmtree(f"{self.location}{self.title}/Images/")
+            if exists(f"{self.location}{self.title}/.VIS/"): shutil.rmtree(f"{self.location}{self.title}/.VIS/")
 
-            #Copy Project Folder for Icons & Images
+            #Copy Project Folder for Icons, Images, & .VIS
             shutil.copytree(self.p_project+"/Icons/",f"{self.location}{self.title}/Icons/",dirs_exist_ok=True)
             shutil.copytree(self.p_project+"/Images/",f"{self.location}{self.title}/Images/",dirs_exist_ok=True)
+            shutil.copytree(self.p_project+"/.VIS/",f"{self.location}{self.title}/.VIS/",dirs_exist_ok=True)
+        
         else:
-            #Remove Pre-existing Folders for Icons & Images
+            #Remove Pre-existing Folders for Icons, Images, & .VIS
             if exists(f"{self.location}{self.title}-{self.flag}/Icons/"): shutil.rmtree(f"{self.location}{self.title}-{self.flag}/Icons/")
             if exists(f"{self.location}{self.title}-{self.flag}/Images/"): shutil.rmtree(f"{self.location}{self.title}-{self.flag}/Images/")
+            if exists(f"{self.location}{self.title}-{self.flag}/.VIS/"): shutil.rmtree(f"{self.location}{self.title}-{self.flag}/.VIS/")
 
-            #Copy Project Folder for Icons & Images
+            #Copy Project Folder for Icons, Images, & .VIS
             shutil.copytree(self.p_project+"/Icons/",f"{self.location}{self.title}-{self.flag}/Icons/",dirs_exist_ok=True)
             shutil.copytree(self.p_project+"/Images/",f"{self.location}{self.title}-{self.flag}/Images/",dirs_exist_ok=True)
+            shutil.copytree(self.p_project+"/.VIS/",f"{self.location}{self.title}-{self.flag}/.VIS/",dirs_exist_ok=True)
 
         #Announce Completion
         print(f"\n\nReleased a new{' '+self.flag+' ' if not self.flag is None else ''}build of {self.title}!")
@@ -204,13 +209,13 @@ class Release(Project):
 
         #Announce and Update Required Tools
         print("Updating pip...")
-        subprocess.call(f"python -m pip install --upgrade pip --quiet",shell=True)
+        #subprocess.call(f"python -m pip install --upgrade pip --quiet",shell=True)
 
         print("Updating setuptools...")
-        subprocess.call(f"python -m pip install --upgrade setuptools --quiet",shell=True)
+        #subprocess.call(f"python -m pip install --upgrade setuptools --quiet",shell=True)
 
         print("Updating pyinstaller...")
-        subprocess.call(f"python -m pip install --upgrade pyinstaller --quiet",shell=True)
+        #subprocess.call(f"python -m pip install --upgrade pyinstaller --quiet",shell=True)
 
         #Determine Binary Destination
         if sys.platform == "linux":
@@ -221,7 +226,42 @@ class Release(Project):
 
         #Announce and Run PyInstaller
         print(f"Running PyInstaller for {self.title}{' ' + self.flag if not self.flag =='' else ''}")
-        subprocess.call(f"pyinstaller {self.p_vinfo}/project.spec --noconfirm --distpath {destination} --log-level FATAL",shell=True,cwd=self.p_vinfo)
-
+        #subprocess.call(f"pyinstaller {self.p_vinfo}/project.spec --noconfirm --distpath {destination} --log-level FATAL",shell=True,cwd=self.p_vinfo)
+        
         #Clean Environment
         self.clean()
+
+        #Create Installer
+        final = "/".join(destination.split("/")[:-1])+"/"
+        pendix = self.title
+        if not self.flag == "": pendix = pendix + "-" + self.flag
+        final = final + pendix
+
+        print(f"Creating binaries.zip from {final} for installer")
+        shutil.make_archive(base_name="binaries",format="zip",root_dir=final)
+
+        archive = ZipFile('./binaries.zip','r')
+        pfile = archive.open(".VIS/project.json")
+        info = json.load(pfile)
+        pfile.close()
+        archive.close()
+        title = list(info.keys())[0]
+        icon_file = info[title]["defaults"]["icon"]
+        if sys.platform == "win32":
+            icon_file = self.p_project + "/Icons/" + icon_file + ".ico"
+        else:
+            icon_file = self.p_project + "/Icons/" + icon_file + ".xbm"
+
+        installer = VISROOT.replace("\\","/")+"Structures/Installer.py"
+        print(f"Compiling Installer for {pendix}")
+        subprocess.call(f"pyinstaller --noconfirm --onefile --add-data binaries.zip:. --uac-admin --windowed --name {pendix}_Installer --log-level FATAL --icon {icon_file} {installer}", shell=True)
+
+        print(self.location+"dist/")
+        binstaller = glob.glob(f"{pendix}_Installer*",root_dir=self.location+"dist/")[0]
+        if os.path.exists(self.p_project+"/"+binstaller):
+            os.remove(self.p_project+"/"+binstaller)
+
+        #shutil.move(self.location+f"dist/{binstaller}",self.p_project)
+
+        shutil.rmtree(self.location+"dist/")
+        os.remove(self.location+"binaries.zip")
