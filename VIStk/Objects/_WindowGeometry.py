@@ -11,7 +11,7 @@ global hs, ws
 ws = query.winfo_width()-2#Unclear about this offset
 hs = query.winfo_height()-9#Might be operating system specific
 query.destroy()
-print(f"Screen has usable size of {ws}x{hs}")
+#print(f"Screen has usable size of {ws}x{hs}")
 
 class WindowGeometry():
     """Handles geometry relations and sizing/resizing for windows"""
