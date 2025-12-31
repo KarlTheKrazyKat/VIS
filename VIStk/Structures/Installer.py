@@ -118,6 +118,7 @@ def is_all():
     else:
         var_all.set(1)
 
+print("Found", installables)
 #Create Checkboxes
 for i in installables:
     #Configure Row
