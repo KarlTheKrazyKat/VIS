@@ -9,12 +9,10 @@ import PIL.ImageTk
 import sys
 import json
 import os
+import subprocess
 
-#%Should be ran by the releaser
-#shutil.make_archive(base_name="binaries",format="zip",root_dir="L:/WOM/PYWOM/dist/PYWOM")
-
-#with ZipFile("L:/WOM/PYWOM/dist/binaries.zip", 'r') as f:
-    #f.extractall("L:/WOM/PYWOM/dist/extracted")
+#%Plans and Modifications
+#should have the option to create desktop shortcuts to program
 
 #%Installer Code
 #Load .VIS project info
@@ -157,7 +155,7 @@ if sys.platform in ["win32","linux"]:
     if sys.platform=="win32":
        file_location.set("C:/Program Files")
     else:
-        file_location.set("/opt")
+        file_location.set(os.path.expanduser())
 
 fframe = ttk.Frame(root)
 fframe.grid(row=2,column=1,columnspan=2,sticky=(N,S,E,W))
@@ -220,6 +218,12 @@ def binstall():
             root.update()
             canvas.delete("all")
             archive.extractall(location)
+
+            for i in range(0,len(installables),1):
+                for file in archive.namelist():
+                    if file.startswith(installables[i]):
+                        if sys.platform == "linux":
+                            subprocess.call(f"sudo chmod +x {location}/{file}", shell=True)
         else:
             os.mkdir(location+"/.VIS")
             os.mkdir(location+"/Images")
@@ -258,6 +262,8 @@ def binstall():
                             canvas.create_text(10,10,text=f"Installing {file}...",anchor="nw")
                             root.update()
                             archive.extract(file, location)
+                            if sys.platform == "linux":
+                                subprocess.call(f"sudo chmod +x {location}/{file}", shell=True)
 
         root.destroy()
 
