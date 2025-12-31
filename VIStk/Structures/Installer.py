@@ -118,9 +118,9 @@ def is_all():
     else:
         var_all.set(1)
 
-print("Found", installables)
 #Create Checkboxes
 for i in installables:
+    if i == "": continue
     #Configure Row
     install_options.rowconfigure(installables.index(i)+1,weight=1)
 
