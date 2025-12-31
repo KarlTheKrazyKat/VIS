@@ -209,13 +209,13 @@ class Release(Project):
 
         #Announce and Update Required Tools
         print("Updating pip...")
-        #subprocess.call(f"python -m pip install --upgrade pip --quiet",shell=True)
+        subprocess.call(f"python -m pip install --upgrade pip --quiet",shell=True)
 
         print("Updating setuptools...")
-        #subprocess.call(f"python -m pip install --upgrade setuptools --quiet",shell=True)
+        subprocess.call(f"python -m pip install --upgrade setuptools --quiet",shell=True)
 
         print("Updating pyinstaller...")
-        #subprocess.call(f"python -m pip install --upgrade pyinstaller --quiet",shell=True)
+        subprocess.call(f"python -m pip install --upgrade pyinstaller --quiet",shell=True)
 
         #Determine Binary Destination
         if sys.platform == "linux":
@@ -226,10 +226,16 @@ class Release(Project):
 
         #Announce and Run PyInstaller
         print(f"Running PyInstaller for {self.title}{' ' + self.flag if not self.flag =='' else ''}")
-        #subprocess.call(f"pyinstaller {self.p_vinfo}/project.spec --noconfirm --distpath {destination} --log-level FATAL",shell=True,cwd=self.p_vinfo)
+        subprocess.call(f"pyinstaller {self.p_vinfo}/project.spec --noconfirm --distpath {destination} --log-level FATAL",shell=True,cwd=self.p_vinfo)
         
         #Clean Environment
         self.clean()
+
+        #%Installer Generation
+        #Move to Installer Build Location
+        returndir = os.getcwd()
+        if not returndir == self.location:
+            os.chdir(self.location)
 
         #Create Installer
         final = "/".join(destination.split("/")[:-1])+"/"
@@ -237,33 +243,43 @@ class Release(Project):
         if not self.flag == "": pendix = pendix + "-" + self.flag
         final = final + pendix
 
+        #Announce and binaries.zip
         print(f"Creating binaries.zip from {final} for installer")
         shutil.make_archive(base_name="binaries",format="zip",root_dir=final)
 
+        #Load info from binaries.zip
         archive = ZipFile('./binaries.zip','r')
         pfile = archive.open(".VIS/project.json")
         info = json.load(pfile)
         pfile.close()
         archive.close()
         title = list(info.keys())[0]
+
+        #Get Installer Icon
         icon_file = info[title]["defaults"]["icon"]
         if sys.platform == "win32":
             icon_file = self.p_project + "/Icons/" + icon_file + ".ico"
         else:
             icon_file = self.p_project + "/Icons/" + icon_file + ".xbm"
 
+        #Name & Compile Installer
         installer = VISROOT.replace("\\","/")+"Structures/Installer.py"
         print(f"Compiling Installer for {pendix}")
         subprocess.call(f"pyinstaller --noconfirm --onefile --add-data binaries.zip:. --uac-admin --windowed --name {pendix}_Installer --log-level FATAL --icon {icon_file} {installer}", shell=True)
 
-        print(self.location+"dist/")
+        #Move Installer to Project Root
+        print("Installer completed. Moving to project root...")
         binstaller = glob.glob(f"{pendix}_Installer*",root_dir=self.location+"dist/")[0]
         if os.path.exists(self.p_project+"/"+binstaller):
             os.remove(self.p_project+"/"+binstaller)
 
         shutil.move(self.location+f"dist/{binstaller}",self.p_project)
 
+        #Clean Installer Build Environment
+        print("Cleaning up installer build environment...")
         shutil.rmtree(self.location+"dist/")
         shutil.rmtree(self.location+"build/")
         os.remove(self.location+"binaries.zip")
-        os.remove(self.location+f"{pendix}.spec")
+        os.remove(self.location+f"{pendix}_installer.spec")
+
+        os.chdir(returndir)
