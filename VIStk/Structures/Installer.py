@@ -155,7 +155,7 @@ if sys.platform in ["win32","linux"]:
     if sys.platform=="win32":
        file_location.set("C:/Program Files")
     else:
-        file_location.set(os.path.expanduser("~user"))
+        file_location.set(os.path.expanduser("~"))
 
 fframe = ttk.Frame(root)
 fframe.grid(row=2,column=1,columnspan=2,sticky=(N,S,E,W))
