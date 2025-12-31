@@ -24,7 +24,7 @@
 
 0.3.6
 
-- Added ```VIS remove sync``` to sync alpha beta and current
+- Added ```VIS release sync``` to sync alpha beta and current
 
 0.3.7
 
@@ -55,48 +55,27 @@
 - new window geometry class to control window sizing easily
 - new menu window widget
 
-0.3.12 Adding more Widgets!!
+0.3.12
 
 - highlight menu buttons on hover
-
-0.3.12.1
-
-- fix default color after menu button unhighlight
-
-0.3.12.2
-
 - new widget question window (dropdown list not accessable yet)
-
-0.3.12.3
-
 - lowered required python version
-
-0.3.12.4
-
-- trying a fix for linux version
-
-0.3.12.17
-
-- fixed an error on VIS project setup
-
-0.3.12.18
-
-- screen switching slightly functional
-- changed method of mainloop replacement
-
-0.3.12.19
-
 - Updated form.zip
 - changed from regular comments to `#%` pattern
 - - works in tandem with VIS extension to make VIS headers stand out
+- Screen switching implemented
 
 0.3.13
 
-- Screen load now uses `os.execl` to replace current process with one running the new screen
-
-0.3.13.24
-
+- Screen switching much faster
+- - Screen load now uses `os.execl` to replace current process with one running the new screen
 - Create binary for single screen
+- Changed `VIS release` dramatically
+
+0.3.14
+
+- Installer is created on release of program
+- Installer will require sudo to give linux programs execute-ability
 
 ## Upcoming
 
