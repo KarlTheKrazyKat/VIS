@@ -279,7 +279,7 @@ class Release(Project):
         print("Cleaning up installer build environment...")
         shutil.rmtree(self.location+"dist/")
         shutil.rmtree(self.location+"build/")
-        os.remove(self.location+"binaries.zip")
+        #os.remove(self.location+"binaries.zip")
         os.remove(self.location+f"{pendix}_installer.spec")
 
         os.chdir(returndir)
