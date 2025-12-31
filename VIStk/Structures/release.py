@@ -265,7 +265,7 @@ class Release(Project):
         #Name & Compile Installer
         installer = VISROOT.replace("\\","/")+"Structures/Installer.py"
         print(f"Compiling Installer for {pendix}")
-        subprocess.call(f"pyinstaller --noconfirm --onefile --add-data binaries.zip:. --uac-admin --windowed --name {pendix}_Installer --log-level FATAL --icon {icon_file} {installer}", shell=True)
+        subprocess.call(f"pyinstaller --noconfirm --onefile --add-data binaries.zip:. {'--uac-admin ' if sys.platform == 'win32' else ''}--windowed --name {pendix}_Installer --log-level FATAL --icon {icon_file} {installer}", shell=True)
 
         #Move Installer to Project Root
         print("Installer completed. Moving to project root...")
