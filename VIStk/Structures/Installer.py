@@ -31,7 +31,10 @@ title = list(info.keys())[0]
 installables = []
 for i in archive.namelist():
     if not any(breaker in i for breaker in ["Icons/","Images/",".VIS/","_internal"]):
-        installables.append(".".join(i.split(".")[:-1]))
+        if "." in i: #Remove Extension
+            installables.append(".".join(i.split(".")[:-1]))
+        else: #Sometimes No Extension
+            installables.append(i)
 
 #%Configure Root
 root = Root()
