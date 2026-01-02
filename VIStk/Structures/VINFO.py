@@ -95,6 +95,9 @@ class VINFO():
             else:
                 self.version = "0.0.1"
             info[self.title]["metadata"]["version"] = self.version
+            info[self.title]["release_info"] = {}
+            info[self.title]["release_info"]["location"] = "./dist/"
+            info[self.title]["release_info"]["hidden_imports"] = ["PIL._tkinter_finder"]
 
             with open(wd+"/.VIS/project.json","w") as f:
                 json.dump(info,f,indent=4)

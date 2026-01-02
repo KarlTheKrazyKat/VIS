@@ -1,4 +1,8 @@
 from tkinter import *
+import PIL.Image
+import PIL.ImageTk
+import glob
+from VIStk.Structures.project import *
 
 class Window:
     """A VIS Window object"""
@@ -22,3 +26,16 @@ class Window:
                 self.state('normal')
         else:
             self.attributes("-fullscreen", False)
+
+    def setIcon(self,icon:str):
+        """Sets the window icon to an icon in ./Icons/
+        
+        Args:
+            icon (str): The name of the icon excluding file extension (cat.png => cat)
+        """
+        project = Project()
+        ficon = glob.glob(pathname=icon+".*",root_dir=project.p_project+"/Icons/")
+        img = PIL.Image.open(project.p_project+"/Icons/"+ficon[0])
+        imgtk = PIL.ImageTk.PhotoImage(img)
+        self.iconphoto(False, imgtk)
+        #Tkinter window will always be self for children

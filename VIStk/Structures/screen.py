@@ -47,11 +47,26 @@ class Screen(VINFO):
             os.mkdir(self.p_screens+"/"+self.name)
             os.mkdir(self.p_modules+"/"+self.name)
 
+            with open(self.p_project+"/"+script, "r") as f:
+                template = f.read()
+
+            template = template.replace("<title>",self.name)
+            if self.icon is None:
+                template = template.replace("<icon>",info[self.title]["defaults"]["icon"])
+            else:
+                template = template.replace("<icon>",self.icon)
+
+            with open(self.p_project+"/"+script, "w") as f:
+                f.write(template)
+
         with open(self.p_sinfo,"r") as f:
-                info = json.load(f)
+            info = json.load(f)
+
         self.desc = info[self.title]["Screens"][self.name]["desc"]
         self.s_version = info[self.title]["Screens"][self.name]["version"]
         self.current = info[self.title]["Screens"][self.name]["current"]
+
+        
         
     def addElement(self,element:str) -> int:
         if validName(element):
