@@ -1,26 +1,11 @@
-from tkinter import *
-from VIStk.Objects import *
-from VIStk.Widgets import *
-import time
+from PIL import Image, ImageOps
 
-root = Root()
-root.WindowGeometry.setGeometry(width=40,height=40,align="center",size_style="screen_relative")
+img = Image.open("cat.jpeg")
+img = ImageOps.exif_transpose(img)
+x, y = img.size
+size = max(x, y)
+_img = Image.new('RGBA', (size, size), (0,0,0,0))
+_img.paste(img, (int((size-x)/2), int((size-y)/2)))
+_img.save("cat.png")
 
-def warnWindow():
-    newroot = WarningWindow(parent=root,
-                             warning="Warning: Something!!!",
-                            )
-
-def subWindow():
-    subroot = QuestionWindow(parent=root,
-                             question=["Some info...",
-                                       "Additional information given",
-                                       "Do you want to continue"],
-                             answer = "xu",
-                             ycommand=warnWindow
-                            ).fullscreen()
-
-vb_test = Button(root, text="Open Submenu", command=subWindow)
-vb_test.grid(row=1,column=1,sticky=(N, S, E, W))
-
-root.mainloop()
+#This code is for automatically creating icons
