@@ -235,7 +235,7 @@ def shortcut(name:str, location:Path):
         icon = info[title]["Screens"][name].get("icon")
         if icon is None:
             icon = info[title]["defaults"]["icon"]
-        icon = os.path.join(location,"Images",icon+".ICO")
+        icon = os.path.join(location,"Icons",icon+".ico")
         binary = os.path.join(location,name)
         lines=[]
         lines.append("[Desktop Entry]\n")
@@ -331,7 +331,7 @@ def binstall(desktop:list[str]):
                 root.update()
                 shortcut(i, location)
                 if sys.platform == "linux":
-                    subprocess.call(f"sudo chmod +x {os.path.join(platformdirs.user_desktop_dir(),file+'.desktop')}", shell=True)
+                    subprocess.call(f"sudo chmod +x {os.path.join(platformdirs.user_desktop_dir(),i+'.desktop')}", shell=True)
 
         root.destroy()
 
