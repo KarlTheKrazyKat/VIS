@@ -77,6 +77,10 @@
 - Installer is created on release of program
 - Installer will require sudo to give linux programs execute-ability
 
+0.3.14.6
+
+- Installers have the option to create desktop shortcuts on windows and linux
+
 ## Upcoming
 
 - version numbering for screens control

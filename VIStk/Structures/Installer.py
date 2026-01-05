@@ -14,9 +14,32 @@ import platformdirs
 if sys.platform == "win32": import winshell
 from pathlib import Path
 
-print()
-print(sys.argv)
-print()
+QUIET = False
+cinstalls = []
+dinstalls = []
+
+if len(sys.argv) > 1:
+    if (sys.argv[0] == sys.argv[1]):
+        pargs = sys.argv[1:]
+    else:
+        pargs = sys.argv
+
+    pargs = " ".join(pargs)
+    pargs = pargs.split("--")
+    for i in pargs:
+        sargs = i.split(" ")
+        flag = sargs[0]
+        args = sargs[1:]
+
+        if flag in ["Quiet", "quiet", "Q", "q"]:
+            QUIET = True
+            for a in args:
+                cinstalls.append(a)
+
+        if flag in ["Desktop", "desktop", "D", "d"]:
+            for a in args:
+                dinstalls.append(a)
+
 
 #%Plans and Modifications
 #should have the option to create desktop shortcuts to program
@@ -40,6 +63,80 @@ for i in archive.namelist():
             installables.append(".".join(i.split(".")[:-1]))
         else: #Sometimes No Extension
             installables.append(i)
+
+#%Core Install & Shorcut Creation
+def shortcut(name:str, location:Path):
+    """Make shortcut for arguments"""
+    if sys.platform == "win32":
+        winshell.CreateShortcut(
+            Path=(os.path.join(winshell.desktop(), f"{name}.lnk")),
+            Target=os.path.join(location, f"{name}.exe"),
+            StartIn=f"{location}"
+        )
+    else:
+        icon = info[title]["Screens"][name].get("icon")
+        if icon is None:
+            icon = info[title]["defaults"]["icon"]
+        icon = os.path.join(location,"Icons",icon+".ico")
+        binary = os.path.join(location,name)
+        lines=[]
+        lines.append("[Desktop Entry]\n")
+        lines.append(f"Name={name}\n")
+        lines.append(f"Icon={icon}\n")
+        lines.append(f"Exec={binary}\n")
+        lines.append(f"Type=Application\n")
+        lines.append(f"Categories=Application;\n")
+        lines.append(f"Name[en_GB]={name}\n")
+        lines.append(f"Terminal=false\n")
+        lines.append(f"StartupNotify=true\n")
+        lines.append(f"Path={location}")
+
+        with open(os.path.join(platformdirs.user_desktop_path(),name+".desktop"),"w") as f:
+            f.writelines(lines)
+
+        subprocess.call(f"sudo chmod +x {os.path.join(platformdirs.user_desktop_dir(),i+'.desktop')}", shell=True)
+
+def extal(file, location):
+    """Extracts file to the location"""
+    archive.extract(file, location)
+    if sys.platform == "linux":
+        subprocess.call(f"sudo chmod +x {os.path.join(location,file)}", shell=True)
+
+def adjacents(location):
+    """Installs adjacent files from .VIS, Images, Icons, _internal"""
+    if not os.path.exists(location):
+        #shutil.rmtree(location)
+        os.mkdir(location)
+
+    if not os.path.exists(os.path.join(location,".VIS")):
+        os.mkdir(os.path.join(location,".VIS"))
+
+    if not os.path.exists(os.path.join(location,"Images")):
+        os.mkdir(os.path.join(location,"Images"))
+
+    if not os.path.exists(os.path.join(location,"Icons")):
+        os.mkdir(os.path.join(location,"Icons"))
+
+    if not os.path.exists(os.path.join(location,"_internal")):
+        os.mkdir(os.path.join(location,"_internal"))
+
+#%Install & Escape Command Line Args
+if QUIET is True:
+    floc = str(platformdirs.user_config_path(appauthor=info[title]["metadata"].get("company"),appname=title))
+    if floc.endswith(f"/{title}") or floc.endswith(f"\\{title}"):
+        location = Path(floc)
+    else:
+        location = Path(floc,title)
+
+    for i in cinstalls:
+        for file in archive.namelist():
+            if file.startswith(i):
+                extal(file, location)
+    
+    for i in dinstalls:
+        shortcut(i, location)
+
+    sys.exit()
 
 #%Configure Root
 root = Root()
@@ -227,34 +324,6 @@ back.grid(row=1,column=1,padx=2,pady=4,sticky=(N,S,E,W))
 #Close Button
 close = ttk.Button(control,text="Close",command=root.destroy)
 close.grid(row=1,column=0,padx=2,pady=4,sticky=(N,S,E,W))
-def shortcut(name:str, location:Path):
-    """Make shortcut for arguments"""
-    if sys.platform == "win32":
-        winshell.CreateShortcut(
-            Path=(os.path.join(winshell.desktop(), f"{name}.lnk")),
-            Target=os.path.join(location, f"{name}.exe"),
-            StartIn=f"{location}"
-        )
-    else:
-        icon = info[title]["Screens"][name].get("icon")
-        if icon is None:
-            icon = info[title]["defaults"]["icon"]
-        icon = os.path.join(location,"Icons",icon+".ico")
-        binary = os.path.join(location,name)
-        lines=[]
-        lines.append("[Desktop Entry]\n")
-        lines.append(f"Name={name}\n")
-        lines.append(f"Icon={icon}\n")
-        lines.append(f"Exec={binary}\n")
-        lines.append(f"Type=Application\n")
-        lines.append(f"Categories=Application;\n")
-        lines.append(f"Name[en_GB]={name}\n")
-        lines.append(f"Terminal=false\n")
-        lines.append(f"StartupNotify=true\n")
-        lines.append(f"Path={location}")
-
-        with open(os.path.join(platformdirs.user_desktop_path(),name+".desktop"),"w") as f:
-            f.writelines(lines)
 
 def binstall(desktop:list[str]):
     """Installs the selected binaries"""
@@ -278,21 +347,7 @@ def binstall(desktop:list[str]):
         else:
             location = Path(file_location.get(),title)
 
-        if not os.path.exists(location):
-            #shutil.rmtree(location)
-            os.mkdir(location)
-
-        if not os.path.exists(os.path.join(location,".VIS")):
-            os.mkdir(os.path.join(location,".VIS"))
-
-        if not os.path.exists(os.path.join(location,"Images")):
-            os.mkdir(os.path.join(location,"Images"))
-
-        if not os.path.exists(os.path.join(location,"Icons")):
-            os.mkdir(os.path.join(location,"Icons"))
-
-        if not os.path.exists(os.path.join(location,"_internal")):
-            os.mkdir(os.path.join(location,"_internal"))
+        adjacents(location)#Install adjacent files
 
         for file in archive.namelist():
             canvas.delete("all")
@@ -325,9 +380,7 @@ def binstall(desktop:list[str]):
                     canvas.delete("all")
                     canvas.create_text(10,10,text=f"Installing {file}...",anchor="nw")
                     root.update()
-                    archive.extract(file, location)
-                    if sys.platform == "linux":
-                        subprocess.call(f"sudo chmod +x {os.path.join(location,file)}", shell=True)
+                    extal(file,location)
         
         for i in desktop:
             if var_options[desktop.index(i)].get() == 1:
@@ -335,8 +388,6 @@ def binstall(desktop:list[str]):
                 canvas.create_text(10,10,text=f"Creating Desktop Shortcut for {file}...",anchor="nw")
                 root.update()
                 shortcut(i, location)
-                if sys.platform == "linux":
-                    subprocess.call(f"sudo chmod +x {os.path.join(platformdirs.user_desktop_dir(),i+'.desktop')}", shell=True)
 
         root.destroy()
 
