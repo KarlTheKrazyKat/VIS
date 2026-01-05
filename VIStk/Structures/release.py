@@ -236,6 +236,8 @@ class Release(Project):
         returndir = os.getcwd()
         if not returndir == self.location:
             os.chdir(self.location)
+        
+        print(f"We are in {os.getcwd()}")
 
         #Create Installer
         final = "/".join(destination.split("/")[:-1])+"/"
@@ -265,6 +267,7 @@ class Release(Project):
         #Name & Compile Installer
         installer = VISROOT.replace("\\","/")+"Structures/Installer.py"
         print(f"Compiling Installer for {pendix}")
+        print(f"pyinstaller --noconfirm --onefile --add-data binaries.zip:. {'--uac-admin ' if sys.platform == 'win32' else ''}--windowed --name {pendix}_Installer --log-level FATAL --icon {icon_file} --hidden-import PIL._tkinter_finder {installer}")
         subprocess.call(f"pyinstaller --noconfirm --onefile --add-data binaries.zip:. {'--uac-admin ' if sys.platform == 'win32' else ''}--windowed --name {pendix}_Installer --log-level FATAL --icon {icon_file} --hidden-import PIL._tkinter_finder {installer}", shell=True)
 
         #Move Installer to Project Root
