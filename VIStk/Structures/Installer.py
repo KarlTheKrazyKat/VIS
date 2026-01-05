@@ -1,5 +1,5 @@
 import shutil
-from zipfile import *
+from zipfile import ZipFile
 from VIStk.Objects import Root
 from tkinter import ttk
 from tkinter import filedialog
@@ -10,15 +10,18 @@ import sys
 import json
 import os
 import subprocess
+import platformdirs
+if sys.platform == "win32": import winshell
+from pathlib import Path
 
 #%Plans and Modifications
 #should have the option to create desktop shortcuts to program
 
 #%Installer Code
 #Load .VIS project info
-root_location = "/".join(__file__.replace("\\","/").split("/")[:-1])
+root_location = Path("/".join(__file__.replace("\\","/").split("/")[:-1]))
 
-archive = ZipFile(root_location+'/binaries.zip','r')#Should find file differently
+archive = ZipFile(os.path.join(root_location,'binaries.zip'),'r')#Should find file differently
 pfile = archive.open(".VIS/project.json")
 info = json.load(pfile)
 pfile.close()
@@ -54,16 +57,21 @@ i_file.close()
 root.iconphoto(False, icon)
 
 #Root Geometry
-root.WindowGeometry.setGeometry(width=360,height=200,align="center")
-root.minsize(width=360,height=200)
+root.WindowGeometry.setGeometry(width=720,height=360,align="center")
+root.minsize(width=720,height=360)
 
 #Root Layout
-root.rowconfigure(1,weight=1,minsize=120)
-root.rowconfigure(2,weight=1,minsize=40)
-root.rowconfigure(3,weight=1,minsize=40)
+root.rowconfigure(0,weight=1,minsize=30)
+root.rowconfigure(1,weight=1,minsize=250)
+root.rowconfigure(2,weight=1,minsize=30)
+root.rowconfigure(3,weight=1,minsize=30)
 
-root.columnconfigure(1,weight=1,minsize=180)
-root.columnconfigure(2,weight=1,minsize=180)
+root.columnconfigure(1,weight=1,minsize=360)
+root.columnconfigure(2,weight=1,minsize=360)
+
+#Selection Header
+header = ttk.Label(root, text="Select Installables")
+header.grid(row=0,column=1,columnspan=2,sticky=(N,S,E,W))
 
 #Scrollable frame for selection
 install_frame = ttk.Frame(root,)
@@ -103,12 +111,6 @@ def all_state():
     for i in var_options:
         i.set(var_all.get())
 
-all = ttk.Checkbutton(install_options,
-                      text="All",
-                      variable=var_all,
-                      command=all_state)
-all.grid(row=0,column=1,columnspan=2,sticky=(N,S,E,W))
-all.state(['!alternate'])
 
 def is_all():
     """Checks if all of the states are selected"""
@@ -120,42 +122,58 @@ def is_all():
         var_all.set(1)
 
 #Create Checkboxes
-for i in installables:
-    if i == "": continue
-    #Configure Row
-    install_options.rowconfigure(installables.index(i)+1,weight=1)
+def makechecks(source:list[str]):
+    """Makes checkboxes for the given selections"""
+    global all_options, var_options, img_options, var_all
+    all_options = []
+    var_options = []
+    img_options = []
 
-    #Resolve Installable Icon
-    if info[title]["Screens"][i].get("icon") is None:
-        img_options.append(PIL.ImageTk.PhotoImage(d_icon.resize((16,16))))
+    var_all = IntVar()
 
-    else:
-        icon_file = info[title]["Screens"][i]["icon"]
-        if sys.platform == "win32":
-            icon_file = icon_file + ".ico"
+    all = ttk.Checkbutton(install_options,
+                        text="All",
+                        variable=var_all,
+                        command=all_state)
+    all.grid(row=0,column=1,columnspan=2,sticky=(N,S,E,W))
+    all.state(['!alternate'])
+
+    for i in source:
+        if i == "": continue
+        #Configure Row
+        install_options.rowconfigure(source.index(i)+1,weight=1)
+
+        #Resolve Installable Icon
+        if info[title]["Screens"][i].get("icon") is None:
+            img_options.append(PIL.ImageTk.PhotoImage(d_icon.resize((16,16))))
+
         else:
-            icon_file = icon_file + ".xbm"
-        
-        img_options.append(PIL.ImageTk.PhotoImage(Image.open(archive.open("Icons/"+icon_file)).resize((16,16))))
-        i_file.close()
-    #Create Checkbox in List
-    var_options.append(IntVar())
-    all_options.append(ttk.Checkbutton(install_options,
-                                       text=i,
-                                       variable=var_options[-1],
-                                       command=is_all,
-                                       image=img_options[-1],
-                                       compound=LEFT))
-    all_options[-1].grid(row=installables.index(i)+1,column=2,sticky=(N,S,E,W))
-    all_options[-1].state(['!alternate'])
+            icon_file = info[title]["Screens"][i]["icon"]
+            if sys.platform == "win32":
+                icon_file = icon_file + ".ico"
+            else:
+                icon_file = icon_file + ".xbm"
+            
+            img_options.append(PIL.ImageTk.PhotoImage(Image.open(archive.open("Icons/"+icon_file)).resize((16,16))))
+            i_file.close()
+        #Create Checkbox in List
+        var_options.append(IntVar())
+        all_options.append(ttk.Checkbutton(install_options,
+                                        text=i,
+                                        variable=var_options[-1],
+                                        command=is_all,
+                                        image=img_options[-1],
+                                        compound=LEFT))
+        all_options[-1].grid(row=source.index(i)+1,column=2,sticky=(N,S,E,W))
+        all_options[-1].state(['!alternate'])
+
+makechecks(installables)
 
 #File Location
 file_location = StringVar()
-if sys.platform in ["win32","linux"]:
-    if sys.platform=="win32":
-       file_location.set("C:/Program Files")
-    else:
-        file_location.set(os.path.expanduser("~"))
+
+file_location.set(platformdirs.user_config_path(appauthor=info[title]["metadata"].get("company"),appname=title))
+
 
 fframe = ttk.Frame(root)
 fframe.grid(row=2,column=1,columnspan=2,sticky=(N,S,E,W))
@@ -181,17 +199,59 @@ fs.grid(row=1,column=2,padx=2,pady=4,sticky=(N,S,E,W))
 
 #Frame to beautify the controls
 control = ttk.Frame(root)
-control.grid(row=3,column=2,sticky=(N,S,E,W))
+control.grid(row=3,column=1,columnspan=2,sticky=(N,S,E,W))
 
 control.rowconfigure(1,weight=1)
+control.columnconfigure(0,weight=1)
 control.columnconfigure(1,weight=1)
 control.columnconfigure(2,weight=1)
 
+def previous():
+    next = ttk.Button(control,text="Next",command=nextpage)
+    next.grid(row=1,column=2,padx=2,pady=4,sticky=(N,S,E,W))
+
+    for i in install_options.winfo_children():
+        i.destroy()
+
+    header["text"] = "Select Installables"
+    makechecks(installables)
+
+#Back Button
+back = ttk.Button(control, text="Back", command=previous)
+back.grid(row=1,column=1,padx=2,pady=4,sticky=(N,S,E,W))
+
 #Close Button
 close = ttk.Button(control,text="Close",command=root.destroy)
-close.grid(row=1,column=1,padx=2,pady=4,sticky=(N,S,E,W))
+close.grid(row=1,column=0,padx=2,pady=4,sticky=(N,S,E,W))
+def shortcut(name:str, location:Path):
+    """Make shortcut for arguments"""
+    if sys.platform == "win32":
+        winshell.CreateShortcut(
+            Path=(os.path.join(winshell.desktop(), f"{name}.lnk")),
+            Target=os.path.join(location, f"{name}.exe"),
+            StartIn=f"{location}"
+        )
+    else:
+        icon = info[title]["Screens"][name].get("icon")
+        if icon is None:
+            icon = info[title]["defaults"]["icon"]
+        icon = os.path.join(location,"Images",icon+".ICO")
+        binary = os.path.join(location,name)
+        lines=[]
+        lines.append("[Desktop Entry]\n")
+        lines.append(f"Name={name}\n")
+        lines.append(f"Icon={icon}\n")
+        lines.append(f"Exec={binary}\n")
+        lines.append(f"Type=Application\n")
+        lines.append(f"Categories=Application;\n")
+        lines.append(f"Name[en_GB]={name}\n")
+        lines.append(f"Terminal=false\n")
+        lines.append(f"StartupNotify=true\n")
 
-def binstall():
+        with open(os.path.join(platformdirs.user_desktop_path(),name+".desktop"),"w") as f:
+            f.writelines(lines)
+
+def binstall(desktop:list[str]):
     """Installs the selected binaries"""
     some=False
     for i in range(0,len(var_options),1):
@@ -208,67 +268,93 @@ def binstall():
         #scrollbar.destroy()
         root.update()
 
-        location = file_location.get()+"/"+title
-        if os.path.exists(location):
-            shutil.rmtree(location)
-        os.mkdir(location)
-
-        if var_all.get() == 1:
-            canvas.create_text(10,10,text="Installing All...",anchor="nw")
-            root.update()
-            canvas.delete("all")
-            archive.extractall(location)
-
-            for i in range(0,len(installables),1):
-                for file in archive.namelist():
-                    if file.startswith(installables[i]):
-                        if sys.platform == "linux":
-                            subprocess.call(f"sudo chmod +x {location}/{file}", shell=True)
+        if file_location.get().endswith(f"/{title}") or file_location.get().endswith(f"\\{title}"):
+            location = Path(file_location.get())
         else:
-            os.mkdir(location+"/.VIS")
-            os.mkdir(location+"/Images")
-            os.mkdir(location+"/Icons")
-            os.mkdir(location+"/_internal")
+            location = Path(file_location.get(),title)
+
+        if not os.path.exists(location):
+            #shutil.rmtree(location)
+            os.mkdir(location)
+
+        if not os.path.exists(os.path.join(location,".VIS")):
+            os.mkdir(os.path.join(location,".VIS"))
+
+        if not os.path.exists(os.path.join(location,"Images")):
+            os.mkdir(os.path.join(location,"Images"))
+
+        if not os.path.exists(os.path.join(location,"Icons")):
+            os.mkdir(os.path.join(location,"Icons"))
+
+        if not os.path.exists(os.path.join(location,"_internal")):
+            os.mkdir(os.path.join(location,"_internal"))
+
+        for file in archive.namelist():
+            canvas.delete("all")
+            canvas.create_text(10,10,text=f"Installing {file}...",anchor="nw")
+            root.update()
+            if file.startswith(".VIS/"):
+                archive.extract(file, location)
+            
+            canvas.delete("all")
+            canvas.create_text(10,10,text=f"Installing {file}...",anchor="nw")
+            root.update()
+            if file.startswith("Images/"):
+                archive.extract(file, location)
+
+            canvas.delete("all")
+            canvas.create_text(10,10,text=f"Installing {file}...",anchor="nw")
+            root.update()
+            if file.startswith("Icons/"):
+                archive.extract(file, location)
+
+            canvas.delete("all")
+            canvas.create_text(10,10,text=f"Installing {file}...",anchor="nw")
+            root.update()
+            if file.startswith("_internal/"):
+                archive.extract(file, location)
+
+        for i in desktop:
             for file in archive.namelist():
-                canvas.delete("all")
-                canvas.create_text(10,10,text=f"Installing {file}...",anchor="nw")
-                root.update()
-                if file.startswith(".VIS/"):
+                if file.startswith(i):
+                    canvas.delete("all")
+                    canvas.create_text(10,10,text=f"Installing {file}...",anchor="nw")
+                    root.update()
                     archive.extract(file, location)
-                
+                    if sys.platform == "linux":
+                        subprocess.call(f"sudo chmod +x {os.path.join(location,file)}", shell=True)
+        
+        for i in desktop:
+            if var_options[desktop.index(i)].get() == 1:
                 canvas.delete("all")
-                canvas.create_text(10,10,text=f"Installing {file}...",anchor="nw")
+                canvas.create_text(10,10,text=f"Creating Desktop Shortcut for {file}...",anchor="nw")
                 root.update()
-                if file.startswith("Images/"):
-                    archive.extract(file, location)
-
-                canvas.delete("all")
-                canvas.create_text(10,10,text=f"Installing {file}...",anchor="nw")
-                root.update()
-                if file.startswith("Icons/"):
-                    archive.extract(file, location)
-
-                canvas.delete("all")
-                canvas.create_text(10,10,text=f"Installing {file}...",anchor="nw")
-                root.update()
-                if file.startswith("_internal/"):
-                    archive.extract(file, location)
-
-            for i in range(0,len(var_options),1):
-                if var_options[i].get() == 1:
-                    for file in archive.namelist():
-                        if file.startswith(installables[i]):
-                            canvas.delete("all")
-                            canvas.create_text(10,10,text=f"Installing {file}...",anchor="nw")
-                            root.update()
-                            archive.extract(file, location)
-                            if sys.platform == "linux":
-                                subprocess.call(f"sudo chmod +x {location}/{file}", shell=True)
+                shortcut(i, location)
+                if sys.platform == "linux":
+                    subprocess.call(f"sudo chmod +x {os.path.join(platformdirs.user_desktop_dir(),file+'.desktop')}", shell=True)
 
         root.destroy()
 
-#Install Button
-install = ttk.Button(control, text="Install",command=binstall)
-install.grid(row=1,column=2,padx=2,pady=4,sticky=(N,S,E,W))
+def nextpage():
+    """Goes to the next installer page"""
+    next.destroy()
+
+    for i in install_options.winfo_children():
+        i.destroy()
+
+    desktop = []
+    for i in range(0,len(var_options),1):
+        if var_options[i].get() == 1:
+            desktop.append(installables[i])
+
+    header["text"] = "Select Desktop Shortcuts"
+    makechecks(desktop)
+
+    #Install Button
+    install = ttk.Button(control, text="Install",command=lambda: binstall(desktop))
+    install.grid(row=1,column=2,padx=2,pady=4,sticky=(N,S,E,W))
+
+next = ttk.Button(control,text="Next",command=nextpage)
+next.grid(row=1,column=2,padx=2,pady=4,sticky=(N,S,E,W))
 
 root.mainloop()
