@@ -247,6 +247,7 @@ def shortcut(name:str, location:Path):
         lines.append(f"Name[en_GB]={name}\n")
         lines.append(f"Terminal=false\n")
         lines.append(f"StartupNotify=true\n")
+        lines.append(f"Path={location}")
 
         with open(os.path.join(platformdirs.user_desktop_path(),name+".desktop"),"w") as f:
             f.writelines(lines)

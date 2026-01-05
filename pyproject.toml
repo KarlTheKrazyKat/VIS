@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "VIStk"
-version = "0.3.14.5"
+version = "0.3.14.6"
 license = {file="LICENSE"}
 dependencies = [
   "pyinstaller"
