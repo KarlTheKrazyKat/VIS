@@ -14,6 +14,10 @@ import platformdirs
 if sys.platform == "win32": import winshell
 from pathlib import Path
 
+print()
+print(sys.argv)
+print()
+
 #%Plans and Modifications
 #should have the option to create desktop shortcuts to program
 
