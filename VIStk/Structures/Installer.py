@@ -94,13 +94,13 @@ def shortcut(name:str, location:Path):
         with open(os.path.join(platformdirs.user_desktop_path(),name+".desktop"),"w") as f:
             f.writelines(lines)
 
-        subprocess.call(f"sudo chmod +x {os.path.join(platformdirs.user_desktop_dir(),i+'.desktop')}", shell=True)
+        subprocess.call(f"chmod +x {os.path.join(platformdirs.user_desktop_dir(),i+'.desktop')}", shell=True)
 
 def extal(file, location):
     """Extracts file to the location"""
     archive.extract(file, location)
     if sys.platform == "linux":
-        subprocess.call(f"sudo chmod +x {os.path.join(location,file)}", shell=True)
+        subprocess.call(f"chmod +x {os.path.join(location,file)}", shell=True)
 
 def adjacents(location):
     """Installs adjacent files from .VIS, Images, Icons, _internal"""
