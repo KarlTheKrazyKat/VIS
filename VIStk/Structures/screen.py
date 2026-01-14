@@ -10,6 +10,7 @@ from pathlib import Path
 import sys
 import gc
 import os
+from notifypy import Notify
 
 class Screen(VINFO):
     """A VIS screen object
@@ -66,7 +67,6 @@ class Screen(VINFO):
         self.s_version = info[self.title]["Screens"][self.name]["version"]
         self.current = info[self.title]["Screens"][self.name]["current"]
 
-        
         
     def addElement(self,element:str) -> int:
         if validName(element):
@@ -210,6 +210,14 @@ class Screen(VINFO):
 
         with open(self.p_sinfo,"w") as f:
             json.dump(info,f,indent=4)
+
+    def sendNotification(self, message:str):
+        """Sends a notification for this application"""
+        notification = Notify()
+        notification.title=self.name
+        notification.application_name=self.title
+        notification.message=message
+        notification.send()
 
 def findScreen(screenname:str)->Screen:
     """Finds a screen object from a screenname"""
