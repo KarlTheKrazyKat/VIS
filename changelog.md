@@ -95,6 +95,10 @@
 
 - New Version class to aid versioning
 
+0.3.14.12
+
+- Layout Widget
+
 ## Upcoming
 
 - version numbering for screens control
