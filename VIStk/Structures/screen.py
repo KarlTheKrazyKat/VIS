@@ -169,11 +169,6 @@ class Screen(VINFO):
         """Loads loads this screen"""
         Path(getPath()+"/"+self.script)
         os.execl(sys.executable, *(sys.executable,Path(getPath()+"/"+self.script)))
-        
-    def switch(self, root:Tk|Toplevel, screen:str):
-        """Unloads the current screen and sets a new screen"""
-        self.unload(root)
-        findScreen(screen).load()
 
     def getModules(self, script:str=None) -> list[str]:
         """Gets a list of all modules in the screens folder"""
@@ -218,16 +213,3 @@ class Screen(VINFO):
         notification.application_name=self.title
         notification.message=message
         notification.send()
-
-def findScreen(screenname:str)->Screen:
-    """Finds a screen object from a screenname"""
-    project = VINFO()
-    #Load project info
-    with open(project.p_sinfo,"r") as f:
-        info = json.load(f)
-    
-    #Search project info
-    if not info[project.title]["Screens"].get(screenname) is None:
-        sinfo = info[project.title]["Screens"][screenname]
-        return Screen(screenname,script = sinfo["script"])
-    return None

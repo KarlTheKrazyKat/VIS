@@ -48,6 +48,7 @@ def __main__():
                 print("Screen does not exist")
 
         case "release" | "Release" | "r" | "R":
+            project=Project()
             flag:str=""
             type:str=""
             note:str=""
@@ -56,7 +57,7 @@ def __main__():
             if len(inp) >= 3:
                 if inp[2] in ["Screen", "screen","S","s"]:
                     argstart = 4
-                    screen = findScreen(inp[3])
+                    screen = project.getScreen(inp[3])
                     if not screen is None:
                         screen.isolate()
 

@@ -9,6 +9,7 @@ import sys
 #%Configure Screen
 root.Active = True
 root.WindowGeometry.setGeometry(width=66,height=66,align="center",size_style="screen_relative")
+root.screen = "<title>"
 root.title("<title>")
 root.setIcon("<icon>")
 

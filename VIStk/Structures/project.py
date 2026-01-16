@@ -10,6 +10,7 @@ class Project(VINFO):
         """Initializes or load a VIS project
         """
         super().__init__()
+        self.screenlist:list[Screen]=[]
         with open(self.p_sinfo,"r") as f:
             info = json.load(f)
             self.name = list(info.keys())[0]

@@ -7,7 +7,7 @@ class Root(Tk, Window):
     def __init__(self,*args,**kwargs):
         super().__init__(*args,**kwargs)
         self.WindowGeometry = WindowGeometry(self)
-        self.Active = True
+        self.Active:bool = True
         self.protocol("WM_DELETE_WINDOW", self.unload)
         self.exitAction = None
         self.exitArgs = None

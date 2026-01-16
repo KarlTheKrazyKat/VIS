@@ -1,10 +1,9 @@
 from tkinter import *
-from tkinter import ttk
 from VIStk.Objects import Root
-import sys
+from VIStk.Structures.project import Project
 
 root = Root()
-root.title('New VIS Project')
+project = Project()
 
 def do_focus(event=None):
     x,y = root.winfo_pointerxy()
