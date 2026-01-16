@@ -64,8 +64,7 @@ class Screen(VINFO):
         self.desc = info[self.title]["Screens"][self.name]["desc"]
         self.s_version = info[self.title]["Screens"][self.name]["version"]
         self.current = info[self.title]["Screens"][self.name]["current"]
-
-        
+      
     def addElement(self,element:str) -> int:
         if validName(element):
             if not os.path.exists(self.path+"/f_"+element+".py"):
@@ -155,7 +154,6 @@ class Screen(VINFO):
 
     def load(self):
         """Loads loads this screen"""
-        Path(getPath()+"/"+self.script)
         os.execl(sys.executable, *(sys.executable,Path(getPath()+"/"+self.script)))
 
     def getModules(self, script:str=None) -> list[str]:

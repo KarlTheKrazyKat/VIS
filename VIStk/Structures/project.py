@@ -98,3 +98,25 @@ class Project(VINFO):
     def setScreen(self,screen:str) -> None:
         """Sets the currently active screen"""
         self.Screen = self.getScreen(screen)
+
+    def load(self, screen:str) -> None:
+        """Loads a screen from screenlist
+        
+        Returns:
+            (None): When load fails
+        """
+        try:
+            self.getScreen(screen).load()
+        except AttributeError:
+            return None
+
+    def reload(self) -> None:
+        """Reloads the current screen
+        
+        Returns:
+            (None): When load fails
+        """
+        try:
+            self.Screen.load()
+        except AttributeError:
+            return None

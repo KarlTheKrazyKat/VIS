@@ -86,6 +86,11 @@
 - New method screenTitle for Root
 - Project now tracks currently active screen
 
+0.3.14.10
+
+- Can now load from project screenlist using root.Project.load()
+- Can reload the current screen with root.Project.reload()
+
 ## Upcoming
 
 - version numbering for screens control
