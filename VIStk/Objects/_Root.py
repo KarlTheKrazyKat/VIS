@@ -1,6 +1,7 @@
 from tkinter import *
 from VIStk.Objects._Window import Window
 from VIStk.Objects._WindowGeometry import *
+from VIStk.Structures.project import Project
 
 class Root(Tk, Window):
     """A wrapper for the Tk class with VIS attributes"""
@@ -12,6 +13,7 @@ class Root(Tk, Window):
         self.exitAction = None
         self.exitArgs = None
         self.exitKwargs = None
+        self.Project = Project()
     
     def unload(self):
         """Closes the window neatly for VIStk"""
@@ -42,3 +44,9 @@ class Root(Tk, Window):
                     self.exitAction(self.exitKwargs)
                 else:
                     self.exitAction()
+
+    def screenTitle(self, screen:str, title:str=None):
+        """Sets the title and the screen that is currently active"""
+        if title is None: title = screen
+        self.title(title)
+        self.Project.setScreen(screen)

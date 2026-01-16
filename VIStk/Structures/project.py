@@ -1,7 +1,6 @@
 import json
 from VIStk.Structures.VINFO import *
 from VIStk.Structures.screen import *
-from VIStk.Objects._Root import *
 
 class Project(VINFO):
     """VIS Project Object
@@ -26,6 +25,7 @@ class Project(VINFO):
 
             self.dist_location:str = info[self.name]["release_info"]["location"]
             self.hidden_imports:list[str] = info[self.name]["release_info"]["hidden_imports"]
+        self.Screen:Screen = None
     
     def newScreen(self,screen:str) -> int:
         """Creates a new screen with some prompting
@@ -95,9 +95,6 @@ class Project(VINFO):
         scr = self.getScreen(screen)
         return scr
 
-    def saveState(self)->None:
-        """Saves the current project state to project.json | WILL FINISH THIS LATER"""
-        with open(self.p_sinfo, "w") as f:
-            info = {}
-            info[self.name] = {}
-            info[self.name]["Screens"] = {}
+    def setScreen(self,screen:str) -> None:
+        """Sets the currently active screen"""
+        self.Screen = self.getScreen(screen)

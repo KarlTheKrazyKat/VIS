@@ -81,6 +81,11 @@
 
 - Installers have the option to create desktop shortcuts on windows and linux
 
+0.3.14.9
+
+- New method screenTitle for Root
+- Project now tracks currently active screen
+
 ## Upcoming
 
 - version numbering for screens control

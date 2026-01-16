@@ -5,10 +5,8 @@ import re
 import glob
 from VIStk.Structures.VINFO import *
 from tkinter import *
-import importlib.util
 from pathlib import Path
 import sys
-import gc
 import os
 from notifypy import Notify
 
@@ -155,16 +153,6 @@ class Screen(VINFO):
         else:
             return 0
 
-    def unload(self,root:Tk|Toplevel) -> int:
-        """Unloads all elements on the screen"""
-        for element in root.winfo_children():
-            try:
-                element.destroy()
-                del element
-            except: pass 
-            #might fail to delete widgets that get deleted by earlier deletions
-        gc.collect()
-
     def load(self):
         """Loads loads this screen"""
         Path(getPath()+"/"+self.script)
@@ -213,3 +201,7 @@ class Screen(VINFO):
         notification.application_name=self.title
         notification.message=message
         notification.send()
+
+    def __str__(self)->str:
+        return self.name
+    
