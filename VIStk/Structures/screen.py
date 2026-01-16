@@ -35,7 +35,7 @@ class Screen(VINFO):
             else:
                 info[self.title]["Screens"][self.name]["desc"] = "A VIS Created Executable"
 
-            info[self.title]["Screens"][self.name]["version"] = "1.0.0"#always making first major version of screen
+            info[self.title]["Screens"][self.name]["version"] = Version("1.0.0")#always making first major version of screen
 
             info[self.title]["Screens"][self.name]["current"] = None#always making first major version of screen
 
@@ -62,7 +62,7 @@ class Screen(VINFO):
             info = json.load(f)
 
         self.desc = info[self.title]["Screens"][self.name]["desc"]
-        self.s_version = info[self.title]["Screens"][self.name]["version"]
+        self.s_version = Version(info[self.title]["Screens"][self.name]["version"])
         self.current = info[self.title]["Screens"][self.name]["current"]
       
     def addElement(self,element:str) -> int:
@@ -80,77 +80,6 @@ class Screen(VINFO):
         
     def addMenu(self,menu:str) -> int:
         pass #will be command line menu creation tool
-
-    def patch(self,element:str) -> int:
-        """Patches up the template after its copied
-        """
-        if os.path.exists(self.path+"/f_"+element+".py"):
-            with open(self.path+"/f_"+element+".py","r") as f:
-                text = f.read()
-            text = text.replace("<frame>","f_"+element)
-            with open(self.path+"/f_"+element+".py","w") as f:
-                f.write(text)
-            print(f"patched f_{element}.py")
-            return 1
-        else:
-            print(f"Could not patch, element does not exist.")
-            return 0
-    
-    def stitch(self) -> int:
-        """Connects screen elements to a screen
-        """
-        with open(self.p_project+"/"+self.script,"r") as f: text = f.read()
-        stitched = []
-        #Elements
-        pattern = r"#%Screen Elements.*#%Screen Grid"
-
-        elements = glob.glob(self.path+'/f_*')#get all elements
-        for i in range(0,len(elements),1):#iterate into module format
-            elements[i] = elements[i].replace("\\","/")
-            elements[i] = elements[i].replace(self.path+"/","Screens."+self.name+".")[:-3]
-            stitched.append(elements[i])
-        #combine and change text
-        elements = "from " + " import *\nfrom ".join(elements) + " import *\n"
-        text = re.sub(pattern, "#%Screen Elements\n" + elements + "\n#%Screen Grid", text, flags=re.DOTALL)
-
-        #Modules
-        pattern = r"#%Screen Modules.*#%Handle Arguments"
-
-        modules = glob.glob(self.m_path+'/m_*')#get all modules
-        for i in range(0,len(modules),1):#iterate into module format
-            modules[i] = modules[i].replace("\\","/")
-            modules[i] = modules[i].replace(self.m_path+"/","modules."+self.name+".")[:-3]
-            stitched.append(modules[i])
-        #combine and change text
-        modules = "from " + " import *\nfrom ".join(modules) + " import *\n"
-        text = re.sub(pattern, "#%Screen Modules\n" + modules + "\n#%Handle Arguments", text, flags=re.DOTALL)
-
-        #write out
-        with open(self.p_project+"/"+self.script,"w") as f:
-            f.write(text)
-        print("Stitched: ")
-        for i in stitched:
-            print(f"\t{i} to {self.name}")
-
-    def syncVersion(self) -> int:
-        """Syncs the version stored in sinfo with the version in memory
-        """
-        with open(self.p_sinfo,"r") as f:
-            info = json.load(f)
-        info[self.title]["Screens"][self.name]["current"] = self.current
-        with open(self.p_sinfo,"w") as f:
-            json.dump(info,f)
-        return 1
-
-    def crntVersion(self) -> int:
-        """Checks if the version needs to be synced and returns 1 if its synced
-        """
-        if not self.s_version == self.current:
-            self.current = self.version
-            self.syncVersion()
-            return 1
-        else:
-            return 0
 
     def load(self):
         """Loads loads this screen"""

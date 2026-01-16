@@ -2,9 +2,8 @@ import os
 import json
 import zipfile
 import shutil
-import subprocess
-import sys
 import VIStk
+from VIStk.Structures.Version import Version
 
 VISROOT = VIStk.__file__.replace("__init__.pyc","").replace("__init__.py","")
 
@@ -89,12 +88,12 @@ class VINFO():
             vers = version.split(".")
             if len(vers)==3:
                 if vers[0].isnumeric() and vers[1].isnumeric() and vers[2].isnumeric():
-                    self.version = version
+                    self.version = Version(version)
                 else:
-                    self.version = "0.0.1"
+                    self.version = Version("0.0.1")
             else:
-                self.version = "0.0.1"
-            info[self.title]["metadata"]["version"] = self.version
+                self.version = Version("0.0.1")
+            info[self.title]["metadata"]["version"] = str(self.version)
             info[self.title]["release_info"] = {}
             info[self.title]["release_info"]["location"] = "./dist/"
             info[self.title]["release_info"]["hidden_imports"] = ["PIL._tkinter_finder"]
@@ -113,7 +112,7 @@ class VINFO():
         with open(self.p_sinfo,"r") as f: 
             info = json.load(f)
             self.title = list(info.keys())[0]
-            self.version = info[self.title]["metadata"]["version"]
+            self.version = Version(info[self.title]["metadata"]["version"])
             self.company = info[self.title]["metadata"]["company"]
             
         self.screenlist = []
@@ -130,7 +129,7 @@ class VINFO():
             info = json.load(f)
 
         info[self.title]["metadata"]["version"] = version
-        self.version = version
+        self.version = Version(version)
 
         with open(self.p_sinfo,"w") as f:
             json.dump(info,f,indent=4)

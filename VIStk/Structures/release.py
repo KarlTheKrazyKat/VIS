@@ -6,6 +6,7 @@ import shutil
 from os.path import exists
 from zipfile import *
 import datetime
+from VIStk.Structures.Version import Version
 
 info = {}
 
@@ -75,22 +76,14 @@ class Release(Project):
                     meta = f.read()
 
                 #Update Overall Project Version
-                vers = self.version.split(".")
-                major = vers[0]
-                minor = vers[1]
-                patch = vers[2]
-                meta = meta.replace("$M$",major)
-                meta = meta.replace("$m$",minor)
-                meta = meta.replace("$p$",patch)
+                meta = meta.replace("$M$",i.version._major)
+                meta = meta.replace("$m$",i.version._minor)
+                meta = meta.replace("$p$",i.version._patch)
 
                 #Update Screen Version
-                vers = i.s_version.split(".")
-                major = vers[0]
-                minor = vers[1]
-                patch = vers[2]
-                meta = meta.replace("$sM$",major)
-                meta = meta.replace("$sm$",minor)
-                meta = meta.replace("$sp$",patch)
+                meta = meta.replace("$sM$",i.s_version._major)
+                meta = meta.replace("$sm$",i.s_version._minor)
+                meta = meta.replace("$sp$",i.s_version._patch)
 
                 #Update Company Info
                 if self.company != None:
@@ -179,21 +172,15 @@ class Release(Project):
         """Updates the project version, PERMANENT, cannot be undone"""
         #Split Version for Addition
         old = str(self.version)
-        vers = self.version.split(".")
 
+        #THIS DOES NOT WORK YET
         #Interate Version Number
         if self.version == "Major":
-            vers[0] = str(int(vers[0])+1)
-            vers[1] = str(0)
-            vers[2] = str(0)
+            self.version.major()
         if self.version == "Minor":
-            vers[1] = str(int(vers[1])+1)
-            vers[2] = str(0)
+            self.version.minor()
         if self.version == "Patch":
-            vers[2] = str(int(vers[2])+1)
-        
-        #Set Version Number
-        self.setVersion(f"{vers[0]}.{vers[1]}.{vers[2]}")
+            self.version.patch()
 
         #Announce Completation
         print(f"Updated Version {old}=>{self.version}")
@@ -202,7 +189,7 @@ class Release(Project):
         """Releases a version of your project"""
         #Check Version
         if self.type == "":
-            self.newVersion()
+            pass #self.newVersion()
 
         #Build
         self.build()
