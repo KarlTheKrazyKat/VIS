@@ -91,6 +91,10 @@
 - Can now load from project screenlist using root.Project.load()
 - Can reload the current screen with root.Project.reload()
 
+0.3.14.11
+
+- New Version class to aid versioning
+
 ## Upcoming
 
 - version numbering for screens control
