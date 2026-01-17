@@ -77,7 +77,58 @@ class Screen(VINFO):
             return 1
         else:
             return 0
-        
+    
+    def patch(self,element:str) -> int:
+        """Patches up the template after its copied
+        """
+        if os.path.exists(self.path+"/f_"+element+".py"):
+            with open(self.path+"/f_"+element+".py","r") as f:
+                text = f.read()
+            text = text.replace("<frame>","f_"+element)
+            with open(self.path+"/f_"+element+".py","w") as f:
+                f.write(text)
+            print(f"patched f_{element}.py")
+            return 1
+        else:
+            print(f"Could not patch, element does not exist.")
+            return 0
+    
+    def stitch(self) -> int:
+        """Connects screen elements to a screen
+        """
+        with open(self.p_project+"/"+self.script,"r") as f: text = f.read()
+        stitched = []
+        #Elements
+        pattern = r"#%Screen Elements.*#%Screen Grid"
+
+        elements = glob.glob(self.path+'/f_*')#get all elements
+        for i in range(0,len(elements),1):#iterate into module format
+            elements[i] = elements[i].replace("\\","/")
+            elements[i] = elements[i].replace(self.path+"/","Screens."+self.name+".")[:-3]
+            stitched.append(elements[i])
+        #combine and change text
+        elements = "from " + " import *\nfrom ".join(elements) + " import *\n"
+        text = re.sub(pattern, "#%Screen Elements\n" + elements + "\n#%Screen Grid", text, flags=re.DOTALL)
+
+        #Modules
+        pattern = r"#%Screen Modules.*#%Handle Arguments"
+
+        modules = glob.glob(self.m_path+'/m_*')#get all modules
+        for i in range(0,len(modules),1):#iterate into module format
+            modules[i] = modules[i].replace("\\","/")
+            modules[i] = modules[i].replace(self.m_path+"/","modules."+self.name+".")[:-3]
+            stitched.append(modules[i])
+        #combine and change text
+        modules = "from " + " import *\nfrom ".join(modules) + " import *\n"
+        text = re.sub(pattern, "#%Screen Modules\n" + modules + "\n#%Handle Arguments", text, flags=re.DOTALL)
+
+        #write out
+        with open(self.p_project+"/"+self.script,"w") as f:
+            f.write(text)
+        print("Stitched: ")
+        for i in stitched:
+            print(f"\t{i} to {self.name}")
+
     def addMenu(self,menu:str) -> int:
         pass #will be command line menu creation tool
 
