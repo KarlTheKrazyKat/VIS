@@ -97,7 +97,8 @@
 
 0.3.14.12
 
-- Layout Widget
+- Layout is now an Object rather than widget. It is inherent in Root and SubRoot Objects.
+- Layout uses place and proprietary methods to create a grid easily
 
 ## Upcoming
 

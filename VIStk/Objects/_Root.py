@@ -2,7 +2,7 @@ from tkinter import *
 from VIStk.Objects._Window import Window
 from VIStk.Objects._WindowGeometry import *
 from VIStk.Structures.project import Project
-from VIStk.Methods.sizing import *
+from VIStk.Objects._Layout import Layout
 
 class Root(Tk, Window):
     """A wrapper for the Tk class with VIS attributes"""
@@ -15,8 +15,7 @@ class Root(Tk, Window):
         self.exitArgs = None
         self.exitKwargs = None
         self.Project = Project()
-        #self.bind("<Configure>", self.autosize)
-        #self.bind("<<Modified>>", self.autosize)
+        self.Layout=Layout(self)
     
     def unload(self):
         """Closes the window neatly for VIStk"""
@@ -54,37 +53,3 @@ class Root(Tk, Window):
         self.title(title)
         self.Project.setScreen(screen)
     
-    def size(self,rows:int,columns:int):
-        """Sets the size of the grid
-        
-        Args:
-            rows (int): The number of rows in the layout
-            columns (int): The number of columns in the layout
-        """
-        size(self,rows,columns)
-
-    def rowSize(self, row:int, weight:int=0, minsize:int=0, maxsize:int=None):
-        """Sets sizing options for row
-        
-        Args:
-            row (int): The row to set the size options for
-            weight (int): The weight of the row when resizing
-            minsize (int): The minimum size of the row
-            maxsize (int): The maximum size of the row
-        """
-        rowSize(self,row,weight,minsize,maxsize)
-
-    def colSize(self, column:int, weight:int=0, minsize:int=0, maxsize:int=None):
-        """Sets sizing options for a column
-        
-        Args:
-            row (int): The row to set the size options for
-            weight (int): The weight of the row when resizing
-            minsize (int): The minimum size of the row
-            maxsize (int): The maximum size of the row
-        """
-        colSize(self,column,weight,minsize,maxsize)
-
-    def autosize(self,*nonsense):
-        """Resizing the layout according to the given rules"""
-        autosize(self,*nonsense)

@@ -1,6 +1,7 @@
 from tkinter import *
 from VIStk.Objects._Window import Window
 from VIStk.Objects._WindowGeometry import *
+from VIStk.Objects._Layout import Layout
 
 class SubRoot(Toplevel, Window):
     """A wrapper for the Toplevel class with VIS attributes"""
@@ -8,6 +9,7 @@ class SubRoot(Toplevel, Window):
         super().__init__(*args,**kwargs)
         self.WindowGeometry = WindowGeometry(self)
         self.modal = False
+        self.Layout=Layout(self)
 
     def modalize(self):
         """Makes the SubWindow modal"""
