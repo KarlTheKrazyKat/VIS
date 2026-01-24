@@ -13,12 +13,14 @@ class Layout():
         self.row = []
         self.column = []
  
-    def cell(self,row:int,column:int)->dict:
+    def cell(self,row:int,column:int, rowspan:int=None, columnspan:int=None)->dict:
         """Return the sizing attributes to place a cell
 
         Args:
             row (int): The row to place the widget in
             column (int): The column to place the widget in
+            rowspan (int): The number of rows to span
+            columnspan (int): The number of columns to span
         
         Returns:
             relheight (int): The relative height to the parent widget
@@ -26,12 +28,34 @@ class Layout():
             relx (int): The relative x offset within the parent widget
             rely (int): The relative y offset within the parent widget
         """
-        return {
-            "relwidth": self.column[column],
-            "relheight": self.row[row],
-            "rely": self.row[row-1],
-            "relx": self.column[column-1]
-        }
+        if rowspan is None and columnspan is None:
+            return {
+                "relwidth": self.column[column],
+                "relheight": self.row[row],
+                "rely": sum(self.row[:row]),
+                "relx": sum(self.column[:column])
+            }
+        else:
+            rowsize=0
+            columnsize=0
+            if not rowspan is None:
+                for i in range(row,row+rowspan,1):
+                    rowsize += self.row[i]
+            else:
+                rowsize = self.row[row]
+
+            if not columnspan is None:
+                for i in range(column,column+columnspan,1):
+                    columnsize += self.column[i]
+            else:
+                columnsize = self.column[column]
+            
+            return {
+                "relwidth": columnsize,
+                "relheight": rowsize,
+                "rely": sum(self.row[:row]),
+                "relx": sum(self.column[:column])
+            }
     
     def rowSize(self, rows:list[float|int]):
         """Sets the size of rows for a Layout

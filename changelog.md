@@ -95,16 +95,18 @@
 
 - New Version class to aid versioning
 
-0.3.14.12
+0.3.14.13
 
 - Layout is now an Object rather than widget. It is inherent in Root and SubRoot Objects.
 - Layout uses place and proprietary methods to create a grid easily
+- Layout can now have elements span columns
 
 ## Upcoming
 
 - version numbering for screens control
 - Auto title screens on creation
 - Auto add icon to screen on creation
+- Layout should have padding aswell
 
 0.4.X Application Settings
 
