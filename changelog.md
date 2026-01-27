@@ -103,10 +103,14 @@
 
 ## Upcoming
 
+0.3.15 Layouts
+
 - version numbering for screens control
 - Auto title screens on creation
 - Auto add icon to screen on creation
 - Layout should have padding aswell
+- Layout should have maximum size/minimum size option
+- LayoutFrame Widget should exist to make it easier to manage frames with Layouts
 
 0.4.X Application Settings
 

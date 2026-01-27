@@ -1,6 +1,6 @@
 from tkinter import ttk
 from tkinter import *
-
+from math import isclose
 
 class SizeError(Exception):
     def __init__(self, message):
@@ -63,7 +63,7 @@ class Layout():
         Args:
             rows (list[float|int]): The size of each individual row from 0.0 to 1.0
         """
-        if sum(rows) == 1:
+        if isclose(sum(rows),1,abs_tol=0.00001):
             if rows[0] == 0:
                 self.row=rows
             else:
@@ -78,7 +78,7 @@ class Layout():
         Args:
             columns (list[float|int]): The size of each individual column from 0.0 to 1.0
         """
-        if sum(columns) == 1:
+        if isclose(sum(columns),1,abs_tol=0.00001):
             if columns[0] == 0:
                 self.column=columns
             else:
