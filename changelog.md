@@ -101,6 +101,10 @@
 - Layout uses place and proprietary methods to create a grid easily
 - Layout can now have elements span columns
 
+0.3.14.15
+
+- LayoutFrame now exists, simply adds the self.Layout attribute
+
 ## Upcoming
 
 0.3.15 Layouts
