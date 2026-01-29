@@ -1,14 +1,12 @@
-from VIStk.Structures.project import *
-from VIStk.Structures.VINFO import *
-from VIStk.Structures.screen import *
+from VIStk.Structures._Project import *
+from VIStk.Structures._VINFO import *
+from VIStk.Structures._Screen import *
 import subprocess
 import shutil
 from os.path import exists
 from zipfile import *
 import datetime
-from VIStk.Structures.Version import Version
-
-info = {}
+from VIStk.Structures._Version import Version
 
 class Release(Project):
     """A VIS Release object"""

@@ -3,7 +3,7 @@ import json
 import shutil
 import re
 import glob
-from VIStk.Structures.VINFO import *
+from VIStk.Structures._VINFO import *
 from tkinter import *
 from pathlib import Path
 import sys

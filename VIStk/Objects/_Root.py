@@ -1,7 +1,7 @@
 from tkinter import *
 from VIStk.Objects._Window import Window
 from VIStk.Objects._WindowGeometry import *
-from VIStk.Structures.project import Project
+from VIStk.Structures._Project import Project
 from VIStk.Objects._Layout import Layout
 
 class Root(Tk, Window):

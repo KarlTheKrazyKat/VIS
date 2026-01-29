@@ -3,7 +3,7 @@ import json
 import zipfile
 import shutil
 import VIStk
-from VIStk.Structures.Version import Version
+from VIStk.Structures._Version import Version
 
 VISROOT = VIStk.__file__.replace("__init__.pyc","").replace("__init__.py","")
 
@@ -122,17 +122,7 @@ class VINFO():
         self.p_icons = self.p_project + "/Icons"
         self.p_images = self.p_project + "/Images"
         
-    def setVersion(self,version:str):
-        """Sets a new project version
-        """
-        with open(self.p_sinfo,"r") as f: 
-            info = json.load(f)
-
-        info[self.title]["metadata"]["version"] = version
-        self.version = Version(version)
-
-        with open(self.p_sinfo,"w") as f:
-            json.dump(info,f,indent=4)
+    
 
     def restoreAll(self):
         """Undoes screen isolation"""

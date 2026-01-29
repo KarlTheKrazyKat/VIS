@@ -2,7 +2,7 @@ from tkinter import *
 import PIL.Image
 import PIL.ImageTk
 import glob
-from VIStk.Structures.project import *
+from VIStk.Structures._Project import *
 
 class Window:
     """A VIS Window object"""

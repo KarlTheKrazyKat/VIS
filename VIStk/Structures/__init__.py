@@ -1,7 +1,7 @@
-from VIStk.Structures.project import *
-from VIStk.Structures.release import *
-from VIStk.Structures.screen import *
-from VIStk.Structures.VINFO import *
+from VIStk.Structures._Project import *
+from VIStk.Structures._Release import *
+from VIStk.Structures._Screen import *
+from VIStk.Structures._VINFO import *
 
 __all__ = ["Project",
            "Release",

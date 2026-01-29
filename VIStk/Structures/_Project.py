@@ -1,6 +1,6 @@
 import json
-from VIStk.Structures.VINFO import *
-from VIStk.Structures.screen import *
+from VIStk.Structures._VINFO import *
+from VIStk.Structures._Screen import *
 
 class Project(VINFO):
     """VIS Project Object
@@ -26,7 +26,8 @@ class Project(VINFO):
             self.dist_location:str = info[self.name]["release_info"]["location"]
             self.hidden_imports:list[str] = info[self.name]["release_info"]["hidden_imports"]
         self.Screen:Screen = None
-    
+
+    #Project Screen Methods
     def newScreen(self,screen:str) -> int:
         """Creates a new screen with some prompting
 
@@ -120,3 +121,16 @@ class Project(VINFO):
             self.Screen.load()
         except AttributeError:
             return None
+
+    #Project Info Methods
+    def setVersion(self,version:str):
+        """Sets a new project version
+        """
+        with open(self.p_sinfo,"r") as f: 
+            info = json.load(f)
+
+        info[self.title]["metadata"]["version"] = version
+        self.version = Version(version)
+
+        with open(self.p_sinfo,"w") as f:
+            json.dump(info,f,indent=4)
