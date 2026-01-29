@@ -17,7 +17,7 @@ def unzip_without_overwrite(src_path, dst_dir):
 def __main__():
     match inp[1]:
         case "-v"|"-V"|"-Version"|"-version":
-            print(f"VIS Version {metadata.version('VIStk')}")
+            print(f"VIS Version {metadata.Version('VIStk')}")
             
         case "new"|"New"|"N"|"n":#Create a new VIS project
             project = VINFO()

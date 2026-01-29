@@ -10,21 +10,21 @@ class Project(VINFO):
         """
         super().__init__()
         self.screenlist:list[Screen]=[]
+        """A List of `Screen` Objects in the Project"""
         with open(self.p_sinfo,"r") as f:
             info = json.load(f)
-            self.name = list(info.keys())[0]
 
-            for screen in list(info[self.name]["Screens"].keys()):
+            for screen in list(info[self.title]["Screens"].keys()):
                 scr = Screen(screen,
-                             info[self.name]["Screens"][screen]["script"],
-                             info[self.name]["Screens"][screen]["release"],
-                             info[self.name]["Screens"][screen].get("icon"),
+                             info[self.title]["Screens"][screen]["script"],
+                             info[self.title]["Screens"][screen]["release"],
+                             info[self.title]["Screens"][screen].get("icon"),
                              exists=True)
                 self.screenlist.append(scr)
-            self.d_icon = info[self.name]["defaults"]["icon"]
+            self.d_icon = info[self.title]["defaults"]["icon"]
 
-            self.dist_location:str = info[self.name]["release_info"]["location"]
-            self.hidden_imports:list[str] = info[self.name]["release_info"]["hidden_imports"]
+            self.dist_location:str = info[self.title]["release_info"]["location"]
+            self.hidden_imports:list[str] = info[self.title]["release_info"]["hidden_imports"]
         self.Screen:Screen = None
 
     #Project Screen Methods
@@ -73,7 +73,7 @@ class Project(VINFO):
         """Checks if the project has the correct screen
         """
         for i in self.screenlist:
-            if i.name == screen:
+            if i.title == screen:
                 return True
         return False
     
@@ -81,7 +81,7 @@ class Project(VINFO):
         """Returns a screen object by its name
         """
         for i in self.screenlist:
-            if i.name == screen:
+            if i.title == screen:
                 return i
         return None
 
@@ -121,16 +121,3 @@ class Project(VINFO):
             self.Screen.load()
         except AttributeError:
             return None
-
-    #Project Info Methods
-    def setVersion(self,version:str):
-        """Sets a new project version
-        """
-        with open(self.p_sinfo,"r") as f: 
-            info = json.load(f)
-
-        info[self.title]["metadata"]["version"] = version
-        self.version = Version(version)
-
-        with open(self.p_sinfo,"w") as f:
-            json.dump(info,f,indent=4)

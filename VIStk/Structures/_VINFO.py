@@ -26,7 +26,6 @@ def getPath()->str:
     else:
         return None
 
-        
 def validName(name:str):
     """Checks if provided path is a valid filename
     """
@@ -54,6 +53,7 @@ class VINFO():
     def __init__(self):
         """Creates an overarching control stricture within the /.VIS/ project folder
         """
+        #Begin Project Creation If Project Is Not Found
         if getPath() == None:
             wd = os.getcwd()
             os.mkdir(wd+"\\.VIS")
@@ -68,7 +68,8 @@ class VINFO():
             #DO NOT MESS WITH THE TEMPLATE HEADERS
 
             title = input("Enter a name for the VIS project: ")
-            self.title:str = title #Name of the project
+            self.title:str = title 
+            """Name of the Project"""
             info = {}
             info[self.title] = {}
             info[self.title]["Screens"]={}
@@ -88,12 +89,12 @@ class VINFO():
             vers = version.split(".")
             if len(vers)==3:
                 if vers[0].isnumeric() and vers[1].isnumeric() and vers[2].isnumeric():
-                    self.version = Version(version)
+                    self.Version = Version(version)
                 else:
-                    self.version = Version("0.0.1")
+                    self.Version = Version("0.0.1")
             else:
-                self.version = Version("0.0.1")
-            info[self.title]["metadata"]["version"] = str(self.version)
+                self.Version = Version("0.0.1")
+            info[self.title]["metadata"]["version"] = str(self.Version)
             info[self.title]["release_info"] = {}
             info[self.title]["release_info"]["location"] = "./dist/"
             info[self.title]["release_info"]["hidden_imports"] = ["PIL._tkinter_finder"]
@@ -102,27 +103,36 @@ class VINFO():
                 json.dump(info,f,indent=4)
             print(f"Setup project.json for project {self.title} in {wd}/.VIS/")
 
-
         #Get VIS Root location
         self.p_vis = VIStk.__file__.replace("__init__.pyc","").replace("__init__.py","")
-
-        self.p_project = getPath()
+        """The Installed Location of VIStk"""
+        
+        #Project root location
+        self.p_project = getPath() 
+        """The Location of the Project"""
         self.p_vinfo = self.p_project + "/.VIS"
+        """The Location of the Project Info Folder `/.VIS`"""
         self.p_sinfo = self.p_vinfo + "/project.json"
+        """The Path of the `project.json` file"""
         with open(self.p_sinfo,"r") as f: 
             info = json.load(f)
             self.title = list(info.keys())[0]
-            self.version = Version(info[self.title]["metadata"]["version"])
+            """Name of the Project"""
+            self.Version = Version(info[self.title]["metadata"]["version"])
+            """Project Version Number"""
             self.company = info[self.title]["metadata"]["company"]
+            """Project Copyright Owner [Company]"""
             
-        self.screenlist = []
         self.p_screens = self.p_project +"/Screens"
+        """The Path to the `/Screens` Folder"""
         self.p_modules = self.p_project +"/modules"
+        """The Path to the `/modules` Folder"""
         self.p_templates = self.p_vinfo + "/Templates"
+        """The Location of the Project `/Templates` Folder"""
         self.p_icons = self.p_project + "/Icons"
+        """The Location of the Project `/Icons` Folder"""
         self.p_images = self.p_project + "/Images"
-        
-    
+        """The Location of the Project  `/Images` Folder"""
 
     def restoreAll(self):
         """Undoes screen isolation"""

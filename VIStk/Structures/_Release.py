@@ -25,7 +25,7 @@ class Release(Project):
         """
         
         #Announce Spec Creation
-        print(f"Creating project.spec for {self.name}")
+        print(f"Creating project.spec for {self.title}")
         
         #Ensure spec template has hidden imports
         with open(self.p_vinfo+"/Templates/spec.txt","r+") as f:
@@ -74,9 +74,9 @@ class Release(Project):
                     meta = f.read()
 
                 #Update Overall Project Version
-                meta = meta.replace("$M$",i.version._major)
-                meta = meta.replace("$m$",i.version._minor)
-                meta = meta.replace("$p$",i.version._patch)
+                meta = meta.replace("$M$",i.Version._major)
+                meta = meta.replace("$m$",i.Version._minor)
+                meta = meta.replace("$p$",i.Version._patch)
 
                 #Update Screen Version
                 meta = meta.replace("$sM$",i.s_version._major)
@@ -114,7 +114,7 @@ class Release(Project):
             for i in name_list:
                 insert=insert+"\n\t"+i+"_exe,\n\t"+i+"_a.binaries,\n\t"+i+"_a.zipfiles,\n\t"+i+"_a.datas,"
             collect = collect.replace("$insert$",insert)
-            collect = collect.replace("$version$",self.name+"-"+self.flag) if not self.flag == "" else collect.replace("$version$",self.name)
+            collect = collect.replace("$version$",self.title+"-"+self.flag) if not self.flag == "" else collect.replace("$version$",self.title)
             
         #Header for specfile
         header = "# -*- mode: python ; coding: utf-8 -*-\n\n\n"
@@ -169,19 +169,19 @@ class Release(Project):
     def newVersion(self):
         """Updates the project version, PERMANENT, cannot be undone"""
         #Split Version for Addition
-        old = str(self.version)
+        old = str(self.Version)
 
         #THIS DOES NOT WORK YET
         #Interate Version Number
-        if self.version == "Major":
-            self.version.major()
-        if self.version == "Minor":
-            self.version.minor()
-        if self.version == "Patch":
-            self.version.patch()
+        if self.Version == "Major":
+            self.Version.major()
+        if self.Version == "Minor":
+            self.Version.minor()
+        if self.Version == "Patch":
+            self.Version.patch()
 
         #Announce Completation
-        print(f"Updated Version {old}=>{self.version}")
+        print(f"Updated Version {old}=>{self.Version}")
 
     def release(self):
         """Releases a version of your project"""
