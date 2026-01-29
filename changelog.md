@@ -107,6 +107,10 @@
 
 ## Upcoming
 
+- Should track the current screen through some sort of variable
+- Should track FPS through variable
+- Should store copyrigth info somewhere
+
 0.3.15 Layouts
 
 - version numbering for screens control
