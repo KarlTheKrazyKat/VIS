@@ -26,6 +26,7 @@ class Project(VINFO):
             self.dist_location:str = info[self.title]["release_info"]["location"]
             self.hidden_imports:list[str] = info[self.title]["release_info"]["hidden_imports"]
         self.Screen:Screen = None
+        """The Currently Running `Screen`"""
 
     #Project Screen Methods
     def newScreen(self,screen:str) -> int:
@@ -121,3 +122,10 @@ class Project(VINFO):
             self.Screen.load()
         except AttributeError:
             return None
+
+    def getInfo(self) -> str:
+        """Gets the `Project` and `Screen` Info"""
+        if self.Screen is None:
+            return self.title + self.Version
+        else:
+            return self.title + self.Screen.name + self.Version

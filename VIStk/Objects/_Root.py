@@ -15,7 +15,9 @@ class Root(Tk, Window):
         self.exitArgs = None
         self.exitKwargs = None
         self.Project = Project()
+        """The VIStk `Project`"""
         self.Layout=Layout(self)
+        """The VIStk `Layout` of the Window"""
     
     def unload(self):
         """Closes the window neatly for VIStk"""

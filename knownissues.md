@@ -2,16 +2,6 @@
 
 ## Unresolved
 
-### Project Setup
-
-#### Hangs on VIS new
-
-Found 0.3.6
-
-Known work-arounds:
-
-- Ctrl+C and continue process
-
 ## Resolved
 
 ### Form/Template

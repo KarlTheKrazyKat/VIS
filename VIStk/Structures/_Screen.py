@@ -15,12 +15,18 @@ class Screen(VINFO):
     """
     def __init__(self,name:str,script:str,release:bool=False,icon:str=None,exists:bool=True,desc:str=None):
         super().__init__()
-        self.name=name
-        self.script=script
-        self.release=release
-        self.icon=icon
+        self.name:str=name
+        """The Name of the `Screen`"""
+        self.script:str=script
+        """The Name of the python script the screen executes"""
+        self.release:bool=release
+        """`True` if `Screen` Should be Released as Its Own Binary"""
+        self.icon:str=icon
+        """The Name of the Icon for the Screen"""
         self.path = self.p_screens+"/"+self.name
+        """Path to the Screen `Screens/` Folder"""
         self.m_path = self.p_modules+"/"+self.name
+        """Path to the Screen `modules/` Folder"""
 
         if not exists:
             with open(self.p_sinfo,"r") as f:
@@ -35,7 +41,7 @@ class Screen(VINFO):
             else:
                 info[self.title]["Screens"][self.name]["desc"] = "A VIS Created Executable"
 
-            info[self.title]["Screens"][self.name]["version"] = Version("1.0.0")#always making first major version of screen
+            info[self.title]["Screens"][self.name]["version"] = str(Version("1.0.0"))#always making first major version of screen
 
             info[self.title]["Screens"][self.name]["current"] = None#always making first major version of screen
 
@@ -62,8 +68,10 @@ class Screen(VINFO):
             info = json.load(f)
 
         self.desc = info[self.title]["Screens"][self.name]["desc"]
+        """Screen Description"""
         self.s_version = Version(info[self.title]["Screens"][self.name]["version"])
-        self.current = info[self.title]["Screens"][self.name]["current"]
+        """Screen `Version`"""
+        self.current = info[self.title]["Screens"][self.name]["current"]#remove later
       
     def addElement(self,element:str) -> int:
         if validName(element):
