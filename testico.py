@@ -1,11 +1,15 @@
-from PIL import Image, ImageOps
+from VIStk.Objects._ArgHandler import ArgHandler
+import sys
 
-img = Image.open("cat.jpeg")
-img = ImageOps.exif_transpose(img)
-x, y = img.size
-size = max(x, y)
-_img = Image.new('RGBA', (size, size), (0,0,0,0))
-_img.paste(img, (int((size-x)/2), int((size-y)/2)))
-_img.save("cat.png")
+test = ArgHandler()
 
-#This code is for automatically creating icons
+def printer(l:list):
+    print(" ".join(l))
+
+def lister(l:list):
+    print(l)
+
+test.newFlag("print",printer)
+test.newFlag("list",lister)
+
+test.handle(sys.argv)

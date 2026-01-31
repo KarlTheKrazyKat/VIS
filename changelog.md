@@ -36,6 +36,7 @@ Updated
 
 ## Upcoming
 
+- Default form should be changed
 - Should track FPS through variable
 - Should store copyright info somewhere
 - version numbering for screens control
