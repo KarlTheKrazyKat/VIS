@@ -126,6 +126,6 @@ class Project(VINFO):
     def getInfo(self) -> str:
         """Gets the `Project` and `Screen` Info"""
         if self.Screen is None:
-            return self.title + str(self.Version)
+            return " ".join([self.title,str(self.Version)])
         else:
-            return self.title + self.Screen.name + str(self.Version)
+            return " ".join([self.title,self.Screen.name,str(self.Version)])
