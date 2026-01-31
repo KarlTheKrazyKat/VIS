@@ -81,7 +81,7 @@ class Project(VINFO):
         """Returns a screen object by its name
         """
         for i in self.screenlist:
-            if i.title == screen:
+            if i.name == screen:
                 return i
         return None
 

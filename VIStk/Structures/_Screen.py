@@ -133,7 +133,7 @@ class Screen(VINFO):
         pass #will be command line menu creation tool
 
     def load(self):
-        """Loads loads this screen"""
+        """Loads  this screen"""
         os.execl(sys.executable, *(sys.executable,Path(getPath()+"/"+self.script)))
 
     def getModules(self, script:str=None) -> list[str]:
