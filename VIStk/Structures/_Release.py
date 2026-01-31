@@ -74,14 +74,14 @@ class Release(Project):
                     meta = f.read()
 
                 #Update Overall Project Version
-                meta = meta.replace("$M$",i.Version._major)
-                meta = meta.replace("$m$",i.Version._minor)
-                meta = meta.replace("$p$",i.Version._patch)
+                meta = meta.replace("$M$",str(i.Version._major))
+                meta = meta.replace("$m$",str(i.Version._minor))
+                meta = meta.replace("$p$",str(i.Version._patch))
 
                 #Update Screen Version
-                meta = meta.replace("$sM$",i.s_version._major)
-                meta = meta.replace("$sm$",i.s_version._minor)
-                meta = meta.replace("$sp$",i.s_version._patch)
+                meta = meta.replace("$sM$",str(i.s_version._major))
+                meta = meta.replace("$sm$",str(i.s_version._minor))
+                meta = meta.replace("$sp$",str(i.s_version._patch))
 
                 #Update Company Info
                 if self.company != None:
