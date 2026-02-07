@@ -2,7 +2,7 @@
 
 ## Changelog
 
-### 0.3 Releases
+### 0.3 Release
 
 #### Changes
 
@@ -27,8 +27,10 @@ New
 - Root Widget (Tk, Window)
 - SubRoot Widget (TopLevel, Window)
 - WindowGeometry
-- LayoutFrame(ttk.Frame)
+- LayoutFrame (ttk.Frame)
 - QuestionWindow (SubRoot)
+- ScrollableFrame (ttk.Frame)
+- ScrollMenu (ScrollableFrame)
 
 Updated
 

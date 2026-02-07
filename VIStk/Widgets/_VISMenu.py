@@ -18,10 +18,15 @@ class VISMenu():
         """
 
         self.parent = parent
+        """The Parent to Create `MenuItems` in"""
         self.root = self.parent.winfo_toplevel()
+        """The Root of the Parent Object"""
         self.path = path
+        """The Path to the `.json` File to Read"""
         self.ob_dict = []
+        """A Dictionary to Store `MenuItems` in"""
         self.n_dict = {}
+        """A Dictionary to Store Navigation Controls in"""
 
         #Open json file for menu structure
         with open(path) as file:
