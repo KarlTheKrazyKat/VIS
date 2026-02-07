@@ -2,6 +2,7 @@ import json
 from tkinter import *
 from tkinter import ttk
 from VIStk.Widgets import MenuItem
+from VIStk.fUtil import *
 
 class VISMenu():
     """The menu class drawings a column of buttons with subprocess calls to paths defined in a corresponding .json file.
@@ -35,20 +36,27 @@ class VISMenu():
         for i in range(0, len(self.dict.keys()), 1):
             self.parent.grid_rowconfigure(i,weight=1)
 
+        self.ob_dict:list[MenuItem]=[]
+        """A `list` of `MenuItem` Objects"""
         x = 0
         for item in self.dict:
             ob = MenuItem(self.parent,
                       path= self.dict[item]["path"],
                       nav = self.dict[item]["nav"],
                       text = self.dict[item]["text"],
-                      relief="flat"
+                      relief="flat",
+                      font=fUtil.mkfont(10)
                       )
-            ob.button.grid(row=x, column=0, sticky=(N,S,E,W))
+            ob.grid(row=x, column=0, sticky=(N,S,E,W))
             self.ob_dict.append(ob)
             self.n_dict[ob.nav]=ob
             x += 1
 
-        self.root.bind("<KeyPress>",self.menuNav)
+        if len(self.ob_dict) == 1:
+            self.ob_dict[0].bind("<Configure>", lambda e: fUtil.autosize(e))
+        if len(self.ob_dict) >1:
+            self.ob_dict[0].bind("<Configure>", lambda e: fUtil.autosize(e,relations=self.ob_dict[1:]))
+        self.root.bind("<KeyPress>",self.menuNav)        
     
     def menuNav(self,happ:Event):
         k=happ.char

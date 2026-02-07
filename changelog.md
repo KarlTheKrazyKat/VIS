@@ -35,6 +35,7 @@ New
 Updated
 
 - Menu: buttons highlight on hover
+- MenuItem(Button): now menuitem is the button and text autosizes
 
 ## Upcoming
 
