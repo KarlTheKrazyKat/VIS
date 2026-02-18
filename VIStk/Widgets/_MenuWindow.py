@@ -5,6 +5,7 @@ from tkinter import *
 class MenuWindow(SubRoot):
     def __init__(self,parent:Tk|Toplevel,path:str,*args,**kwargs):
         super().__init__(*args,**kwargs)
+        self.master=parent
 
         #Ensure visibility
         self.focus_force()

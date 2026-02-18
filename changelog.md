@@ -41,7 +41,9 @@ New
 Updated
 
 - Menu: buttons highlight on hover
+-     : can provide screennames instead of paths
 - MenuItem(Button): now menuitem is the button and text autosizes
+-                 : will use screen.load() if provided with screenname
 
 ## Upcoming
 

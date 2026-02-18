@@ -2,6 +2,7 @@ from tkinter import *
 from tkinter import ttk
 import os
 import sys
+from VIStk.Structures._Project import *
 
 class MenuItem(Button):
     """Each item in the menu is created from the corresponding .json file. Each path should be given relative to xyz/WOM/
@@ -25,10 +26,23 @@ class MenuItem(Button):
         self.bind("<Leave>", leave)
         #self.button.pack()
 
+        for i in Project().screenlist:
+            i:Screen
+            if self.path == i.name:
+                self.screen = i
+                """The `Screen` to load upon clicking"""
+                break
+        else:
+            self.screen = None
+            """The `Screen` to load upon clicking"""
+
     def itemPath(self):
         """Opens the given path or exe for the button
         """
         #Should have a more VIStk way to switch screens
+        
+        if not self.screen is None:
+            self.screen.load()
         if ".exe" in self.path:
             #os.execl(self.path,*(self.path))
             os.startfile(self.path)
