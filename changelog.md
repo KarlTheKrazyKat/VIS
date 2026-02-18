@@ -19,6 +19,12 @@ Screen Functionality
 - Default Form Changed
 - Currently active Screen is tracked
 
+#### Objects
+
+New
+
+- VIMG can bind image path resizing to widget
+
 #### Widgets
 
 New
