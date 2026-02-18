@@ -23,10 +23,10 @@ class ScrollableFrame(ttk.Frame):
         )
         self.canvas.configure(yscrollcommand=self.scrollbar.set)
 
-        self.canvas.pack(side="left", fill="both", expand=True)
-        self.scrollbar.pack(side="right", fill="y")
+        self.canvas.grid(row=1,column=1,sticky=(N,S,E,W))
+        self.scrollbar.grid(row=1,column=2,sticky=(N,S))
 
     def sizeFrame(self, event:Event):
         """Sizing the Child Frame"""
         canvas_width=event.width
-        self.canvas.itemconfig(self.sfid, width=canvas_width)
+        self.canvas.itemconfig(self.sfid, width=canvas_width-self.scrollbar.winfo_width())
