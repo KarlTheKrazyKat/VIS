@@ -1,10 +1,11 @@
 from tkinter import ttk
 from tkinter import *
+import sys
 
 class ScrollableFrame(ttk.Frame):
     def __init__(self, root, *args, **kwargs):
         super().__init__(root, *args, **kwargs)
-        self.canvas = Canvas(self,height=root.winfo_height(),width=root.winfo_width())
+        self.canvas = Canvas(self)
         """A `Canvas` to Fill the `Frame` and Scroll on"""
         self.scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
         """The `ttk.Scrollbar`"""
@@ -13,7 +14,8 @@ class ScrollableFrame(ttk.Frame):
         """The `ttk.Frame` to Scroll"""
 
         self.sfid = self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
-        self.canvas.bind("<Configure>", self.sizeFrame)
+        """The Object ID of the Window Drawn to the Canvas"""
+        self.bind("<Configure>", self.sizeFrame)
 
         self.scrollable_frame.bind(
             "<Configure>",
@@ -23,10 +25,18 @@ class ScrollableFrame(ttk.Frame):
         )
         self.canvas.configure(yscrollcommand=self.scrollbar.set)
 
-        self.canvas.grid(row=1,column=1,sticky=(N,S,E,W))
-        self.scrollbar.grid(row=1,column=2,sticky=(N,S))
+        self.canvas.pack(side="left",fill="both",expand=True)
+        self.scrollbar.pack(side="right",fill="y")
+        
+        self.canvas.bind_all("<MouseWheel>", self.scroll)
 
     def sizeFrame(self, event:Event):
-        """Sizing the Child Frame"""
-        canvas_width=event.width
-        self.canvas.itemconfig(self.sfid, width=canvas_width-self.scrollbar.winfo_width())
+        """Sizing the Frame"""
+        canvas_width=self.master.winfo_width()
+        canvas_height=self.master.winfo_height()
+        self.canvas.config(width=canvas_width-17, height=canvas_height)
+        self.canvas.itemconfig(self.sfid, width=canvas_width-17)
+
+    def scroll(self, e:Event):
+        """Scrolls the Window"""
+        self.canvas.yview_scroll(int(-1*e.delta/120), "units")
