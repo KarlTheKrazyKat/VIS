@@ -140,9 +140,9 @@ class Screen(VINFO):
     def addMenu(self,menu:str) -> int:
         pass #will be command line menu creation tool
 
-    def load(self):
+    def load(self,*args):
         """Loads  this screen"""
-        os.execl(sys.executable, *(sys.executable,Path(getPath()+"/"+self.script)))
+        os.execl(sys.executable, *(sys.executable,Path(getPath()+"/"+self.script),*args))
 
     def getModules(self, script:str=None) -> list[str]:
         """Gets a list of all modules in the screens folder"""
