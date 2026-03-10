@@ -6,12 +6,6 @@ from Screens.root import *
 import sys
 #%File Specific Imports
 
-#%Configure Screen
-root.Active = True
-root.WindowGeometry.setGeometry(width=66,height=66,align="center",size_style="screen_relative")
-root.screenTitle("<title>")
-root.setIcon("<icon>")
-
 #%Screen Elements
 
 #%Screen Grid
@@ -27,14 +21,43 @@ def loop():
     #screen modules run here
     1+1
 
+# ── Host hooks ────────────────────────────────────────────────────────────────
+# These are called by the Host when this screen runs as a tab.
+# They are ignored in standalone mode.
+
+def setup(parent):
+    """Build this screen's UI into *parent* (a Frame supplied by the Host).
+    Must be implemented for the screen to support tabbing."""
+    pass
+
+def configure_menu(menubar):
+    """Contribute menu items to the Host's persistent menu bar.
+    Called each time this tab is activated; items are cleared on deactivation."""
+    pass
+
+def on_activate():
+    """Called when this tab gains focus inside the Host."""
+    pass
+
+def on_deactivate():
+    """Called when this tab loses focus or is closed inside the Host."""
+    pass
+
+# ── Standalone entry point ────────────────────────────────────────────────────
 #%Update Loop
-while True: 
-    try:
-        if root.Active:
-            try:loop()
-            except:pass
-            root.update()
-        else:
+if __name__ == "__main__":
+    root.Active = True
+    root.WindowGeometry.setGeometry(width=66,height=66,align="center",size_style="screen_relative")
+    root.screenTitle("<title>")
+    root.setIcon("<icon>")
+
+    while True:
+        try:
+            if root.Active:
+                try: loop()
+                except: pass
+                root.update()
+            else:
+                break
+        except:
             break
-    except:
-        break

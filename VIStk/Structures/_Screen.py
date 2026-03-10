@@ -13,7 +13,7 @@ from notifypy import Notify
 class Screen(VINFO):
     """A VIS screen object
     """
-    def __init__(self,name:str,script:str,release:bool=False,icon:str=None,exists:bool=True,desc:str=None):
+    def __init__(self,name:str,script:str,release:bool=False,icon:str=None,exists:bool=True,desc:str=None,tabbed:bool=False):
         super().__init__()
         self.name:str=name
         """The Name of the `Screen`"""
@@ -35,7 +35,7 @@ class Screen(VINFO):
             info[self.title]["Screens"][self.name] = {"script":script,"release":release}
             if not icon == None:
                 info[self.title]["Screens"][self.name]["icon"] = icon
-            
+
             if not desc == None:
                 info[self.title]["Screens"][self.name]["desc"] = desc
             else:
@@ -44,6 +44,8 @@ class Screen(VINFO):
             info[self.title]["Screens"][self.name]["version"] = str(Version("1.0.0"))#always making first major version of screen
 
             info[self.title]["Screens"][self.name]["current"] = None#always making first major version of screen
+
+            info[self.title]["Screens"][self.name]["tabbed"] = tabbed
 
             with open(self.p_sinfo,"w") as f:
                 json.dump(info,f,indent=4)
@@ -72,6 +74,8 @@ class Screen(VINFO):
         self.s_version = Version(info[self.title]["Screens"][self.name]["version"])
         """Screen `Version`"""
         self.current = info[self.title]["Screens"][self.name]["current"]#remove later
+        self.tabbed: bool = info[self.title]["Screens"][self.name].get("tabbed", False)
+        """Whether this screen opens as a tab inside the Host window"""
       
     def addElement(self,element:str) -> int:
         if validName(element):

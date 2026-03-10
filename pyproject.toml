@@ -7,7 +7,8 @@ name = "VIStk"
 version = "0.3.15.7"
 license = {file="LICENSE"}
 dependencies = [
-  "pyinstaller"
+  "pyinstaller",
+  "pystray"
 ]
 description = "Visual Interfacing Structure for python using tkinter"
 requires-python = ">=3.10"
@@ -34,3 +35,11 @@ VIS = "VIStk.VIS:__main__"
 [tool.setuptools]
 packages = ["VIStk","VIStk.Widgets","VIStk.Objects","VIStk.Structures"]
 ext-modules = []
+
+[tool.setuptools.package-data]
+VIStk = [
+  "Form.zip",
+  "Templates/*.txt",
+  "Templates/Widgets/*.txt",
+  "Templates/Widgets/THE_PLAN",
+]

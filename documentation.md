@@ -11,6 +11,7 @@ VIStk is a lightweight framework that makes building multi-screen Tkinter applic
 - [CLI Commands](#cli-commands)
 - [Objects](#objects)
   - [Root](#root)
+  - [Host](#host)
   - [SubRoot](#subroot)
   - [Window](#window)
   - [WindowGeometry](#windowgeometry)
@@ -19,6 +20,8 @@ VIStk is a lightweight framework that makes building multi-screen Tkinter applic
   - [VIMG](#vimg)
   - [ArgHandler](#arghandler)
 - [Widgets](#widgets)
+  - [TabBar](#tabbar)
+  - [HostMenu](#hostmenu)
   - [ScrollableFrame](#scrollableframe)
   - [VISMenu](#vismenu)
   - [MenuItem](#menuitem)
@@ -64,28 +67,61 @@ MyProject/
 
 ## App Lifecycle
 
-VIStk apps do not use `mainloop()`. Screen switching works by replacing the current process with a new one via `os.execl`. Each screen is its own Python script. When the user navigates to a different screen, the current process is replaced in-place.
+VIStk supports two runtime models: **standalone** (original) and **Host-based** (tabbed).
 
-**Starting a screen:**
+### Standalone mode
+
+Each screen is its own Python process. Switching screens replaces the current process via `os.execl`. This is the original VIStk behaviour and still works for any screen where `tabbed` is `false`.
 
 ```python
 from VIStk.Objects import Root
 
 root = Root()
-root.screenTitle("MyScreen")         # sets window title and tracks active screen
+root.screenTitle("MyScreen")
 root.WindowGeometry.setGeometry(width=800, height=600, align="center")
 
 # ... build your UI ...
 
-while root.Active:
-    root.update()
+if __name__ == "__main__":
+    while root.Active:
+        root.update()
+```
+
+### Host mode
+
+The `Host` is a persistent process that owns the Tk root window. It lives in the system tray when minimized and never closes unless the user explicitly quits from the tray menu. Screens marked `tabbed: true` in `project.json` open as `Frame`-based tabs inside the Host window. Standalone screens are spawned as subprocesses by the Host.
+
+```python
+from VIStk.Objects import Host
+
+host = Host()
+host.screenTitle("MyApp")
+host.WindowGeometry.setGeometry(width=1200, height=800, align="center")
+
+# Open a tabbed screen (tab appears inside the Host window)
+host.open("Dashboard")
+
+# Open a standalone screen (spawned as a subprocess)
+host.open("Settings")
+
+while host.Active:
+    host.tick_fps()
+    host.update()
+```
+
+Screen navigation from anywhere in the app:
+
+```python
+# Routes through Host if running, otherwise os.execl
+root.Project.open("WorkOrders")
 ```
 
 **Key rules:**
 
-- Do not call `root.mainloop()` — this bypasses the `while` loop and traps the app.
-- Do not call `root.destroy()` to quit — set `root.Active = False` instead. The loop will exit and Python will clean up naturally.
-- Screen switches are handled by `Screen.load()`, which calls `os.execl` to replace the process. The current window is destroyed as part of that replacement.
+- Do not call `root.mainloop()` — this bypasses the `while` loop and prevents process switching.
+- Do not call `root.destroy()` to quit — set `root.Active = False` or call `host.quit_host()`.
+- Screen scripts must include `if __name__ == "__main__":` around the startup code so they can be imported as modules by the Host without executing the top-level loop.
+- Use `Project.open()` instead of `Project.load()` when a Host may be running — it routes correctly in both modes.
 
 ---
 
@@ -108,6 +144,16 @@ VIS add screen <screen_name>
 ```
 
 Creates a new screen script from template, registers it in `project.json`, and creates the matching `Screens/<screen>/` and `modules/<screen>/` folders.
+
+The CLI will prompt for:
+
+- Script filename
+- Whether the screen should have its own `.exe` (`release`)
+- Icon name
+- Description
+- **Whether the screen opens as a tab inside the Host** (`tabbed`) — new in 0.4
+
+The `tabbed` flag is stored in `project.json` and read by `Host.open()` to decide whether to open a tab or spawn a subprocess.
 
 ### Add elements to a screen
 
@@ -150,6 +196,20 @@ VIS release Screen <screen_name> -f <suffix>
 
 Temporarily marks all other screens as non-releasing (`isolate`), builds only the named screen, then restores the others (`restoreAll`).
 
+### Launch the Host
+
+```text
+VIS <project_name>
+```
+
+Launches the Host window for the current project. `<project_name>` must match the project title stored in `project.json` (case-sensitive). `Host.py` is generated automatically when the project is created with `VIS new`.
+
+Example — if the project is named `MyApp`:
+
+```text
+VIS MyApp
+```
+
 ### Check version
 
 ```text
@@ -169,6 +229,10 @@ Objects are the core building blocks. Import from `VIStk.Objects`.
 ### Root
 
 `Root(Tk, Window)` — The application's main window. Wraps `Tk` with VIStk attributes.
+
+See also [Host](#host) — a subclass of `Root` that adds persistent tray-based lifecycle, tabbed screen management, and unified navigation.
+
+---
 
 ```python
 from VIStk.Objects import Root
@@ -210,6 +274,58 @@ root.fullscreen()
 while root.Active:
     root.update()
 ```
+
+---
+
+### Host
+
+`Host(Root)` — A persistent application host that owns the Tk root window. Pressing the window close button hides the window to the system tray instead of destroying it. The Host never exits unless the user explicitly selects **Quit** from the tray menu or code calls `host.quit_host()`.
+
+All screen navigation routes through `host.open()`. Tabbed screens open as `Frame`-based tabs inside the Host window; standalone screens are spawned as `subprocess.Popen` subprocesses.
+
+Requires `pystray` for system tray support (installed automatically as a VIStk dependency).
+
+```python
+from VIStk.Objects import Host
+
+host = Host()
+host.screenTitle("MyApp")
+host.WindowGeometry.setGeometry(width=1200, height=800, align="center")
+host.open("Dashboard")   # opens a tabbed screen
+
+while host.Active:
+    host.tick_fps()
+    host.update()
+```
+
+**Attributes (in addition to `Root`):**
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| `host.TabBar` | `TabBar` | The tab bar widget placed at the top of the window |
+| `host.HostMenu` | `HostMenu` | The persistent menu bar |
+| `host.fps` | `float` | Frames per second — updated by `tick_fps()` each loop iteration |
+
+**Methods (in addition to `Root`):**
+
+| Method | Description |
+|--------|-------------|
+| `host.open(screen, stay_open=False)` | Unified navigation. Tabbed screens open as tabs; standalone screens are spawned as subprocesses. `stay_open` controls whether the caller closes after launching a standalone target. |
+| `host.tick_fps()` | Call once per update loop iteration to maintain `host.fps`. |
+| `host.quit_host()` | Fully shuts down the Host — stops the tray icon, clears the singleton reference, and calls `Root.unload()`. Also wired to the tray **Quit** item. |
+| `host.unregister_startup()` | Removes the Host from the Windows startup registry. |
+
+#### OS startup registration
+
+On first run, `Host.__init__` registers the project's `Host.py` script in the Windows startup registry under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`. Call `host.unregister_startup()` to remove it. The entry is named `<ProjectTitle>Host`.
+
+#### System tray
+
+The tray icon is built from the project's default icon (`Icons/<d_icon>.*`). If no icon file is found, a small placeholder image is used. The tray menu contains two items: **Show** (restores the window) and **Quit** (calls `quit_host()`). The tray runs in a daemon thread and stops automatically when `quit_host()` is called.
+
+#### Singleton
+
+`Host.__init__` sets `VIStk.Objects._Host._HOST_INSTANCE = self`. `Project.open()` checks this reference to route navigation. Only one `Host` should exist per process.
 
 ---
 
@@ -322,27 +438,33 @@ layout.colSize([0.25, 0.75])          # 25% sidebar, 75% content
 
 **Methods:**
 
-#### `rowSize(rows)`
+#### `rowSize(rows, minsize=None, maxsize=None)`
 
 Sets row proportions. Each value is a float from 0.0 to 1.0. They must sum to exactly 1.0 (within floating-point tolerance).
 
-```python
-layout.rowSize([0.5, 0.5])           # two equal rows
-layout.rowSize([0.1, 0.7, 0.2])      # header / body / footer
-```
-
-#### `colSize(columns)`
-
-Sets column proportions. Same rules as `rowSize`.
+`minsize` and `maxsize` are optional lists of pixel constraints, one per row. They are stored on the Layout as `row_min` / `row_max` and can be read by code that applies grid configuration or enforces sizing rules; they are not automatically enforced by `place()`.
 
 ```python
-layout.colSize([1.0])                # single full-width column
-layout.colSize([0.3, 0.7])           # sidebar / main
+layout.rowSize([0.5, 0.5])                          # two equal rows
+layout.rowSize([0.1, 0.7, 0.2])                     # header / body / footer
+layout.rowSize([0.1, 0.8, 0.1], minsize=[30, 100, 30])  # with minimum pixel heights
 ```
 
-#### `cell(row, column, rowspan=None, columnspan=None)`
+#### `colSize(columns, minsize=None, maxsize=None)`
+
+Sets column proportions. Same rules as `rowSize`. Optional `minsize`/`maxsize` lists stored as `col_min` / `col_max`.
+
+```python
+layout.colSize([1.0])                               # single full-width column
+layout.colSize([0.3, 0.7])                          # sidebar / main
+layout.colSize([0.25, 0.75], minsize=[150, None])   # sidebar at least 150px wide
+```
+
+#### `cell(row, column, rowspan=None, columnspan=None, padding=0)`
 
 Returns a `dict` of `place()` kwargs for the given cell. Pass directly to `widget.place(**...)`.
+
+The optional `padding` argument adds inward pixel padding on all sides. It uses tkinter's additive `x`, `y`, `width`, `height` place kwargs alongside the relative values, so the widget is inset by `padding` pixels from each edge of the cell.
 
 ```python
 header = Frame(root)
@@ -351,6 +473,10 @@ header.place(**root.Layout.cell(0, 0))
 # Span multiple cells
 panel = Frame(root)
 panel.place(**root.Layout.cell(1, 0, columnspan=2))
+
+# 8px padding inside the cell
+card = Frame(root)
+card.place(**root.Layout.cell(1, 1, padding=8))
 ```
 
 `Layout` is available on `Root` as `root.Layout` and on `SubRoot` as `popup.Layout`. It is also the basis for `LayoutFrame`.
@@ -452,6 +578,79 @@ The `ArgHandler` on the `Root.Project` is used internally by the CLI for screen 
 ## Widgets
 
 Widgets extend Tkinter with compound components. Import from `VIStk.Widgets`.
+
+---
+
+### TabBar
+
+`TabBar(ttk.Frame)` — A row of clickable tabs displayed at the top of the Host window. Each tab represents an open screen. The active tab is shown with a sunken relief; inactive tabs are flat. A close button (`✕`) sits beside each tab label.
+
+`TabBar` is created automatically by `Host.__init__` and exposed as `host.TabBar`. You do not normally need to instantiate it directly.
+
+```python
+# TabBar is already attached to Host — these calls are made by Host internally:
+host.TabBar.open_tab("Dashboard")
+host.TabBar.focus_tab("Dashboard")
+host.TabBar.close_tab("Dashboard")
+```
+
+**Attributes:**
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| `tabbar.active` | `str / None` | Name of the currently focused tab |
+| `tabbar.on_focus_change` | `callable / None` | Callback invoked with `(name: str)` when the active tab changes |
+| `tabbar.on_tab_close` | `callable / None` | Callback invoked with `(name: str)` when a tab's close button is pressed |
+
+**Methods:**
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `open_tab(name)` | `bool` | Add a tab for `name`. Does nothing if already open. Returns `True` if created. |
+| `close_tab(name)` | `bool` | Remove the tab. Focuses the last remaining tab if any. |
+| `focus_tab(name)` | `bool` | Set `name` as active and invoke `on_focus_change`. |
+| `has_tab(name)` | `bool` | Return whether a tab with `name` is currently open. |
+
+---
+
+### HostMenu
+
+`HostMenu` wraps a `tk.Menu` that is attached to the Host window. It has two sections:
+
+- **Base items** — always present (created in `_build_base()`). Currently contains a single **App** cascade with a **Quit** item.
+- **Screen items** — contributed by the active tab's `configure_menu()` hook. Replaced each time a different tab activates; cleared when a tab deactivates.
+
+`HostMenu` is created automatically by `Host.__init__` and exposed as `host.HostMenu`. Call `host.HostMenu.attach()` to wire it to the window (done automatically by `Host`).
+
+**Item spec format** (used by `set_screen_items` and `configure_menu` hooks):
+
+```python
+# Simple command
+{"label": "Open",  "command": open_fn}
+
+# Cascade submenu
+{"label": "Export", "items": [
+    {"label": "PDF",  "command": export_pdf},
+    {"label": "CSV",  "command": export_csv},
+]}
+
+# Separator
+{"separator": True}
+```
+
+**Methods:**
+
+| Method | Description |
+|--------|-------------|
+| `attach()` | Configure the parent window to show this menu bar and build the base items. Called once by `Host`. |
+| `set_screen_items(items, label="Screen")` | Replace the screen-contributed cascade with `items`. |
+| `clear_screen_items()` | Remove the screen-contributed cascade. Called automatically on tab deactivation. |
+
+**Attribute:**
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| `hostmenu.menubar` | `Menu` | The underlying `tk.Menu` widget |
 
 ---
 
@@ -666,6 +865,7 @@ You do not instantiate `VINFO` directly. It is initialized automatically when `P
 | `title` | Project name (from `project.json`) |
 | `Version` | Project `Version` object |
 | `company` | Company name (from `project.json`) |
+| `copyright` | Copyright string (from `project.json`); defaults to `company` if not set explicitly |
 
 **Methods:**
 
@@ -694,6 +894,7 @@ project = Project()
 | `project.d_icon` | `str` | Default icon name |
 | `project.dist_location` | `str` | Output folder for releases |
 | `project.hidden_imports` | `list[str]` | PyInstaller hidden imports |
+| `project.copyright` | `str` | Copyright string from `project.json` metadata |
 
 **Methods:**
 
@@ -703,10 +904,26 @@ project = Project()
 | `getScreen(name)` | `Screen / None` | Returns the `Screen` object for the given name |
 | `verScreen(name)` | `Screen` | Returns the screen if it exists, or creates it via `newScreen` |
 | `setScreen(name)` | `None` | Sets `self.Screen` to the named screen |
-| `load(name, *args)` | `None` | Calls `Screen.load(*args)` for the named screen |
+| `load(name, *args)` | `None` | Calls `Screen.load(*args)` for the named screen (always `os.execl`) |
+| `open(name, stay_open=False)` | `None` | Unified navigation — routes through Host if running, else `os.execl` |
 | `reload()` | `None` | Reloads the currently active screen |
 | `getInfo()` | `str` | Returns `"ProjectName ScreenName Version"` as a string |
 | `newScreen(name)` | `int` | Interactively creates a new screen (CLI use) |
+
+#### `open(name, stay_open=False)`
+
+Preferred navigation method when a Host may be running. Routing rules:
+
+- **Host running + target is tabbed** → opens or focuses the tab in the Host window.
+- **Host running + target is standalone, `stay_open=False`** → Host spawns a subprocess; the caller should close.
+- **Host running + target is standalone, `stay_open=True`** → Host spawns a subprocess; caller keeps running.
+- **No Host** → falls back to `Screen.load()` (`os.execl`), preserving standalone behaviour.
+
+```python
+# Prefer open() over load() for portable navigation
+root.Project.open("WorkOrders")
+root.Project.open("Settings", stay_open=True)
+```
 
 ---
 
@@ -726,6 +943,7 @@ project = Project()
 | `screen.s_version` | `Version` | Screen-specific version number |
 | `screen.path` | `str` | Absolute path to `Screens/<name>/` |
 | `screen.m_path` | `str` | Absolute path to `modules/<name>/` |
+| `screen.tabbed` | `bool` | If `True`, the screen opens as a tab inside the Host; if `False`, it runs as a standalone subprocess |
 
 **Methods:**
 
@@ -737,6 +955,39 @@ project = Project()
 | `screen.getModules(script)` | Returns all `Screens.*` and `modules.*` imports found in the script, recursively |
 | `screen.isolate()` | Temporarily disables release for all other screens |
 | `screen.sendNotification(message)` | Sends a desktop notification for this app/screen |
+
+#### Host hooks
+
+When `screen.tabbed` is `True`, the Host imports the screen module and calls the following functions defined at module scope in the screen script. All hooks have default no-op stubs in the template.
+
+| Hook | Signature | When called |
+|------|-----------|-------------|
+| `setup` | `setup(parent: Frame)` | Once, when the tab is first opened. Build all widgets into `parent`. |
+| `configure_menu` | `configure_menu(menubar: Menu)` | Each time the tab activates. Return a list of item-spec dicts to populate the `HostMenu` screen section, or `None` to clear it. |
+| `on_activate` | `on_activate()` | Each time the tab gains focus. Use to resume timers or refresh data. |
+| `on_deactivate` | `on_deactivate()` | Each time the tab loses focus or is closed. Use to pause timers or save state. |
+
+```python
+# Example: minimal tabbed screen hooks
+
+def setup(parent):
+    Label(parent, text="Hello from Tab").pack()
+
+def configure_menu(menubar):
+    return [
+        {"label": "Refresh", "command": refresh},
+        {"separator": True},
+        {"label": "Export", "command": export},
+    ]
+
+def on_activate():
+    start_polling()
+
+def on_deactivate():
+    stop_polling()
+```
+
+Screens must also wrap their startup code in `if __name__ == "__main__":` so the module can be imported by the Host without triggering the standalone loop.
 
 **Switching screens:**
 
@@ -876,6 +1127,72 @@ from modules.myscreen.m_body import *
 `stitch` replaces everything between `#%Screen Elements` and `#%Screen Grid` with fresh imports from `Screens/<screen>/f_*.py`, and everything between `#%Screen Modules` and `#%Handle Arguments` with fresh imports from `modules/<screen>/m_*.py`.
 
 If the VSCode VIStk extension is installed, `#%` lines are highlighted differently from regular comments.
+
+### Updated template structure (0.4+)
+
+The screen template now includes Host hook stubs and wraps the standalone startup code in a `__main__` guard. The full generated structure is:
+
+```python
+#%Default Imports
+from tkinter import *
+from tkinter import ttk
+from Screens.root import *
+import sys
+#%File Specific Imports
+
+#%Screen Elements
+# (auto-filled by stitch)
+#%Screen Grid
+root.grid_columnconfigure(0, weight=1)
+root.grid_rowconfigure(0, weight=1)
+
+#%Screen Modules
+# (auto-filled by stitch)
+#%Handle Arguments
+
+#%Define Loop Modules
+def loop():
+    pass
+
+# ── Host hooks ────────────────────────────────────────────────────────────────
+
+def setup(parent):
+    """Build UI into parent Frame when opened as a tab."""
+    pass
+
+def configure_menu(menubar):
+    """Contribute items to HostMenu when this tab is active."""
+    pass
+
+def on_activate():
+    """Called when this tab gains focus."""
+    pass
+
+def on_deactivate():
+    """Called when this tab loses focus or is closed."""
+    pass
+
+# ── Standalone entry point ────────────────────────────────────────────────────
+#%Update Loop
+if __name__ == "__main__":
+    root.Active = True
+    root.WindowGeometry.setGeometry(width=66, height=66, align="center", size_style="screen_relative")
+    root.screenTitle("<title>")
+    root.setIcon("<icon>")
+
+    while True:
+        try:
+            if root.Active:
+                try: loop()
+                except: pass
+                root.update()
+            else:
+                break
+        except:
+            break
+```
+
+The `if __name__ == "__main__":` guard is required for tabbed screens. When the Host imports the module to call `setup()`, this guard prevents the standalone loop from running. When the script is executed directly (standalone mode), the guard allows it to run normally.
 
 ---
 

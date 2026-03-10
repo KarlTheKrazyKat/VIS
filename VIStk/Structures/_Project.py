@@ -27,6 +27,13 @@ class Project(VINFO):
             self.hidden_imports:list[str] = info[self.title]["release_info"]["hidden_imports"]
         self.Screen:Screen = None
         """The Currently Running `Screen`"""
+        self.copyright:str = self.company
+        """Project Copyright String"""
+        with open(self.p_sinfo,"r") as f:
+            _info = json.load(f)
+            self.copyright = _info[self.title]["metadata"].get("copyright", self.company)
+            self.host_script:str = _info[self.title].get("host", {}).get("script", "Host.py")
+            """Filename of the Host entry-point script"""
 
     #Project Screen Methods
     def newScreen(self,screen:str) -> int:
@@ -63,7 +70,12 @@ class Project(VINFO):
             ictf =input("What is the icon for this screen (or none)?: ")
             icon = ictf.strip(".ico") if ".ICO" in ictf.upper() else None
             desc = input("Write a description for this screen: ")
-            self.screenlist.append(Screen(screen,script,release,icon,False,desc))
+            match input("Should this screen open as a tab inside the Host? "):
+                case "Yes" | "yes" | "Y" | "y":
+                    tabbed = True
+                case _:
+                    tabbed = False
+            self.screenlist.append(Screen(screen,script,release,icon,False,desc,tabbed))
 
             return 1
         else:
@@ -103,7 +115,7 @@ class Project(VINFO):
 
     def load(self, screen:str, *args) -> None:
         """Loads a screen from screenlist
-        
+
         Returns:
             (None): When load fails
         """
@@ -111,6 +123,34 @@ class Project(VINFO):
             self.getScreen(screen).load(*args)
         except AttributeError:
             return None
+
+    def open(self, screen:str, stay_open:bool=False) -> None:
+        """Unified navigation: routes through Host if running, else os.execl.
+
+        When a Host is active (``VIStk.Objects._Host._HOST_INSTANCE`` is set):
+
+        * Tabbed screen  → opens or focuses the tab inside the Host window.
+        * Standalone screen, ``stay_open=False`` → Host spawns a subprocess and
+          the caller closes itself.
+        * Standalone screen, ``stay_open=True`` → Host spawns a subprocess; the
+          caller keeps running.
+
+        When no Host is running the call falls back to ``Screen.load()``
+        (``os.execl``), preserving the existing standalone behaviour.
+
+        Args:
+            screen (str): Name of the target screen.
+            stay_open (bool): Keep the current screen open when launching a
+                standalone target.  Ignored when the target is tabbed.
+        """
+        from VIStk.Objects._Host import _HOST_INSTANCE
+        scr = self.getScreen(screen)
+        if scr is None:
+            return None
+        if _HOST_INSTANCE is not None:
+            _HOST_INSTANCE.open(screen, stay_open=stay_open)
+        else:
+            scr.load()
 
     def reload(self) -> None:
         """Reloads the current screen

@@ -4,6 +4,8 @@ from VIStk.Widgets._MenuWindow import MenuWindow
 from VIStk.Widgets._QuestionWindow import QuestionWindow
 from VIStk.Widgets._VISMenu import VISMenu
 from VIStk.Widgets._WarningWindow import WarningWindow
+from VIStk.Widgets._TabBar import TabBar
+from VIStk.Widgets._HostMenu import HostMenu
 
 
 __all__ = ["VISMenu",
@@ -12,4 +14,6 @@ __all__ = ["VISMenu",
            "QuestionWindow",
            "WarningWindow",
            "LayoutFrame",
+           "TabBar",
+           "HostMenu",
            ]

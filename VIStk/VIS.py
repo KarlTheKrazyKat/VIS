@@ -86,3 +86,11 @@ def __main__():
             rel = Release(flag,type,note)
             rel.release()
             rel.restoreAll()
+
+        case _:
+            project = Project()
+            if inp[1] == project.title:
+                host_path = project.p_project + "/" + project.host_script
+                os.execl(sys.executable, sys.executable, host_path)
+            else:
+                print(f"Unknown command: \"{inp[1]}\". Run 'VIS -v' for version info.")

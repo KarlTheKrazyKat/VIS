@@ -12,8 +12,16 @@ class Layout():
     def __init__(self, frame:ttk.Frame|Frame|LabelFrame|Tk|Toplevel):
         self.row = []
         self.column = []
- 
-    def cell(self,row:int,column:int, rowspan:int=None, columnspan:int=None)->dict:
+        self.row_min: list[int] = []
+        """Minimum pixel height per row (empty list = no constraints)"""
+        self.row_max: list[int] = []
+        """Maximum pixel height per row (empty list = no constraints)"""
+        self.col_min: list[int] = []
+        """Minimum pixel width per column (empty list = no constraints)"""
+        self.col_max: list[int] = []
+        """Maximum pixel width per column (empty list = no constraints)"""
+
+    def cell(self, row:int, column:int, rowspan:int=None, columnspan:int=None, padding:int=0) -> dict:
         """Return the sizing attributes to place a cell
 
         Args:
@@ -21,7 +29,8 @@ class Layout():
             column (int): The column to place the widget in
             rowspan (int): The number of rows to span
             columnspan (int): The number of columns to span
-        
+            padding (int): Inward pixel padding applied to all sides of the cell
+
         Returns:
             relheight (int): The relative height to the parent widget
             relwidth (int): The relative height to the parent widget
@@ -29,7 +38,7 @@ class Layout():
             rely (int): The relative y offset within the parent widget
         """
         if rowspan is None and columnspan is None:
-            return {
+            result = {
                 "relwidth": self.column[column],
                 "relheight": self.row[row],
                 "rely": sum(self.row[:row]),
@@ -49,19 +58,29 @@ class Layout():
                     columnsize += self.column[i]
             else:
                 columnsize = self.column[column]
-            
-            return {
+
+            result = {
                 "relwidth": columnsize,
                 "relheight": rowsize,
                 "rely": sum(self.row[:row]),
                 "relx": sum(self.column[:column])
             }
-    
-    def rowSize(self, rows:list[float|int]):
+
+        if padding:
+            result["x"] = padding
+            result["y"] = padding
+            result["width"] = -2 * padding
+            result["height"] = -2 * padding
+
+        return result
+
+    def rowSize(self, rows:list[float|int], minsize:list[int]=None, maxsize:list[int]=None):
         """Sets the size of rows for a Layout
-        
+
         Args:
             rows (list[float|int]): The size of each individual row from 0.0 to 1.0
+            minsize (list[int]): Minimum pixel height per row (optional)
+            maxsize (list[int]): Maximum pixel height per row (optional)
         """
         if isclose(sum(rows),1,abs_tol=0.00001):
             if rows[0] == 0:
@@ -71,12 +90,16 @@ class Layout():
                 self.row.insert(0,0)
         else:
             raise SizeError(f"Row sizes must sum to 1.0, not {sum(rows)}")
-        
-    def colSize(self, columns:list[float|int]):
+        self.row_min = minsize if minsize is not None else []
+        self.row_max = maxsize if maxsize is not None else []
+
+    def colSize(self, columns:list[float|int], minsize:list[int]=None, maxsize:list[int]=None):
         """Sets the size of columns for a Layout
-        
+
         Args:
             columns (list[float|int]): The size of each individual column from 0.0 to 1.0
+            minsize (list[int]): Minimum pixel width per column (optional)
+            maxsize (list[int]): Maximum pixel width per column (optional)
         """
         if isclose(sum(columns),1,abs_tol=0.00001):
             if columns[0] == 0:
@@ -86,3 +109,5 @@ class Layout():
                 self.column.insert(0,0)
         else:
             raise SizeError(f"Column sizes must sum to 1.0, not {sum(columns)}")
+        self.col_min = minsize if minsize is not None else []
+        self.col_max = maxsize if maxsize is not None else []

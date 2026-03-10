@@ -85,6 +85,14 @@ class VINFO():
                 info[self.title]["metadata"]["company"] = None
                 self.company = None
 
+            copyright_in = input("Enter a copyright string (or none to use company name): ")
+            if copyright_in in ["none", "None", ""]:
+                info[self.title]["metadata"]["copyright"] = comp if comp not in ["none","None"] else None
+                self.copyright = self.company
+            else:
+                info[self.title]["metadata"]["copyright"] = copyright_in
+                self.copyright = copyright_in
+
             version = input("What is the initial version for the project (0.0.1 default): ")
             vers = version.split(".")
             if len(vers)==3:
@@ -99,9 +107,22 @@ class VINFO():
             info[self.title]["release_info"]["location"] = "./dist/"
             info[self.title]["release_info"]["hidden_imports"] = ["PIL._tkinter_finder"]
 
+            info[self.title]["host"] = {"script": "Host.py"}
+
             with open(wd+"/.VIS/project.json","w") as f:
                 json.dump(info,f,indent=4)
             print(f"Setup project.json for project {self.title} in {wd}/.VIS/")
+
+            # Generate Host.py from template
+            host_template = VISROOT + "Templates/host.txt"
+            host_script = wd + "/Host.py"
+            shutil.copyfile(host_template, host_script)
+            with open(host_script, "r") as f:
+                host_text = f.read()
+            host_text = host_text.replace("<icon>", "VIS")
+            with open(host_script, "w") as f:
+                f.write(host_text)
+            print(f"Created Host.py in {wd}")
 
         #Get VIS Root location
         self.p_vis = VIStk.__file__.replace("__init__.pyc","").replace("__init__.py","")
@@ -122,6 +143,8 @@ class VINFO():
             """Project Version Number"""
             self.company = info[self.title]["metadata"]["company"]
             """Project Copyright Owner [Company]"""
+            self.copyright = info[self.title]["metadata"].get("copyright", self.company)
+            """Project Copyright String"""
             
         self.p_screens = self.p_project +"/Screens"
         """The Path to the `/Screens` Folder"""
