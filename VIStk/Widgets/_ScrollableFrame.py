@@ -28,7 +28,9 @@ class ScrollableFrame(ttk.Frame):
         self.canvas.pack(side="left",fill="both",expand=True)
         self.scrollbar.pack(side="right",fill="y")
         
-        self.canvas.bind_all("<MouseWheel>", self.scroll)
+        self.canvas.bind("<Enter>", lambda e: self.canvas.bind_all("<MouseWheel>", self.scroll))
+        self.canvas.bind("<Leave>", lambda e: self.canvas.unbind_all("<MouseWheel>"))
+
 
     def sizeFrame(self, event:Event):
         """Sizing the Frame"""
