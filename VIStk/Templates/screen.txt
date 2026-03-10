@@ -9,8 +9,6 @@ import sys
 #%Screen Elements
 
 #%Screen Grid
-root.grid_columnconfigure(0,weight=1)
-root.grid_rowconfigure(0,weight=1)
 
 #%Screen Modules
 
@@ -28,7 +26,8 @@ def loop():
 def setup(parent):
     """Build this screen's UI into *parent* (a Frame supplied by the Host).
     Must be implemented for the screen to support tabbing."""
-    pass
+    parent.grid_columnconfigure(0, weight=1)
+    parent.grid_rowconfigure(0, weight=1)
 
 def configure_menu(menubar):
     """Contribute menu items to the Host's persistent menu bar.
@@ -46,6 +45,7 @@ def on_deactivate():
 # ── Standalone entry point ────────────────────────────────────────────────────
 #%Update Loop
 if __name__ == "__main__":
+    setup(root)
     root.Active = True
     root.WindowGeometry.setGeometry(width=66,height=66,align="center",size_style="screen_relative")
     root.screenTitle("<title>")
