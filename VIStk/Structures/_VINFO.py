@@ -1,9 +1,36 @@
 import os
 import json
+import socket
+import tempfile
 import zipfile
 import shutil
 import VIStk
 from VIStk.Structures._Version import Version
+
+
+def send_to_host(project_title: str, screen_name: str) -> bool:
+    """Send a screen-open request to a running Host via IPC.
+
+    Reads the port file written by ``Host._start_ipc()`` and connects to
+    the local TCP server.  Returns ``True`` if the message was delivered,
+    ``False`` if no Host is running or the connection fails.
+
+    Args:
+        project_title: The VIS project title (used to locate the port file).
+        screen_name:   Name of the screen to open.
+    """
+    safe = project_title.replace(" ", "_")
+    port_file = os.path.join(tempfile.gettempdir(), f"{safe}_vis_host.port")
+    if not os.path.exists(port_file):
+        return False
+    try:
+        with open(port_file) as f:
+            port = int(f.read().strip())
+        with socket.create_connection(("127.0.0.1", port), timeout=1) as s:
+            s.sendall(screen_name.encode("utf-8"))
+        return True
+    except Exception:
+        return False
 
 VISROOT = VIStk.__file__.replace("__init__.pyc","").replace("__init__.py","")
 
@@ -108,6 +135,7 @@ class VINFO():
             info[self.title]["release_info"]["hidden_imports"] = ["PIL._tkinter_finder"]
 
             info[self.title]["host"] = {"script": "Host.py"}
+            info[self.title]["default_screen"] = None
 
             with open(wd+"/.VIS/project.json","w") as f:
                 json.dump(info,f,indent=4)
@@ -145,6 +173,8 @@ class VINFO():
             """Project Copyright Owner [Company]"""
             self.copyright = info[self.title]["metadata"].get("copyright", self.company)
             """Project Copyright String"""
+            self.default_screen: str | None = info[self.title].get("default_screen")
+            """Name of the screen opened when the Host restores from the tray."""
             
         self.p_screens = self.p_project +"/Screens"
         """The Path to the `/Screens` Folder"""

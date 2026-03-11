@@ -25,15 +25,10 @@ class Project(VINFO):
 
             self.dist_location:str = info[self.title]["release_info"]["location"]
             self.hidden_imports:list[str] = info[self.title]["release_info"]["hidden_imports"]
-        self.Screen:Screen = None
-        """The Currently Running `Screen`"""
-        self.copyright:str = self.company
-        """Project Copyright String"""
-        with open(self.p_sinfo,"r") as f:
-            _info = json.load(f)
-            self.copyright = _info[self.title]["metadata"].get("copyright", self.company)
-            self.host_script:str = _info[self.title].get("host", {}).get("script", "Host.py")
+            self.host_script: str = info[self.title].get("host", {}).get("script", "Host.py")
             """Filename of the Host entry-point script"""
+        self.Screen: Screen = None
+        """The Currently Running `Screen`"""
 
     #Project Screen Methods
     def newScreen(self,screen:str) -> int:
@@ -75,18 +70,39 @@ class Project(VINFO):
                     tabbed = True
                 case _:
                     tabbed = False
-            self.screenlist.append(Screen(screen,script,release,icon,False,desc,tabbed))
+            self.screenlist.append(Screen(screen, script, release, icon, False, desc, tabbed))
+
+            if self.default_screen is None:
+                self.set_default_screen(screen)
+                print(f"Set '{screen}' as the default screen.")
 
             return 1
         else:
             print(f"Information for {screen} already in project.")
             return 1
 
-    def hasScreen(self,screen:str) -> bool:
-        """Checks if the project has the correct screen
+    def set_default_screen(self, screen: str) -> bool:
+        """Set the default screen opened when the Host restores from the tray.
+
+        Persists the name to ``project.json``.
+
+        Returns:
+            True if the screen exists and was set, False otherwise.
         """
+        if not self.hasScreen(screen):
+            return False
+        self.default_screen = screen
+        with open(self.p_sinfo, "r") as f:
+            info = json.load(f)
+        info[self.title]["default_screen"] = screen
+        with open(self.p_sinfo, "w") as f:
+            json.dump(info, f, indent=4)
+        return True
+
+    def hasScreen(self, screen: str) -> bool:
+        """Checks if the project has a screen with the given name."""
         for i in self.screenlist:
-            if i.title == screen:
+            if i.name == screen:
                 return True
         return False
     

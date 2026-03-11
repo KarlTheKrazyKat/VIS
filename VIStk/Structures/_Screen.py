@@ -105,34 +105,57 @@ class Screen(VINFO):
             print(f"Could not patch, element does not exist.")
             return 0
     
+    @staticmethod
+    def _replace_section(text: str, section_name: str, content: str) -> str:
+        """Replace the body of a template section.
+
+        Finds ``#%<section_name>`` (possibly indented) and replaces everything
+        up to the next ``#%`` header with ``content``.  Content lines are
+        re-indented to match the section header's indentation, so this works
+        correctly for sections inside functions as well as at module level.
+        """
+        pattern = rf"([ \t]*#%{re.escape(section_name)}\n).*?(?=\n[ \t]*#%)"
+
+        def replacer(m: re.Match) -> str:
+            header = m.group(1)
+            indent = re.match(r"[ \t]*", header).group()
+            if content and indent:
+                lines = content.splitlines(keepends=True)
+                indented = "".join(
+                    indent + line if line.strip() else line for line in lines
+                )
+                return header + indented
+            return header + content
+
+        return re.sub(pattern, replacer, text, flags=re.DOTALL)
+
     def stitch(self) -> int:
         """Connects screen elements to a screen
         """
         with open(self.p_project+"/"+self.script,"r") as f: text = f.read()
         stitched = []
-        #Elements
-        pattern = r"#%Screen Elements.*#%Screen Grid"
 
+        #Elements — each f_element defines build(parent); call it inside setup()
         elements = glob.glob(self.path+'/f_*')#get all elements
-        for i in range(0,len(elements),1):#iterate into module format
-            elements[i] = elements[i].replace("\\","/")
-            elements[i] = elements[i].replace(self.path+"/","Screens."+self.name+".")[:-3]
-            stitched.append(elements[i])
-        #combine and change text
-        elements = "from " + " import *\nfrom ".join(elements) + " import *\n"
-        text = re.sub(pattern, "#%Screen Elements\n" + elements + "\n#%Screen Grid", text, flags=re.DOTALL)
+        element_lines = []
+        for elem_path in elements:
+            module_path = elem_path.replace("\\", "/")
+            module_path = module_path.replace(self.path+"/", "Screens."+self.name+".")[:-3]
+            stitched.append(module_path)
+            pkg, mod_name = module_path.rsplit(".", 1)
+            element_lines.append(f"from {pkg} import {mod_name}")
+            element_lines.append(f"{mod_name}.build(parent)")
+        elements_str = ("\n".join(element_lines) + "\n") if element_lines else ""
+        text = self._replace_section(text, "Screen Elements", elements_str)
 
         #Modules
-        pattern = r"#%Screen Modules.*#%Handle Arguments"
-
         modules = glob.glob(self.m_path+'/m_*')#get all modules
         for i in range(0,len(modules),1):#iterate into module format
             modules[i] = modules[i].replace("\\","/")
             modules[i] = modules[i].replace(self.m_path+"/","modules."+self.name+".")[:-3]
             stitched.append(modules[i])
-        #combine and change text
-        modules = "from " + " import *\nfrom ".join(modules) + " import *\n"
-        text = re.sub(pattern, "#%Screen Modules\n" + modules + "\n#%Handle Arguments", text, flags=re.DOTALL)
+        modules_str = ("from " + " import *\nfrom ".join(modules) + " import *\n") if modules else ""
+        text = self._replace_section(text, "Screen Modules", modules_str)
 
         #write out
         with open(self.p_project+"/"+self.script,"w") as f:
@@ -144,9 +167,24 @@ class Screen(VINFO):
     def addMenu(self,menu:str) -> int:
         pass #will be command line menu creation tool
 
-    def load(self,*args):
-        """Loads  this screen"""
-        os.execl(sys.executable, *(sys.executable,Path(getPath()+"/"+self.script),*args))
+    def load(self, *args):
+        """Loads this screen.
+
+        If a Host is running (port file present), sends the screen name via IPC
+        so the Host handles routing (tab or subprocess).  Falls back to
+        ``os.execl`` when no Host is detected.
+        """
+        if send_to_host(self.title, self.name):
+            return
+        os.execl(sys.executable, *(sys.executable, Path(getPath() + "/" + self.script), *args))
+
+    def close(self) -> bool:
+        """Ask the Host to close this screen (tab or Toplevel).
+
+        Returns ``True`` if the request was delivered, ``False`` if no Host
+        is running (in standalone mode there is nothing to close via IPC).
+        """
+        return send_to_host(self.title, f"__VIS_CLOSE__:{self.name}")
 
     def getModules(self, script:str=None) -> list[str]:
         """Gets a list of all modules in the screens folder"""

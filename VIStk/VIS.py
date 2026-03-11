@@ -39,6 +39,13 @@ def __main__():
                         else:
                             project.newScreen(inp[3])
 
+        case "stop" | "Stop":
+            info = VINFO()
+            if send_to_host(info.title, "__VIS_QUIT__"):
+                print(f"Stopped Host for project '{info.title}'.")
+            else:
+                print(f"No Host is running for project '{info.title}'.")
+
         case "stitch" | "Stitch" | "s" | "S":
             project = Project()
             screen = project.getScreen(inp[2])
@@ -90,7 +97,19 @@ def __main__():
         case _:
             project = Project()
             if inp[1] == project.title:
-                host_path = project.p_project + "/" + project.host_script
-                os.execl(sys.executable, sys.executable, host_path)
+                if len(inp) >= 3:
+                    # VIS <ProjectName> <ScreenName> — open a screen.
+                    # Routes through the Host if one is running; otherwise standalone.
+                    screen = project.getScreen(inp[2])
+                    if screen is not None:
+                        if not send_to_host(project.title, screen.name):
+                            os.execl(sys.executable, sys.executable,
+                                     project.p_project + "/" + screen.script)
+                    else:
+                        names = ", ".join(s.name for s in project.screenlist)
+                        print(f"Unknown screen: \"{inp[2]}\". Available: {names}")
+                else:
+                    host_path = project.p_project + "/" + project.host_script
+                    os.execl(sys.executable, sys.executable, host_path)
             else:
                 print(f"Unknown command: \"{inp[1]}\". Run 'VIS -v' for version info.")
