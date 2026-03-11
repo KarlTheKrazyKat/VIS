@@ -50,7 +50,23 @@ Updated
 
 General items not yet assigned to a milestone:
 
-0.4.X Host and Tabbed Screens
+### 0.4.X Host and Tabbed Screens
+
+#### Completed
+
+- `Host` object — persistent `Root` subclass; hides to system tray on window close; never destroys; registers to OS startup on first run
+- `TabBar` widget — row of clickable tabs at the top of the Host window; supports opening, closing, and focusing tabs
+- `HostMenu` widget — persistent Tkinter Menu on the Host; has base items always present and screen-contributed items that swap when the active tab changes
+- `host.open(screen)` — unified navigation function; routes to tab, subprocess, or `os.execl` based on Host presence and screen `tabbed` setting
+- Screen `tabbed` property — added to `project.json` per screen; `VIS add screen` gains a prompt for this; developer-controlled
+- Screen `setup(parent)` hook — called when a tab is first opened; builds the screen UI into the provided Frame; must be defined for a screen to support tabbing
+- Screen `configure_menu(menubar)` hook — called when a tab activates; screen contributes its menu items to `HostMenu`; cleared when tab deactivates
+- Screen `on_activate()` / `on_deactivate()` lifecycle hooks — called on tab focus change; use for resuming/pausing timers, refreshing data
+- System tray integration — tray icon always present when Host is running; click restores window; tray menu includes Quit
+- Updated screen template — adds `setup()`, `configure_menu()`, `on_activate()`, `on_deactivate()` stubs and `__main__` guard for standalone compatibility
+**New dependency:** `pystray` for cross-platform system tray support
+
+#### Planned
 
 The Host is the foundational new object for VIStk. It is a persistent background process that owns the application's Root window. It lives in the system tray when no UI is visible and never closes unless the user explicitly quits from the tray menu. All screen navigation routes through the Host when it is running. This milestone must come before all others because subsequent features (HostMenu, settings UI, styles, VIS GUI) all depend on it.
 
@@ -66,29 +82,30 @@ The Host is the foundational new object for VIStk. It is a persistent background
 - Target is a tabbed screen → open or focus its tab in the Host window
 - Target is standalone, caller wants to close → Host spawns subprocess, caller closes
 - Target is standalone, caller wants to stay open → Host spawns subprocess in its own window
+- Target is Host window with open tabs → tabbed screens close first
 
 **What gets built:**
 
-- `Host` object — persistent `Root` subclass; hides to system tray on window close; never destroys; registers to OS startup on first run
-- `TabBar` widget — row of clickable tabs at the top of the Host window; supports opening, closing, and focusing tabs
-- `HostMenu` widget — persistent Tkinter Menu on the Host; has base items always present and screen-contributed items that swap when the active tab changes
-- `host.open(screen)` — unified navigation function; routes to tab, subprocess, or `os.execl` based on Host presence and screen `tabbed` setting
-- Screen `tabbed` property — added to `project.json` per screen; `VIS add screen` gains a prompt for this; developer-controlled
-- Screen `setup(parent)` hook — called when a tab is first opened; builds the screen UI into the provided Frame; must be defined for a screen to support tabbing
-- Screen `configure_menu(menubar)` hook — called when a tab activates; screen contributes its menu items to `HostMenu`; cleared when tab deactivates
-- Screen `on_activate()` / `on_deactivate()` lifecycle hooks — called on tab focus change; use for resuming/pausing timers, refreshing data
-- System tray integration — tray icon always present when Host is running; click restores window; tray menu includes Quit
+- Rename Screen `on_activate()` / `on_deactivate()` to  `on_focused()` / `on_tabbed()`
+- Add a hook for `on_close()` to run when the screen is fully closed
+- Locate all hooks in an `m_screenname.py` file in the modules/screenname folder
+- There can only be one Host process
+- Closing the Host window should close the screens in the Host
+- Tabs should be able to be right clicked on and opened in their own window, with its own tabmanager.
+- Tabs should be able to be dragged out of the current window to open in a new window
+- Tabs should be able to be dragged left or right to reorder the tabs
+- Tabs should be able to be dragged into the tabbars of seperate windows to move the tab there
 - OS startup registration — Host registers itself in the OS startup mechanism on first run (Windows registry); can be toggled in settings
-- Updated screen template — adds `setup()`, `configure_menu()`, `on_activate()`, `on_deactivate()` stubs and `__main__` guard for standalone compatibility
 - FPS tracking — Host tracks frames-per-second through a variable accessible to all screens
 - Screen version numbering — per-screen version number stored in `project.json` and accessible via `screen.s_version`
 - Copyright storage — project copyright info stored in `project.json` and accessible via `project.copyright`
+- Copyright should be displayed by default along the button of the host window
+- The bottom of the host window should contain an InfoRow widget
+- - The InfoRow widget should be a Frame that displays the curren screen name, version, copyright information, and fps
 - `Layout` padding — padding parameter added to `Layout` cells
 - `Layout` size constraints — minimum and maximum size options for `Layout` rows and columns
 
-**New dependency:** `pystray` for cross-platform system tray support
-
-0.5.X Vis Widgets
+### 0.5.X Vis Widgets
 
 Widgets that Tkinter does not provide natively. These are general-purpose and usable in any VIStk app. Moved up because several (Tooltip, CollapsibleFrame) are directly useful in the Host and settings UI built in subsequent milestones.
 
@@ -98,8 +115,16 @@ Widgets that Tkinter does not provide natively. These are general-purpose and us
 - `DateEntry` — date input widget with format validation and optional calendar picker popup; Tkinter has no date widget
 - Expand custom frames
 - More menu options
+- VIStk should employ some sort of color palettes feature that allows recoloring of the default VIStk widgets and is usable throughout the users code
 
-0.6.X Application Settings
+**Tab bar enchancment:**
+
+- Tab bar position — top, left, bottom, or right
+- Maximum simultaneous open tabs — enforced when opening new tabs
+- Close confirmation — warn when closing a tab that has unsaved state (requires screen to implement `has_unsaved()` hook)
+- Stored tabs with a tabid to allow for multiple tabs of the same screen to function
+
+### 0.6.X Application Settings
 
 Settings are stored per-project in `.VIS/settings.json` and accessed via `Project.settings`. The settings system provides a persistent key-value store with typed getters, a built-in settings UI panel that opens from the HostMenu, and developer extension points for adding custom settings panels.
 
@@ -124,12 +149,6 @@ Settings are stored per-project in `.VIS/settings.json` and accessed via `Projec
 - Start minimized — Host starts hidden in tray rather than showing the window
 - Remember open tabs — reopen the tabs that were open when the Host last closed
 
-**Tab bar:**
-
-- Tab bar position — top, left, bottom, or right
-- Maximum simultaneous open tabs — enforced when opening new tabs
-- Close confirmation — warn when closing a tab that has unsaved state (requires screen to implement `has_unsaved()` hook)
-
 **Appearance:**
 
 - Default font family and size — used by `fUtil.mkfont` when no explicit font given; feeds into styles system in 1.1.0
@@ -147,7 +166,7 @@ Settings are stored per-project in `.VIS/settings.json` and accessed via `Projec
 - Developer registers a custom settings panel via `host.register_settings_panel(name, setup_fn)`
 - Tray menu includes a Settings entry
 
-0.7.X Defaults, Navigation, and Updating Tools
+### 0.7.X Defaults, Navigation, and Updating Tools
 
 - Modify default imports
 - Default templates
@@ -156,17 +175,17 @@ Settings are stored per-project in `.VIS/settings.json` and accessed via `Projec
 - Update tools to ensure that updating VIS will not break code
 - Tools to update created binaries
 
-0.8.X Advanced Creation and Restoration
+### 0.8.X Advanced Creation and Restoration
 
 - Create VIS project in new folder
 - Default .gitignore for VIS projects
 - Repair broken screens to use templates
 
-0.9.X Notifications
+### 0.9.X Notifications
 
 - `Toast` — non-blocking status overlay that auto-dismisses after a delay; respects the global notification enable/disable setting from 0.6.X
 
-1.0.0 Full Release
+### 1.0.0 Full Release
 
 - Explore tkinter styles
 - - Setting screen styles
