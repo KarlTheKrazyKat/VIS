@@ -114,7 +114,7 @@ class Screen(VINFO):
         re-indented to match the section header's indentation, so this works
         correctly for sections inside functions as well as at module level.
         """
-        pattern = rf"([ \t]*#%{re.escape(section_name)}\n).*?(?=\n[ \t]*#%)"
+        pattern = rf"([ \t]*#%{re.escape(section_name)}\n).*?(?=\n?[ \t]*#%)"
 
         def replacer(m: re.Match) -> str:
             header = m.group(1)

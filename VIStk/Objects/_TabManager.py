@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from tkinter import Frame
 
-from VIStk.Widgets._TabBar import TabBar
+from VIStk.Widgets._TabBar import TabBar, _BG_BAR
 
 
 class TabManager(Frame):
@@ -37,6 +37,7 @@ class TabManager(Frame):
     """
 
     def __init__(self, parent, **kwargs):
+        kwargs.setdefault("bg", _BG_BAR)
         super().__init__(parent, **kwargs)
 
         self._tabs: dict[str, dict] = {}
@@ -65,7 +66,7 @@ class TabManager(Frame):
         """Name of the currently active tab, or ``None``."""
         return self._active
 
-    def open_tab(self, name: str, module) -> bool:
+    def open_tab(self, name: str, module, icon=None) -> bool:
         """Open a new tab for *name* and build its screen UI.
 
         If a tab with *name* already exists it is focused instead and no
@@ -75,6 +76,8 @@ class TabManager(Frame):
             name:   Screen name used as the tab label.
             module: Imported screen module.  ``module.setup(frame)`` is called
                     with a fresh ``Frame`` if the hook is present.
+            icon:   Optional ``PIL.ImageTk.PhotoImage`` shown to the left of
+                    the tab label.  The reference is kept alive in the tab dict.
 
         Returns:
             ``True`` if a new tab was created, ``False`` if it already existed.
@@ -92,9 +95,9 @@ class TabManager(Frame):
             except Exception:
                 pass
 
-        self._tabs[name] = {"frame": frame, "module": module}
+        self._tabs[name] = {"frame": frame, "module": module, "icon": icon}
         # open_tab → internally calls focus_tab → triggers _on_focus_change
-        self.tab_bar.open_tab(name)
+        self.tab_bar.open_tab(name, icon=icon)
         return True
 
     def close_tab(self, name: str) -> bool:

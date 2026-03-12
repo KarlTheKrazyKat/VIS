@@ -14,6 +14,7 @@ from tkinter import Toplevel
 from VIStk.Objects._Root import Root
 from VIStk.Objects._TabManager import TabManager
 from VIStk.Widgets._HostMenu import HostMenu
+from VIStk.Widgets._InfoRow import InfoRow
 
 # Module-level singleton reference — set by Host.__init__, cleared on quit_host.
 # Project.open() checks this to decide whether to route through the Host.
@@ -58,6 +59,10 @@ class Host(Root):
         self.TabManager.pack(fill="both", expand=True)
         self.TabManager.on_tab_activate = self._on_tab_activate
         self.TabManager.on_tab_deactivate = self._on_tab_deactivate
+
+        # InfoRow status bar sits below the TabManager
+        self.InfoRow = InfoRow(self, self.Project)
+        self.InfoRow.pack(fill="x", side="bottom")
 
         self.HostMenu = HostMenu(self, quit_command=self.quit_host)
         self.HostMenu.attach()
@@ -124,7 +129,27 @@ class Host(Root):
     def _open_tab(self, scr):
         """Import the screen and hand it off to TabManager."""
         module = self._import_screen(scr)
-        self.TabManager.open_tab(scr.name, module)
+        icon = self._load_tab_icon(scr)
+        self.TabManager.open_tab(scr.name, module, icon=icon)
+
+    def _load_tab_icon(self, scr) -> "PIL.ImageTk.PhotoImage | None":
+        """Load a 16x16 PhotoImage for *scr*'s icon, or None if unavailable."""
+        if not scr.icon:
+            return None
+        try:
+            import glob as _glob
+            import PIL.Image
+            import PIL.ImageTk
+            from PIL.Image import Resampling
+            matches = _glob.glob(self.Project.p_icons + "/" + scr.icon + ".*")
+            if not matches:
+                return None
+            img = (PIL.Image.open(matches[0])
+                   .convert("RGBA")
+                   .resize((16, 16), Resampling.LANCZOS))
+            return PIL.ImageTk.PhotoImage(img)
+        except Exception:
+            return None
 
     def _on_tab_activate(self, name: str, module):
         """Called by TabManager when a tab gains focus."""
@@ -133,10 +158,13 @@ class Host(Root):
                 module.configure_menu(self.HostMenu)
             except Exception:
                 pass
+        scr = self.Project.getScreen(name)
+        self.InfoRow.set_screen(name, str(scr.s_version) if scr else "")
 
     def _on_tab_deactivate(self, name: str | None):
         """Called by TabManager when a tab loses focus (or all tabs close)."""
         self.HostMenu.clear_screen_items()
+        self.InfoRow.set_screen("")
 
     # ── Toplevels ──────────────────────────────────────────────────────────────
 
@@ -238,6 +266,7 @@ class Host(Root):
             self.fps = self._fps_frames / self._fps_acc
             self._fps_frames = 0
             self._fps_acc = 0.0
+            self.InfoRow.set_fps(self.fps)
 
     # ── Main-thread call queue ─────────────────────────────────────────────────
 
@@ -251,7 +280,10 @@ class Host(Root):
         try:
             while True:
                 fn = self._call_queue.get_nowait()
-                fn()
+                try:
+                    fn()
+                except Exception:
+                    pass
         except queue.Empty:
             pass
         self.after(50, self._poll_main_queue)
@@ -384,7 +416,7 @@ class Host(Root):
             key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
             app_name = self.Project.title + "Host"
             exe = sys.executable
-            script = self.Project.p_project + "/Host.py"
+            script = self.Project.p_project + "/" + self.Project.host_script
             cmd = f'"{exe}" "{script}"'
 
             with winreg.OpenKey(
@@ -433,6 +465,13 @@ class Host(Root):
         """Perform the actual shutdown sequence — must run on the main thread."""
         global _HOST_INSTANCE
         self._stop_ipc()
+
+        # Run deactivation hooks and close all managed screens before destroying
+        for name in list(self._toplevels.keys()):
+            self._close_toplevel(name)
+        for name in list(self.TabManager._tabs.keys()):
+            self.TabManager.close_tab(name)
+
         if self._tray_icon:
             try:
                 self._tray_icon.stop()

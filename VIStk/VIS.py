@@ -1,8 +1,30 @@
 import sys
 import os
+import subprocess
+import tempfile
+import time
 import zipfile
 from importlib import metadata
 from VIStk.Structures import *
+
+
+def _start_host_and_wait(project, timeout: float = 5.0) -> bool:
+    """Spawn the project Host as a subprocess and wait for IPC to become ready.
+
+    Returns True if the Host's port file appears within *timeout* seconds,
+    False otherwise.
+    """
+    host_path = project.p_project + "/" + project.host_script
+    subprocess.Popen([sys.executable, host_path])
+    safe = project.title.replace(" ", "_")
+    port_file = os.path.join(tempfile.gettempdir(), f"{safe}_vis_host.port")
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if os.path.exists(port_file):
+            time.sleep(0.15)  # Give the socket a moment to finish binding
+            return True
+        time.sleep(0.05)
+    return False
 
 inp = sys.argv
 
@@ -20,7 +42,10 @@ def __main__():
             print(f"VIS Version {metadata.Version('VIStk')}")
             
         case "new"|"New"|"N"|"n":#Create a new VIS project
-            project = VINFO()
+            VINFO()
+            scr_name = input("Enter a name for the default screen (or Enter to skip): ").strip()
+            if scr_name:
+                Project().newScreen(scr_name)
 
         case "add" | "Add" | "a" | "A":
             project = Project()
@@ -98,18 +123,27 @@ def __main__():
             project = Project()
             if inp[1] == project.title:
                 if len(inp) >= 3:
-                    # VIS <ProjectName> <ScreenName> — open a screen.
-                    # Routes through the Host if one is running; otherwise standalone.
+                    # VIS <ProjectName> <ScreenName> — open a screen via Host,
+                    # starting the Host first if it is not already running.
                     screen = project.getScreen(inp[2])
                     if screen is not None:
                         if not send_to_host(project.title, screen.name):
-                            os.execl(sys.executable, sys.executable,
-                                     project.p_project + "/" + screen.script)
+                            if _start_host_and_wait(project):
+                                send_to_host(project.title, screen.name)
+                            else:
+                                print(f"Failed to start Host for '{project.title}'.")
                     else:
                         names = ", ".join(s.name for s in project.screenlist)
                         print(f"Unknown screen: \"{inp[2]}\". Available: {names}")
                 else:
-                    host_path = project.p_project + "/" + project.host_script
-                    os.execl(sys.executable, sys.executable, host_path)
+                    # VIS <ProjectName> — start Host if needed, then open default screen.
+                    safe = project.title.replace(" ", "_")
+                    port_file = os.path.join(tempfile.gettempdir(),
+                                             f"{safe}_vis_host.port")
+                    if not os.path.exists(port_file):
+                        if not _start_host_and_wait(project):
+                            print(f"Failed to start Host for '{project.title}'.")
+                    if project.default_screen:
+                        send_to_host(project.title, project.default_screen)
             else:
                 print(f"Unknown command: \"{inp[1]}\". Run 'VIS -v' for version info.")

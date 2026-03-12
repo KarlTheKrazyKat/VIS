@@ -25,7 +25,7 @@ class Project(VINFO):
 
             self.dist_location:str = info[self.title]["release_info"]["location"]
             self.hidden_imports:list[str] = info[self.title]["release_info"]["hidden_imports"]
-            self.host_script: str = info[self.title].get("host", {}).get("script", "Host.py")
+            self.host_script: str = info[self.title].get("host", {}).get("script", ".VIS/Host.py")
             """Filename of the Host entry-point script"""
         self.Screen: Screen = None
         """The Currently Running `Screen`"""
@@ -94,7 +94,9 @@ class Project(VINFO):
         self.default_screen = screen
         with open(self.p_sinfo, "r") as f:
             info = json.load(f)
-        info[self.title]["default_screen"] = screen
+        info[self.title]["defaults"]["default_screen"] = screen
+        # Remove legacy top-level key if present
+        info[self.title].pop("default_screen", None)
         with open(self.p_sinfo, "w") as f:
             json.dump(info, f, indent=4)
         return True

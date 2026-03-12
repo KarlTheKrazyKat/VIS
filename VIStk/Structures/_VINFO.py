@@ -53,6 +53,15 @@ def getPath()->str:
     else:
         return None
 
+_RESERVED_VIS_COMMANDS = {
+    "-v", "-V", "-Version", "-version",
+    "new", "New", "N", "n",
+    "add", "Add", "a", "A",
+    "stop", "Stop",
+    "stitch", "Stitch", "s", "S",
+    "release", "Release", "r", "R",
+}
+
 def validName(name:str):
     """Checks if provided path is a valid filename
     """
@@ -94,14 +103,25 @@ class VINFO():
            
             #DO NOT MESS WITH THE TEMPLATE HEADERS
 
-            title = input("Enter a name for the VIS project: ")
-            self.title:str = title 
+            folder_name = os.path.basename(wd)
+            while True:
+                title = input(f"Enter a name for the VIS project (Enter for '{folder_name}'): ").strip()
+                if title == "":
+                    title = folder_name
+                if title in _RESERVED_VIS_COMMANDS:
+                    print(f"'{title}' is a reserved VIS command. Please choose a different name.")
+                elif not validName(title):
+                    pass  # validName already printed the error
+                else:
+                    break
+            self.title:str = title
             """Name of the Project"""
             info = {}
             info[self.title] = {}
             info[self.title]["Screens"]={}
             info[self.title]["defaults"]={}
             info[self.title]["defaults"]["icon"]="VIS"#default icon
+            info[self.title]["defaults"]["default_screen"] = None
             self.d_icon = "VIS"
             info[self.title]["metadata"]={}
             comp = input("What company is this for(or none)? ")
@@ -134,23 +154,22 @@ class VINFO():
             info[self.title]["release_info"]["location"] = "./dist/"
             info[self.title]["release_info"]["hidden_imports"] = ["PIL._tkinter_finder"]
 
-            info[self.title]["host"] = {"script": "Host.py"}
-            info[self.title]["default_screen"] = None
+            info[self.title]["host"] = {"script": ".VIS/Host.py"}
 
             with open(wd+"/.VIS/project.json","w") as f:
                 json.dump(info,f,indent=4)
             print(f"Setup project.json for project {self.title} in {wd}/.VIS/")
 
-            # Generate Host.py from template
+            # Generate Host.py inside .VIS/ (not user-editable)
             host_template = VISROOT + "Templates/host.txt"
-            host_script = wd + "/Host.py"
+            host_script = wd + "/.VIS/Host.py"
             shutil.copyfile(host_template, host_script)
             with open(host_script, "r") as f:
                 host_text = f.read()
             host_text = host_text.replace("<icon>", "VIS")
             with open(host_script, "w") as f:
                 f.write(host_text)
-            print(f"Created Host.py in {wd}")
+            print(f"Created .VIS/Host.py in {wd}")
 
         #Get VIS Root location
         self.p_vis = VIStk.__file__.replace("__init__.pyc","").replace("__init__.py","")
@@ -173,7 +192,10 @@ class VINFO():
             """Project Copyright Owner [Company]"""
             self.copyright = info[self.title]["metadata"].get("copyright", self.company)
             """Project Copyright String"""
-            self.default_screen: str | None = info[self.title].get("default_screen")
+            self.default_screen: str | None = info[self.title]["defaults"].get(
+                "default_screen",
+                info[self.title].get("default_screen"),  # backwards-compat
+            )
             """Name of the screen opened when the Host restores from the tray."""
             
         self.p_screens = self.p_project +"/Screens"
