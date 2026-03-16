@@ -32,10 +32,12 @@ class HostMenu:
         menubar (Menu): The underlying Tk Menu widget.
     """
 
-    def __init__(self, parent: Tk | Toplevel, quit_command=None):
+    def __init__(self, parent: Tk | Toplevel, quit_command=None,
+                 close_command=None):
         self.menubar = Menu(parent, tearoff=0)
         self._parent = parent
         self._quit_command = quit_command
+        self._close_command = close_command
         self._screen_cascade: Menu | None = None
         self._screen_label: str | None = None
 
@@ -76,9 +78,13 @@ class HostMenu:
 
     def _build_base(self):
         app_menu = Menu(self.menubar, tearoff=0)
+        if self._close_command:
+            app_menu.add_command(label="Close Window", command=self._close_command)
         if self._quit_command:
+            if self._close_command:
+                app_menu.add_separator()
             app_menu.add_command(label="Quit", command=self._quit_command)
-        else:
+        elif not self._close_command:
             app_menu.add_command(label="Quit", command=self._parent.destroy)
         self.menubar.add_cascade(label="App", menu=app_menu)
 

@@ -17,12 +17,10 @@ from VIStk.Widgets._HostMenu import HostMenu
 from VIStk.Widgets._InfoRow import InfoRow
 
 # Module-level singleton reference — set by Host.__init__, cleared on quit_host.
-# Project.open() checks this to decide whether to route through the Host.
 _HOST_INSTANCE: "Host | None" = None
 
 
 def _ipc_port_file(project_title: str) -> str:
-    """Return the path of the temp file that stores the Host's IPC port."""
     safe = project_title.replace(" ", "_")
     return os.path.join(tempfile.gettempdir(), f"{safe}_vis_host.port")
 
@@ -30,37 +28,49 @@ def _ipc_port_file(project_title: str) -> str:
 class Host(Root):
     """Persistent application host that owns the Tk root window.
 
-    The Host never closes on its own; pressing the window close button hides it
-    to the system tray.  It starts hidden by default and appears when the user
-    clicks the tray icon (which also opens the default screen).
+    All screen navigation routes through ``host.open()``.  Tabbed screens
+    open as ``Frame``-based tabs inside the Host window.  Standalone screens
+    spawn as Toplevels.
 
-    All screen navigation routes through ``host.open()``.  Tabbed screens open
-    as ``Frame``-based tabs inside the Host window.  Standalone screens are
-    spawned as subprocesses via ``subprocess.Popen``.
+    Multiple instances of the same screen are supported: if a screen is
+    already open anywhere (main window or any DetachedWindow), the new
+    instance is labelled ``"Name (2)"``, ``"Name (3)"``, etc.
 
-    An IPC server (localhost TCP) lets other scripts request screen opens via
-    ``send_to_host(project_title, screen_name)``.
+    Window title: ``project.title`` by default; ``"project: screen"`` when a
+    tab is active; ``"project: screen \u2014 info"`` when the tab has a
+    characteristic info string.
 
     Attributes:
-        TabManager (TabManager): Owns the tab strip and content area.
-        HostMenu (HostMenu): The persistent menu bar.
-        fps (float): Frames per second tracked by the update loop.
+        TabManager (TabManager)
+        HostMenu   (HostMenu)
+        InfoRow    (InfoRow)
+        fps        (float)
     """
 
     def __init__(self, start_hidden: bool = True, *args, **kwargs):
         global _HOST_INSTANCE
         super().__init__(*args, **kwargs)
 
-        # Override the close-window protocol to hide rather than destroy.
+        # Set baseline window title to the project name
+        self.title(self.Project.title)
+
         self.protocol("WM_DELETE_WINDOW", self._hide_to_tray)
 
-        # TabManager owns the tab strip and all screen content frames
         self.TabManager = TabManager(self)
         self.TabManager.pack(fill="both", expand=True)
-        self.TabManager.on_tab_activate = self._on_tab_activate
-        self.TabManager.on_tab_deactivate = self._on_tab_deactivate
+        self.TabManager.on_tab_activate    = self._on_tab_activate
+        self.TabManager.on_tab_deactivate  = self._on_tab_deactivate
+        self.TabManager.on_tab_popout      = self._on_tab_popout
+        self.TabManager.on_tab_detach      = self._on_tab_detach
+        self.TabManager.on_tab_refresh     = self._on_tab_refresh
+        self.TabManager.on_tab_info_change = self._on_tab_info_change
 
-        # InfoRow status bar sits below the TabManager
+        # Detached window tracking
+        self._detached: list = []
+
+        # FPS broadcast listeners — each DetachedWindow registers its InfoRow
+        self._fps_listeners: list = []
+
         self.InfoRow = InfoRow(self, self.Project)
         self.InfoRow.pack(fill="x", side="bottom")
 
@@ -73,51 +83,36 @@ class Host(Root):
         self._fps_frames: int = 0
         self._fps_acc: float = 0.0
 
-        # Thread-safe call queue: non-main threads (pystray, IPC) put callables
-        # here; the main thread drains it via _poll_main_queue() / after().
-        # self.after() must NOT be called from non-main threads.
         self._call_queue: queue.SimpleQueue = queue.SimpleQueue()
         self._poll_main_queue()
 
-        # TopLevel tracking for non-tabbed screens opened by the Host
         self._toplevels: dict[str, dict] = {}
-        """name → {"window": Toplevel, "module": module | None}"""
+        """name → {"window": Toplevel, "module": module | None, "hooks": module | None}"""
 
-        # System tray — start before hiding so the icon is ready
+        # Multiple-instance tracking: base_name → count of currently open instances
+        self._open_counts: dict[str, int] = {}
+
         self._tray_icon = None
         self._tray_thread: threading.Thread | None = None
         self._start_tray()
 
-        # IPC server — lets parallel scripts request screen opens
         self._ipc_server: socket.socket | None = None
         self._start_ipc()
 
-        # OS startup registration (Windows only)
         self._register_startup()
 
-        # Register singleton
         _HOST_INSTANCE = self
 
-        # Start hidden in tray by default
         if start_hidden:
             self.withdraw()
 
     # ── Navigation ─────────────────────────────────────────────────────────────
 
     def open(self, screen_name: str, stay_open: bool = False):
-        """Unified navigation entry point.
-
-        * Tabbed screen → open or focus its tab in the Host window.
-        * Non-tabbed screen → open or focus a Toplevel window.
-
-        Args:
-            screen_name: Name of the target screen in ``project.json``.
-            stay_open: Kept for API compatibility; unused when Host is running.
-        """
+        """Unified navigation entry point."""
         scr = self.Project.getScreen(screen_name)
         if scr is None:
             return
-
         if scr.tabbed:
             self._open_tab(scr)
             self.deiconify()
@@ -126,14 +121,32 @@ class Host(Root):
 
     # ── Tabs ───────────────────────────────────────────────────────────────────
 
+    def _get_all_tab_names(self) -> set[str]:
+        """Return all display names currently open in any window."""
+        names: set[str] = set(self.TabManager._tabs.keys())
+        for dw in self._detached:
+            names.update(dw.tab_manager._tabs.keys())
+        return names
+
+    def _unique_display_name(self, base: str) -> str:
+        """Return a display name for *base* that doesn't conflict with open tabs."""
+        existing = self._get_all_tab_names()
+        if base not in existing:
+            return base
+        n = 2
+        while f"{base} ({n})" in existing:
+            n += 1
+        return f"{base} ({n})"
+
     def _open_tab(self, scr):
-        """Import the screen and hand it off to TabManager."""
-        module = self._import_screen(scr)
-        icon = self._load_tab_icon(scr)
-        self.TabManager.open_tab(scr.name, module, icon=icon)
+        display = self._unique_display_name(scr.name)
+        module  = self._import_screen(scr)
+        hooks   = self._import_hooks(scr)
+        icon    = self._load_tab_icon(scr)
+        self.TabManager.open_tab(display, module, hooks=hooks, icon=icon,
+                                 base_name=scr.name)
 
     def _load_tab_icon(self, scr) -> "PIL.ImageTk.PhotoImage | None":
-        """Load a 16x16 PhotoImage for *scr*'s icon, or None if unavailable."""
         if not scr.icon:
             return None
         try:
@@ -152,26 +165,45 @@ class Host(Root):
             return None
 
     def _on_tab_activate(self, name: str, module):
-        """Called by TabManager when a tab gains focus."""
-        if module and hasattr(module, "configure_menu"):
+        hooks = self.TabManager._tabs.get(name, {}).get("hooks")
+        cfg = (getattr(hooks, "configure_menu", None)
+               or getattr(module, "configure_menu", None))
+        if cfg:
             try:
-                module.configure_menu(self.HostMenu)
+                cfg(self.HostMenu)
             except Exception:
                 pass
-        scr = self.Project.getScreen(name)
+        scr = self.Project.getScreen(
+            self.TabManager._tabs.get(name, {}).get("base_name", name)
+        )
         self.InfoRow.set_screen(name, str(scr.s_version) if scr else "")
+        # Update window title (include info if already set)
+        info = self.TabManager._tabs.get(name, {}).get("info", "")
+        self._set_title(name, info)
 
     def _on_tab_deactivate(self, name: str | None):
-        """Called by TabManager when a tab loses focus (or all tabs close)."""
         self.HostMenu.clear_screen_items()
         self.InfoRow.set_screen("")
+        if name is None:
+            # All tabs closed — reset to project title
+            self.title(self.Project.title)
+
+    def _on_tab_info_change(self, name: str, info: str):
+        """Triggered when a tab's characteristic info string changes."""
+        if self.TabManager.active == name:
+            self._set_title(name, info)
+
+    def _set_title(self, screen: str, info: str = ""):
+        base = self.Project.title
+        if info:
+            self.title(f"{base}: {screen} \u2014 {info}")
+        else:
+            self.title(f"{base}: {screen}")
 
     # ── Toplevels ──────────────────────────────────────────────────────────────
 
     def _open_toplevel(self, scr):
-        """Open a non-tabbed screen in a Toplevel window managed by the Host."""
         if scr.name in self._toplevels:
-            # Already open — bring to front
             win = self._toplevels[scr.name]["window"]
             win.deiconify()
             win.lift()
@@ -182,27 +214,32 @@ class Host(Root):
         win.title(scr.name)
 
         module = self._import_screen(scr)
+        hooks  = self._import_hooks(scr)
         if module and hasattr(module, "setup"):
             try:
                 module.setup(win)
             except Exception:
                 pass
-            if hasattr(module, "on_activate"):
+            fn = getattr(hooks, "on_focused", None) or getattr(module, "on_focused", None)
+            if fn:
                 try:
-                    module.on_activate()
+                    fn()
                 except Exception:
                     pass
         else:
             win.destroy()
             return
 
-        self._toplevels[scr.name] = {"window": win, "module": module}
+        self._toplevels[scr.name] = {"window": win, "module": module, "hooks": hooks}
 
         def _on_close():
-            mod = self._toplevels.get(scr.name, {}).get("module")
-            if mod and hasattr(mod, "on_deactivate"):
+            entry = self._toplevels.get(scr.name, {})
+            mod  = entry.get("module")
+            hks  = entry.get("hooks")
+            fn = getattr(hks, "on_unfocused", None) or getattr(mod, "on_unfocused", None)
+            if fn:
                 try:
-                    mod.on_deactivate()
+                    fn()
                 except Exception:
                     pass
             win.destroy()
@@ -211,21 +248,21 @@ class Host(Root):
         win.protocol("WM_DELETE_WINDOW", _on_close)
 
     def _close_screen(self, name: str):
-        """Close a screen managed by the Host — tab or Toplevel."""
         if self.TabManager.has_tab(name):
             self.TabManager.close_tab(name)
         elif name in self._toplevels:
             self._close_toplevel(name)
 
     def _close_toplevel(self, name: str):
-        """Close a managed Toplevel by screen name."""
         entry = self._toplevels.get(name)
         if entry:
             entry["window"].protocol("WM_DELETE_WINDOW", lambda: None)
             mod = entry.get("module")
-            if mod and hasattr(mod, "on_deactivate"):
+            hks = entry.get("hooks")
+            fn = getattr(hks, "on_unfocused", None) or getattr(mod, "on_unfocused", None)
+            if fn:
                 try:
-                    mod.on_deactivate()
+                    fn()
                 except Exception:
                     pass
             entry["window"].destroy()
@@ -234,11 +271,6 @@ class Host(Root):
     # ── Screen import ──────────────────────────────────────────────────────────
 
     def _import_screen(self, scr):
-        """Dynamically import a screen module so setup() can be called.
-
-        Ensures the project directory is on ``sys.path`` so that relative
-        package imports inside the screen (``Screens.*``, ``modules.*``) resolve.
-        """
         script_path = self.Project.p_project + "/" + scr.script
         project_dir = self.Project.p_project
         try:
@@ -252,6 +284,89 @@ class Host(Root):
             return mod
         except Exception:
             return None
+
+    def _import_hooks(self, scr):
+        name       = scr.name
+        hooks_path = self.Project.p_project + f"/modules/{name}/m_{name}.py"
+        try:
+            if not os.path.exists(hooks_path):
+                return None
+            project_dir = self.Project.p_project
+            if project_dir not in sys.path:
+                sys.path.insert(0, project_dir)
+            spec = importlib.util.spec_from_file_location(
+                f"modules.{name}.m_{name}", hooks_path
+            )
+            if spec is None:
+                return None
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            return mod
+        except Exception:
+            return None
+
+    # ── Pop-out, detach, refresh ───────────────────────────────────────────────
+
+    def _on_tab_popout(self, name: str):
+        """Pop out via right-click — use current pointer position."""
+        if not self.TabManager.has_tab(name):
+            return
+        entry     = self.TabManager._tabs[name]
+        module    = entry.get("module")
+        hooks     = entry.get("hooks")
+        icon      = entry.get("icon")
+        base_name = entry.get("base_name", name)
+        self.TabManager.close_tab(name)
+        x = self.winfo_pointerx()
+        y = self.winfo_pointery()
+        self._open_detached(name, module, hooks, icon, base_name,
+                            x, y, 0, 0)
+
+    def _on_tab_detach(self, name: str):
+        """Handle drag-to-detach — use pointer position and stored drag offsets."""
+        if not self.TabManager.has_tab(name):
+            return
+        entry     = self.TabManager._tabs[name]
+        module    = entry.get("module")
+        hooks     = entry.get("hooks")
+        icon      = entry.get("icon")
+        base_name = entry.get("base_name", name)
+        bx = self.TabManager.tab_bar._last_drag_btn_offset_x
+        by = self.TabManager.tab_bar._last_drag_btn_offset_y
+        self.TabManager.close_tab(name)
+        x = self.winfo_pointerx()
+        y = self.winfo_pointery()
+        self._open_detached(name, module, hooks, icon, base_name,
+                            x, y, bx, by)
+
+    def _on_tab_refresh(self, name: str):
+        """Re-import and reopen the named tab at its current position."""
+        if not self.TabManager.has_tab(name):
+            return
+        entry     = self.TabManager._tabs[name]
+        base_name = entry.get("base_name", name)
+        icon      = entry.get("icon")
+        idx       = self.TabManager.tab_bar.get_tab_idx(name)
+        scr = self.Project.getScreen(base_name)
+        if scr is None:
+            self.TabManager.force_refresh_tab(name)
+            return
+        self.TabManager.close_tab(name)
+        module = self._import_screen(scr)
+        hooks  = self._import_hooks(scr)
+        self.TabManager.open_tab(name, module, hooks=hooks, icon=icon,
+                                 insert_idx=idx, base_name=base_name)
+
+    def _open_detached(self, name: str, module, hooks, icon, base_name: str,
+                       x_root: int, y_root: int,
+                       btn_offset_x: int, btn_offset_y: int):
+        """Create a DetachedWindow and position it under the cursor."""
+        from VIStk.Objects._DetachedWindow import DetachedWindow
+        dw = DetachedWindow(
+            self, name, module, hooks, icon, base_name,
+            x_root, y_root, btn_offset_x, btn_offset_y,
+        )
+        self._detached.append(dw)
 
     # ── FPS ────────────────────────────────────────────────────────────────────
 
@@ -267,16 +382,15 @@ class Host(Root):
             self._fps_frames = 0
             self._fps_acc = 0.0
             self.InfoRow.set_fps(self.fps)
+            for listener in list(self._fps_listeners):
+                try:
+                    listener(self.fps)
+                except Exception:
+                    pass
 
     # ── Main-thread call queue ─────────────────────────────────────────────────
 
     def _poll_main_queue(self):
-        """Drain the cross-thread call queue on the main thread.
-
-        Called once at startup and reschedules itself via ``after()``.
-        Only this method (running on the main thread) ever calls ``after()``,
-        which makes it safe regardless of what other threads are doing.
-        """
         try:
             while True:
                 fn = self._call_queue.get_nowait()
@@ -291,7 +405,6 @@ class Host(Root):
     # ── IPC server ─────────────────────────────────────────────────────────────
 
     def _start_ipc(self):
-        """Bind a localhost TCP server and write the port to a temp file."""
         try:
             srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -299,25 +412,14 @@ class Host(Root):
             srv.listen(8)
             self._ipc_server = srv
             port = srv.getsockname()[1]
-
-            port_file = _ipc_port_file(self.Project.title)
-            with open(port_file, "w") as f:
+            with open(_ipc_port_file(self.Project.title), "w") as f:
                 f.write(str(port))
-
             t = threading.Thread(target=self._ipc_listen, args=(srv,), daemon=True)
             t.start()
         except Exception:
             self._ipc_server = None
 
     def _ipc_listen(self, srv: socket.socket):
-        """Accept connections and dispatch IPC messages on the main thread.
-
-        Reserved control messages start with ``__VIS_``:
-
-        * ``__VIS_QUIT__`` — gracefully shut down the Host.
-
-        Any other message is treated as a screen name to open.
-        """
         while True:
             try:
                 conn, _ = srv.accept()
@@ -327,15 +429,14 @@ class Host(Root):
                     self._call_queue.put(self._do_quit)
                     break
                 elif data.startswith("__VIS_CLOSE__:"):
-                    name = data[len("__VIS_CLOSE__:"):]
-                    self._call_queue.put(lambda n=name: self._close_screen(n))
+                    n = data[len("__VIS_CLOSE__:"):]
+                    self._call_queue.put(lambda name=n: self._close_screen(name))
                 elif data:
                     self._call_queue.put(lambda name=data: self.open(name))
             except Exception:
                 break
 
     def _stop_ipc(self):
-        """Close the IPC server socket and remove the port file."""
         if self._ipc_server:
             try:
                 self._ipc_server.close()
@@ -381,19 +482,14 @@ class Host(Root):
             self._tray_icon = None
 
     def _hide_to_tray(self):
-        """Hide the window without destroying it."""
         self.withdraw()
 
     def _restore(self, icon=None, item=None):
-        """Restore the window from the tray and open the default screen."""
-        # Called from the pystray thread — route via the call queue (thread-safe).
         self._call_queue.put(self._do_restore)
 
     def _do_restore(self):
-        """Main-thread restore: open default screen when hidden; focus when visible."""
         state = self.state()
         if state == "withdrawn":
-            # Hidden to tray — open the default screen (if tabbed) then show
             default = getattr(self.Project, "default_screen", None)
             if default:
                 scr = self.Project.getScreen(default)
@@ -401,16 +497,13 @@ class Host(Root):
                     self._open_tab(scr)
             self.deiconify()
         elif state == "iconic":
-            # OS-minimised via taskbar — just restore
             self.deiconify()
-        # Always bring to front
         self.lift()
         self.focus_force()
 
     # ── Startup registration ───────────────────────────────────────────────────
 
     def _register_startup(self):
-        """Register the Host in the Windows startup registry (first run only)."""
         try:
             import winreg
             key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
@@ -418,16 +511,14 @@ class Host(Root):
             exe = sys.executable
             script = self.Project.p_project + "/" + self.Project.host_script
             cmd = f'"{exe}" "{script}"'
-
             with winreg.OpenKey(
                 winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_READ
             ) as key:
                 try:
                     winreg.QueryValueEx(key, app_name)
-                    return  # Already registered
+                    return
                 except FileNotFoundError:
                     pass
-
             with winreg.OpenKey(
                 winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_SET_VALUE
             ) as key:
@@ -436,7 +527,6 @@ class Host(Root):
             pass
 
     def unregister_startup(self):
-        """Remove the Host from the Windows startup registry."""
         try:
             import winreg
             key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
@@ -451,38 +541,29 @@ class Host(Root):
     # ── Lifecycle ──────────────────────────────────────────────────────────────
 
     def quit_host(self, icon=None, item=None):
-        """Fully shut down the Host (called from tray Quit or programmatically).
-
-        Safe to call from any thread.
-        """
-        # If called from a non-main thread (pystray, IPC), route via the queue.
         if threading.current_thread() is not threading.main_thread():
             self._call_queue.put(self._do_quit)
             return
         self._do_quit()
 
     def _do_quit(self):
-        """Perform the actual shutdown sequence — must run on the main thread."""
         global _HOST_INSTANCE
         self._stop_ipc()
-
-        # Run deactivation hooks and close all managed screens before destroying
         for name in list(self._toplevels.keys()):
             self._close_toplevel(name)
+        for dw in list(self._detached):
+            dw._on_close()
         for name in list(self.TabManager._tabs.keys()):
             self.TabManager.close_tab(name)
-
         if self._tray_icon:
             try:
                 self._tray_icon.stop()
             except Exception:
                 pass
-            # Give pystray's thread a moment to remove the tray icon.
             if self._tray_thread and self._tray_thread.is_alive():
                 self._tray_thread.join(timeout=1.0)
         _HOST_INSTANCE = None
         super().unload()
 
     def unload(self):
-        """Override: hide to tray instead of destroying."""
         self._hide_to_tray()

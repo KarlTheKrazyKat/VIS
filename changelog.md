@@ -112,8 +112,6 @@ Updated
 
 - `pystray` — cross-platform system tray support
 
----
-
 **Tab drag-to-reorder**
 
 - Tabs in the TabBar can be dragged left or right to change their display order
@@ -137,13 +135,133 @@ Updated
 - New `Layout.apply(widget, row, col, ...)` method places a widget with absolute pixel coordinates and re-places it automatically on every parent `<Configure>` event, enforcing the `minsize` and `maxsize` constraints set via `rowSize()` / `colSize()`
 - Existing `cell()` method is unchanged — relative-placement workflows are unaffected
 
-#### Planned
+**Screen lifecycle additions**
 
-- Rename `on_activate()` / `on_deactivate()` hooks to `on_focused()` / `on_unfocused()` for clarity
-- Locate screen lifecycle hooks in `modules/<screen>/m_<screen>.py` rather than the screen script itself
-- Tab right-click context menu — option to pop the tab out into its own window with its own TabManager
-- Tab drag-to-detach — drag a tab out of the tab bar to open in its own window
-- Tab drag-to-merge — drag a tab into another window's tab bar to move it there
+- `Screen.close()` — sends `__VIS_CLOSE__:<name>` to the Host via IPC; asks the Host to close a specific tab or Toplevel from within the screen itself
+- `Project.set_default_screen(name)` — persists the default screen name to `project.json`; called automatically when the first screen is created via `newScreen`
+- `newScreen` now prompts whether the new screen should open as a tab inside the Host (`tabbed` field stored in `project.json`)
+
+**VINFO / project metadata**
+
+- `VINFO.copyright` field — separate copyright string stored under `metadata.copyright` in `project.json`; falls back to the company name if not set; used by `InfoRow`
+
+**Bug fixes**
+
+- `TabBar._btn_click` drag suppression: `_drag_active` is now cleared inside `_btn_click` rather than `_on_drag_release`; previously the flag was always `False` by the time `_btn_click` ran (Tk fires `command=` after `<ButtonRelease-1>` bindings), so clicking after a drag would incorrectly focus the tab
+- `Layout.rowSize` / `colSize` list mutation: both methods now copy the caller's list before inserting the leading `0` sentinel; previously they mutated the original list in place, which could corrupt reused list variables
+
+**Hook rename**
+
+- `on_activate()` / `on_deactivate()` renamed to `on_focused()` / `on_unfocused()` across all framework code and the screen template
+- `Host` and `TabManager` look for the new names; the screen template stubs are updated accordingly
+
+**Lifecycle hooks in module file**
+
+- `on_focused`, `on_unfocused`, and `configure_menu` are now looked up in `modules/<screen>/m_<screen>.py` first; the screen script is used as a fallback so that existing screens without a separate hooks file continue to work
+- `Host._import_hooks(scr)` — imports the hooks module for a screen; returns `None` if the file does not exist
+- `TabManager._get_hook(name, hook_name)` — priority lookup across hooks module and screen module
+- `TabManager.open_tab` now accepts a `hooks` keyword argument; the hooks module is stored in the tab dict and passed through all lifecycle calls
+
+**Tab right-click context menu**
+
+- Right-clicking any tab button shows a context menu with a "Pop out" option
+- `TabBar.on_tab_popout` callback → `TabManager._on_popout_request` → `TabManager.on_tab_popout` → `Host._on_tab_popout`
+- Pop out closes the tab in the current TabManager and opens it in a new `DetachedWindow`
+
+**Tab drag-to-detach**
+
+- Dragging a tab more than 40 pixels vertically outside the tab bar fires `TabBar.on_drag_detach`
+- `Host._on_tab_detach` closes the tab from the main TabManager and opens it in a new `DetachedWindow`
+- `_drag_detach_fired` flag ensures the detach fires exactly once per drag gesture
+
+**Tab drag-to-merge**
+
+- All live `TabBar` instances register in the module-level `_TABBAR_REGISTRY` list; they deregister in `TabBar.destroy()`
+- `TabBar.owner` attribute (set by `TabManager.__init__`) links each bar to its owning manager
+- During drag motion, if the cursor enters a different registered `TabBar`, that bar's `on_drag_merge(name, source_bar)` is fired; `_drag_merge_fired` gate prevents re-firing on subsequent motion events
+- `TabManager._on_merge_request` closes the tab in the source manager and re-opens it in the receiving manager via `open_tab` (which re-calls `setup(parent)`)
+
+**DetachedWindow**
+
+- New `VIStk.Objects._DetachedWindow.DetachedWindow` class — wraps a `Toplevel` + `TabManager` for popped-out or drag-detached tabs
+- Pop out from a `DetachedWindow` (right-click or drag-out) sends the tab back to the main Host `TabManager`
+- Closing a `DetachedWindow` runs `on_unfocused` on all its tabs before destroying them
+- `Host._do_quit()` closes all `DetachedWindow` instances before tearing down the main window
+
+**Drag ghost window and insertion indicator**
+
+- Dragging a tab shows a semi-transparent `overrideredirect(True)` ghost `Toplevel` that follows the cursor; the ghost replicates the tab label (and icon if present) at 75 % opacity
+- Tabs do not slide during a drag; position is committed only on release
+- A thin coloured vertical bar (insertion indicator) appears inside whichever `TabBar` the cursor is over, showing exactly where the tab will land
+- On release: reorder in the same bar at the indicated position / merge into another bar at the indicated position / detach into a new `DetachedWindow` if the cursor is not over any bar
+- Dragged tab is dimmed while the ghost is live; normal colour is restored on release
+- `TabBar.get_tab_idx(name)` — returns the 0-based position of a tab
+- `TabBar.set_insert_indicator(idx)` / `TabBar.clear_insert_indicator()` — placed via `place()` over the packed tab strip using `_INDICATOR_COLOR` (dodger blue)
+- `TabBar.open_tab` and `TabManager.open_tab` now accept `insert_idx` to insert at a specific position
+- `_DETACH_THRESHOLD` removed; detach now fires when the cursor is released outside all registered bars
+- `TabManager.force_refresh_tab(name)` — close and reopen at same position
+
+**Right-click context menu updates**
+
+- "Pop out" renamed to "Open in new window"
+- "Close" added — closes the tab as if its close button were clicked
+- "Force refresh" added — re-imports and re-runs `setup(parent)` for the tab; hooks module is also re-imported; tab is reopened at its original position
+
+**InfoRow copyright formatting**
+
+- `©` and the current year are automatically prepended to the copyright string if they are not already present
+
+**InfoRow app version display**
+
+- The project version (from `project.json` `metadata.version`) is shown on the right of the InfoRow alongside the FPS counter in the form `v1.0.0  |  30.0 fps`
+
+**Bug fix: tab insertion positions**
+
+- `TabBar._reorder_to_idx` no longer applies the erroneous `old_idx < idx` index compensation; the index from `_get_insert_idx_at` is already in "without-dragged-tab" space so no adjustment is needed — with two tabs open all three positions (before first, between, after last) now work correctly
+
+**Drag ghost cursor alignment**
+
+- Ghost window positions with the cursor at the exact pixel offset it had within the original tab button (`_drag_btn_offset_x/y` stored on drag start); same alignment is used to position the new `DetachedWindow` when a tab is released outside all bars
+- `TabBar._last_drag_btn_offset_x/y` persists the offset after the drag ends so Host can read it in `_on_tab_detach`
+
+**Empty TabBar drop zone**
+
+- When a `TabBar` has no open tabs it shrinks to a 28 px visible drop-zone strip styled with `_BG_EMPTY`
+- During a drag hover the strip highlights (`_BG_HOVER_EMPTY`) and shows a full-width horizontal insertion indicator at the bottom edge
+- `_update_empty_state()` is called after every `open_tab` / `close_tab`
+
+**DetachedWindow gets menu, info bar, icon, and geometry**
+
+- `DetachedWindow` now contains a `HostMenu` (App → "Close Window"), a `TabManager`, and an `InfoRow` matching the main Host layout
+- `InfoRow` FPS is broadcast from `Host.tick_fps()` via `_fps_listeners`; `DetachedWindow` registers and deregisters automatically
+- Window icon is loaded from the project's default icon
+- Window is sized to match the Host window and positioned so the cursor lands on the tab button at the same offset as during the drag (two-pass: initial estimate then fine-tuned after `update_idletasks()`)
+- `DetachedWindow` is created as a peer `Toplevel()` (no explicit parent) so all application windows are at the same level
+
+**Empty DetachedWindow does not close**
+
+- When all tabs are removed from a `DetachedWindow` (e.g. dragged elsewhere), the window remains open showing the empty drop-zone strip; only the user's X button or `quit_host()` closes it
+
+**Window title management**
+
+- Host window title defaults to `project.title`
+- Title updates to `"project: screen"` when a tab activates and resets to `project.title` when all tabs close
+- Per-screen characteristic info string: `"project: screen — info"` format; also shown in the tab button label as `"screen — info"`
+- Same title pattern applied to `DetachedWindow`
+
+**Per-screen characteristic info (`set_tab_info`)**
+
+- `TabManager.set_tab_info(name, text_or_var)` — set a characteristic string for a tab; accepts a plain `str` or a `tkinter.StringVar` (traced automatically; tab label and window title update live)
+- Module-level `set_tab_info(frame, text_or_var)` helper exported from `VIStk.Objects` — call from inside `setup(parent)` using the received `parent` frame
+- StringVar traces are removed automatically when the tab closes (no leaked callbacks)
+- `TabManager.on_tab_info_change` callback: `(name, info)` — wired to Host and DetachedWindow
+
+**Multiple instances of the same screen**
+
+- Opening a screen that is already open anywhere creates a new tab with a `(2)`, `(3)` suffix on the display name
+- `base_name` stored in each tab entry maps the display name back to the screen registry entry for re-import, refresh, and popout operations
+
+#### Planned
 
 ---
 

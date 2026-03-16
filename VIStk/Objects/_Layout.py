@@ -89,11 +89,9 @@ class Layout():
             maxsize (list[int]): Maximum pixel height per row (optional)
         """
         if isclose(sum(rows),1,abs_tol=0.00001):
-            if rows[0] == 0:
-                self.row=rows
-            else:
-                self.row=rows
-                self.row.insert(0,0)
+            self.row = list(rows)
+            if self.row[0] != 0:
+                self.row.insert(0, 0)
         else:
             raise SizeError(f"Row sizes must sum to 1.0, not {sum(rows)}")
         self.row_min = minsize if minsize is not None else []
@@ -108,11 +106,9 @@ class Layout():
             maxsize (list[int]): Maximum pixel width per column (optional)
         """
         if isclose(sum(columns),1,abs_tol=0.00001):
-            if columns[0] == 0:
-                self.column=columns
-            else:
-                self.column=columns
-                self.column.insert(0,0)
+            self.column = list(columns)
+            if self.column[0] != 0:
+                self.column.insert(0, 0)
         else:
             raise SizeError(f"Column sizes must sum to 1.0, not {sum(columns)}")
         self.col_min = minsize if minsize is not None else []

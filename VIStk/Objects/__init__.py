@@ -3,8 +3,9 @@ from VIStk.Objects._Root import *
 from VIStk.Objects._SubRoot import *
 from VIStk.Objects._Window import *
 from VIStk.Objects._Layout import *
-from VIStk.Objects._TabManager import TabManager
+from VIStk.Objects._TabManager import TabManager, set_tab_info
 from VIStk.Objects._Host import Host
+from VIStk.Objects._DetachedWindow import DetachedWindow
 
 __all__ = ["WindowGeometry",
            "Root",
@@ -12,4 +13,6 @@ __all__ = ["WindowGeometry",
            "Window",
            "Layout",
            "TabManager",
-           "Host"]
+           "set_tab_info",
+           "Host",
+           "DetachedWindow"]

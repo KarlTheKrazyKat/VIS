@@ -1,3 +1,4 @@
+import datetime
 from tkinter import Frame, Label
 
 _BG = "grey55"
@@ -8,7 +9,11 @@ class InfoRow(Frame):
     """Status bar displayed at the bottom of the Host window.
 
     Shows the active screen name and version on the left, the project
-    copyright string centred, and the live frames-per-second on the right.
+    copyright string centred, and the app version + live FPS on the right.
+
+    The copyright string is normalised at construction time: if it does not
+    already contain the ``©`` symbol, the current year and ``©`` are
+    automatically prepended (e.g. ``"© 2026  bmi CAD Services"``).
 
     Call :meth:`set_screen` whenever the active tab changes and
     :meth:`set_fps` once per FPS update (typically once per second).
@@ -18,8 +23,21 @@ class InfoRow(Frame):
         kwargs.setdefault("bg", _BG)
         super().__init__(parent, **kwargs)
 
-        copyright_text = project.copyright or ""
+        # ── Copyright normalisation ────────────────────────────────────────────
+        raw = (project.copyright or "").strip()
+        if "©" not in raw:
+            year = datetime.datetime.now().year
+            copyright_text = f"© {year}  {raw}" if raw else f"© {year}"
+        else:
+            copyright_text = raw
 
+        # ── App version ────────────────────────────────────────────────────────
+        try:
+            app_version = str(project.Version)
+        except Exception:
+            app_version = ""
+
+        # ── Layout: screen label (left) | copyright (centre) | version+fps (right)
         self._screen_lbl = Label(
             self, text="", bg=_BG, fg=_FG, anchor="w", padx=6
         )
@@ -30,9 +48,15 @@ class InfoRow(Frame):
         )
 
         self._fps_lbl = Label(
-            self, text="0 fps", bg=_BG, fg=_FG, anchor="e", padx=6
+            self,
+            text=f"v{app_version}  |  0 fps" if app_version else "0 fps",
+            bg=_BG,
+            fg=_FG,
+            anchor="e",
+            padx=6,
         )
         self._fps_lbl.pack(side="right")
+        self._app_version = app_version
 
     # ── Public API ─────────────────────────────────────────────────────────────
 
@@ -43,4 +67,7 @@ class InfoRow(Frame):
 
     def set_fps(self, fps: float) -> None:
         """Update the FPS counter."""
-        self._fps_lbl.config(text=f"{fps:.1f} fps")
+        if self._app_version:
+            self._fps_lbl.config(text=f"v{self._app_version}  |  {fps:.1f} fps")
+        else:
+            self._fps_lbl.config(text=f"{fps:.1f} fps")
