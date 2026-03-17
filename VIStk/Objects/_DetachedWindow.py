@@ -45,8 +45,10 @@ class DetachedWindow:
         self.host = host
         self._closing = False
 
-        # Peer window — not parented to Host so all windows are at same level
+        # Peer window — not parented to Host so all windows are at same level.
+        # Withdraw immediately so we can position before the user ever sees it.
         self.win = Toplevel()
+        self.win.withdraw()
         self.win.title(name)
         self.win.protocol("WM_DELETE_WINDOW", self._on_close)
 
@@ -87,48 +89,45 @@ class DetachedWindow:
 
     def _position_window(self, x_root: int, y_root: int,
                          btn_offset_x: int, btn_offset_y: int):
-        """Size from Host and position so cursor sits over the tab at the same offset."""
+        """Position the window so the cursor sits over the new tab at the same offset."""
         try:
             host_w = self.host.winfo_width()
             host_h = self.host.winfo_height()
         except Exception:
             host_w, host_h = 800, 600
 
-        # Measure the OS title-bar height from the Host (winfo_y is client area top;
-        # winfo_rooty is the same point in screen coords; their difference is the
-        # decoration offset added by the window manager).
-        try:
-            title_h = self.host.winfo_rooty() - self.host.winfo_y()
-        except Exception:
-            title_h = 30
-
-        # Measure the menu bar + tab bar heights from the Host layout.
-        try:
-            menu_h = self.host.TabManager.winfo_rooty() - self.host.winfo_rooty()
-        except Exception:
-            menu_h = 48   # fallback: 24px menu + 24px tab bar
-
-        win_x = x_root - btn_offset_x - 4        # 4 = left padx of first tab button
-        win_y = y_root - btn_offset_y - title_h - menu_h
-
-        self.win.geometry(f"{host_w}x{host_h}+{win_x}+{win_y}")
+        # Anchor at origin so widget layout is computed at a known position.
+        # The window is already withdrawn so there is no visible flash.
+        self.win.geometry(f"{host_w}x{host_h}+0+0")
         self.win.update_idletasks()
 
-        # Fine-tune: adjust so the actual tab button sits under the original offset
         try:
             tab_names = list(self.tab_manager._tabs.keys())
             if tab_names:
                 btn = self.tab_manager.tab_bar._tabs[tab_names[0]]["button"]
-                actual_bx = btn.winfo_rootx()
-                actual_by = btn.winfo_rooty()
-                dx = x_root - (actual_bx + btn_offset_x)
-                dy = y_root - (actual_by + btn_offset_y)
-                if abs(dx) > 1 or abs(dy) > 1:
-                    wx = self.win.winfo_x() + dx
-                    wy = self.win.winfo_y() + dy
-                    self.win.geometry(f"+{wx}+{wy}")
+
+                # Button's offset from the window's client-area origin.
+                # Using winfo_rootx/y *differences* means any absolute error in
+                # the withdrawn window's reported position cancels out.
+                btn_in_win_x = btn.winfo_rootx() - self.win.winfo_rootx()
+                btn_in_win_y = btn.winfo_rooty() - self.win.winfo_rooty()
+
+                # Decoration height = OS title bar + native menu bar.
+                # geometry("+x+y") on Windows sets the *outer-frame* top-left,
+                # while winfo_rooty() returns the *client-area* top.
+                # Measure from the Host (always mapped) to get the true WM value.
+                deco_h = self.host.winfo_rooty() - self.host.winfo_y()
+
+                # Outer-frame position that places the cursor at btn_offset within button:
+                #   outer_top + deco_h + btn_in_win_y + btn_offset_y == y_root  →  solve for outer_top
+                win_x = x_root - btn_offset_x - btn_in_win_x
+                win_y = y_root - btn_offset_y - btn_in_win_y - deco_h
+
+                self.win.geometry(f"+{win_x}+{win_y}")
         except Exception:
             pass
+
+        self.win.deiconify()
 
     def _load_icon(self):
         try:
