@@ -257,6 +257,169 @@ Updated
 
 ---
 
+### 0.4.1 Screen Management
+
+**Single-instance screens**
+
+- New `single_instance` boolean field in each screen's `project.json` entry (default `false`)
+- `Screen.__init__` reads and exposes `screen.single_instance`
+- When `Host.open()` is called for a screen with `single_instance: true` that is already open anywhere (main window or any `DetachedWindow`), the existing tab is focused rather than creating a new instance; the `(2)` / `(3)` suffix logic is skipped entirely
+- `VIS add screen` prompts for single-instance preference alongside the existing `tabbed` prompt
+- Editable via `VIS edit` once that command is implemented
+
+**`VIS rename <screenname> <newname>`**
+
+- Validates `newname` with the same rules as `VIS add screen` (no reserved words, valid identifier)
+- Renames the screen's key in `project.json → Screens`
+- Renames the script file on disk if the filename matches the old screen name pattern (e.g. `oldname.py` → `newname.py`); updates the `script` field accordingly
+- Renames `Screens/<oldname>/` → `Screens/<newname>/`
+- Renames `modules/<oldname>/` → `modules/<newname>/`
+- Rewrites all `Screens.<oldname>.` and `modules.<oldname>.` import references inside the screen script to use the new name
+- Updates `default_screen` in `project.json` if it matches the old name
+- Runs `stitch` automatically after rename so import blocks are regenerated clean
+
+**`VIS edit <screenname> <attribute> <value>`**
+
+- Directly sets any attribute in the screen's `project.json` subdictionary
+- Editable attributes: `script`, `release`, `icon`, `desc`, `tabbed`, `single_instance`, `version`, `current`
+- Type coercion applied automatically by attribute:
+  - `release`, `tabbed`, `single_instance` — `true`/`yes`/`1` → `True`; `false`/`no`/`0` → `False`
+  - `icon`, `current` — `none`/`null` → `None`; any other string stored as-is
+  - `version` — stored as string; must be valid `major.minor.patch` format
+  - `script`, `desc` — stored as plain string
+- Prints confirmation of the old and new value
+- Rejects unknown attribute names with a clear error message rather than silently writing garbage keys
+
+---
+
+### 0.4.2 Menus
+
+**Three-layer menubar model**
+
+The `HostMenu` menubar is now structured as three permanent layers in order:
+
+1. **Built-in layer** — the "App" cascade (Close Window / Quit), always first, built automatically by `attach()`
+2. **Project layer** — app-wide cascades defined once in `Host.py` at startup; never cleared during normal use
+3. **Screen layer** — cascades contributed by the active tab via `configure_menu(menubar)`; all cleared automatically on tab deactivation
+
+**`HostMenu` changes**
+
+- `set_project_items(items, label)` — new method; appends one cascade to the project layer; calling it multiple times adds multiple project-layer cascades in order; these persist across all tab changes
+- `clear_project_items()` — removes all project-layer cascades; intended for teardown, not normal use
+- `set_screen_items(items, label)` — behaviour change: **accumulates** rather than replaces; calling it multiple times within a single `configure_menu` hook adds multiple screen-layer cascades side by side; still the right method for screen contributions
+- `clear_screen_items()` — unchanged signature; now removes **all** accumulated screen cascades (tracked internally as a list of labels rather than a single slot)
+- `_project_labels: list[str]` replaces nothing (new); `_screen_labels: list[str]` replaces the single `_screen_cascade` / `_screen_label` pair
+
+**Usage pattern**
+
+Project-wide items are set once in `Host.py` after `Host()` is created:
+
+    host = Host()
+    host.HostMenu.set_project_items([
+        {"label": "File", "items": [
+            {"label": "New",  "command": new_fn},
+            {"separator": True},
+            {"label": "Exit", "command": host.quit_host},
+        ]},
+        {"label": "Help", "items": [
+            {"label": "About", "command": about_fn},
+        ]},
+    ], label="File")
+
+Screen-specific items are contributed as before via `configure_menu`:
+
+    def configure_menu(menubar):
+        menubar.set_screen_items([
+            {"label": "Export PDF", "command": export_pdf},
+            {"label": "Print",      "command": print_fn},
+        ], label="Work Orders")
+
+A screen that needs more than one cascade on the menu bar calls `set_screen_items` multiple times in one `configure_menu` call — all are cleared together on deactivation.
+
+**`VIS add screen <name> menu <menuname>` (implement the stub)**
+
+- `Screen.addMenu` is currently a stub (`pass`); implement it
+- Creates `modules/<screen>/m_<menuname>.py` containing a `configure_menu(menubar)` function pre-filled with a commented cascade template
+- If `modules/<screen>/m_<screenname>.py` (the hooks module) already exists, appends a delegation call so the new menu module's `configure_menu` is included automatically
+- The generated file is a standard module file — developer fills in the item specs and it is picked up on next Host launch
+
+**Documentation updates**
+
+- `HostMenu` section updated to describe all three layers and the accumulate behaviour of `set_screen_items`
+- `configure_menu` hook documentation updated with a multi-cascade example
+- `VIS add screen <name> menu <menuname>` added to the CLI reference
+
+---
+
+### 0.4.3 Split Layouts
+
+Allow the Host window's content area to be divided into multiple panes, each with its own `TabBar` and `TabManager`, with a draggable sash between panes.  Two screens can then run side by side (or stacked) in a single window without spawning a `DetachedWindow`.
+
+**`SplitView` widget**
+
+- New widget (`VIStk/Widgets/_SplitView.py`) that replaces the single `TabManager` in `Host`
+- Each instance wraps a `ttk.PanedWindow` (orient = `"horizontal"` or `"vertical"`) and holds two child slots; each slot is either a `TabManager` (leaf) or a nested `SplitView` (branch)
+- This tree-of-panes model supports arbitrary split arrangements — splitting right and then down produces a `horizontal SplitView → [TabManager, vertical SplitView → [TabManager, TabManager]]`
+- `SplitView.split(pane, direction)` — replaces the `TabManager` leaf at *pane* with a new `SplitView` containing the original pane and a fresh empty `TabManager`; `direction` is `"right"` or `"down"`
+- `SplitView.remove_pane(pane)` — collapses the parent `SplitView` that contains *pane*, promoting the surviving sibling back to the parent's slot; if the root becomes a single `TabManager`, the `SplitView` wrapper is dissolved
+- Sash positions are set to 50/50 by default; the user can drag them freely
+
+**Focused pane**
+
+- `SplitView.focused_pane: TabManager | None` tracks which pane the user last interacted with
+- Clicking a tab in any pane sets that pane as focused; clicking anywhere in a pane's content frame also sets it focused
+- The `HostMenu` and window title always reflect the focused pane's active tab — only one tab drives these at a time
+- When the focused pane is removed (its last tab closed), focus transfers to the nearest remaining pane
+
+**Right-click split actions**
+
+Two new entries added to the `TabBar` right-click context menu:
+
+- **Split right** — calls `on_tab_split(name, "right")` on the owning `TabManager`; `SplitView` handles this by splitting the pane horizontally and moving the tab into the new right pane
+- **Split down** — same, with `"down"` and a vertical split
+
+The existing "Open in new window" entry is unchanged; it still creates a `DetachedWindow`.
+
+**Pane auto-removal**
+
+- When a pane's tab count reaches zero (last tab closed or dragged elsewhere), the pane calls `on_pane_empty` on its owning `SplitView`
+- The `SplitView` removes the empty pane and promotes the surviving sibling; if the root pane becomes empty there is nothing to promote — Host falls back to showing a single empty `TabManager`
+
+**Drag between panes**
+
+No changes required to `_TabBar.py` or the drag system.  Cross-bar merge already works for any two registered `TabBar` instances.  A tab dragged from one split pane into another pane's bar merges as normal.  A tab dragged outside all bars still detaches to a `DetachedWindow`.
+
+**`Host` changes**
+
+- `self.TabManager` replaced by `self.split_view: SplitView`; `SplitView` exposes `focused_pane` as a drop-in for the single-pane API
+- `Host.open()` opens new tabs into `split_view.focused_pane` (the pane the user last interacted with)
+- `Host._get_all_tab_names()` walks the full `SplitView` tree rather than a single `TabManager`
+- Activate/deactivate/menu/title callbacks wired to all panes; focused pane arbitrates which tab drives `HostMenu` and the title bar
+- `Host._on_tab_detach` and `Host._on_tab_popout` resolved through the originating pane's `TabManager`
+
+**`TabBar` changes**
+
+- `on_tab_split: callable | None` — new callback `(name: str, direction: str)`
+- Right-click menu gains "Split right" and "Split down" entries that fire `on_tab_split`
+- No other changes to `_TabBar.py`
+
+**Documentation updates**
+
+- New `SplitView` class documented with split/remove API and tree-of-panes model
+- `Host` documentation updated to reflect `split_view` replacing `TabManager`
+- `configure_menu` and `on_tab_activate` notes updated: these now fire per focused-pane activation, not per-window
+
+---
+
+### 0.4.4 Tab Bar Enhancements
+
+- Tab bar position — top, left, bottom, or right
+- Maximum simultaneous open tabs — enforced when opening new tabs
+- Close confirmation — warn when closing a tab with unsaved state (requires `has_unsaved()` hook)
+- Multiple tabs of the same screen — already implemented via `_unique_display_name()` (`Name (2)`, `Name (3)` suffixes); verify behaviour holds correctly with split layouts introduced in 0.4.3
+
+---
+
 ### 0.5.X VIS Widgets
 
 Widgets that Tkinter does not provide natively. General-purpose and usable in any VIStk app.
@@ -269,12 +432,59 @@ Widgets that Tkinter does not provide natively. General-purpose and usable in an
 - More menu options
 - Color palette feature — recolor default VIStk widgets; accessible throughout user code
 
-**Tab bar enhancements**
+---
 
-- Tab bar position — top, left, bottom, or right
-- Maximum simultaneous open tabs — enforced when opening new tabs
-- Close confirmation — warn when closing a tab with unsaved state (requires `has_unsaved()` hook)
-- Stored tabs with a tab ID to allow multiple tabs of the same screen
+### 0.5.X Project Upgrade Tool
+
+`VIS upgrade` — bring an existing VIS project forward to the installed version of VIStk without touching user-written code.
+
+**What gets updated**
+
+Three things are replaced or patched on every upgrade; user screen scripts, `Screens/`, and `modules/` are never touched:
+
+- **`.VIS/Host.py`** — regenerated from the current `host.txt` template; the icon name is read from `project.json` before overwriting so the setting is preserved
+- **`.VIS/Templates/`** — overwritten from the VIStk install directory using `shutil.copytree`; ensures `screen.txt`, `f_element.txt`, and all widget templates match the installed version
+- **`project.json` schema migration** — new keys required by newer VIStk versions are added with their default values; existing keys and user-set values are never changed or removed
+
+**`project.json` compatibility tracking**
+
+- A `vis_version` field is added to the `metadata` block at first upgrade (and at project creation going forward)
+- The upgrade tool reads this to determine which migrations have already been applied and skips them
+- On success the field is updated to the current VIStk version
+
+**Migration registry**
+
+Migrations live in `VIStk/Structures/_Upgrade.py` as an ordered list of `(version_string, step_fn)` pairs.  Each `step_fn(info: dict)` receives the raw `project.json` dict and adds or coerces a single field.  The runner applies all steps whose version is newer than the recorded `vis_version`.
+
+This means upgrading across multiple releases in one step works correctly — every migration between the recorded version and the current version fires in order.
+
+**`VIS upgrade` command**
+
+Added to `VIS.py` as a new top-level case:
+
+    vis upgrade
+
+Steps in order:
+
+1. Load `project.json` and read `metadata.vis_version` (treat missing as `"0.0.0"`)
+2. Run all pending schema migrations in version order, patching `info` in memory
+3. Regenerate `.VIS/Host.py` from the current template
+4. Overwrite `.VIS/Templates/` from the VIStk install
+5. Create any missing top-level project directories (`Screens/`, `modules/`, `Icons/`, `Images/`)
+6. Write the updated `project.json` with `vis_version` set to the current VIStk version
+7. Print a per-step summary — "already up to date" if nothing changed
+
+**Dry-run flag**
+
+    vis upgrade --dry-run
+
+Prints what would change without writing any files.  Useful before upgrading a project that has uncommitted changes.
+
+**Documentation updates**
+
+- `VIS upgrade` added to the CLI reference
+- `project.json` schema reference updated with `metadata.vis_version`
+- Migration registry documented for contributors adding new VIStk versions
 
 ---
 
