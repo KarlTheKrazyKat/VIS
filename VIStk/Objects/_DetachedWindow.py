@@ -90,6 +90,8 @@ class DetachedWindow:
     def _position_window(self, x_root: int, y_root: int,
                          btn_offset_x: int, btn_offset_y: int):
         """Position the window so the cursor sits over the new tab at the same offset."""
+        import re
+
         try:
             host_w = self.host.winfo_width()
             host_h = self.host.winfo_height()
@@ -106,20 +108,32 @@ class DetachedWindow:
             if tab_names:
                 btn = self.tab_manager.tab_bar._tabs[tab_names[0]]["button"]
 
-                # Button's offset from the window's client-area origin.
-                # Using winfo_rootx/y *differences* means any absolute error in
-                # the withdrawn window's reported position cancels out.
-                btn_in_win_x = btn.winfo_rootx() - self.win.winfo_rootx()
-                btn_in_win_y = btn.winfo_rooty() - self.win.winfo_rooty()
+                # Walk the widget tree using winfo_x/y() (position relative to
+                # parent, layout-computed by the geometry manager).  These are
+                # reliable even for withdrawn windows; winfo_rootx/y() is NOT
+                # because it depends on the WM having actually mapped the window.
+                btn_in_win_x, btn_in_win_y = 0, 0
+                w = btn
+                while True:
+                    btn_in_win_x += w.winfo_x()
+                    btn_in_win_y += w.winfo_y()
+                    p = w.winfo_parent()
+                    if not p or p == str(self.win):
+                        break
+                    w = w.nametowidget(p)
 
-                # Decoration height = OS title bar + native menu bar.
-                # geometry("+x+y") on Windows sets the *outer-frame* top-left,
-                # while winfo_rooty() returns the *client-area* top.
-                # Measure from the Host (always mapped) to get the true WM value.
-                deco_h = self.host.winfo_rooty() - self.host.winfo_y()
+                # Decoration height = OS title bar + native Tk menu bar.
+                # geometry("+x+y") encodes the outer-frame origin; winfo_rooty()
+                # returns the client-area y.  Parse the Host geometry string
+                # (Host is always mapped so the string is accurate) and compare
+                # it to winfo_rooty() to get the true offset.  If the platform
+                # uses client-area coords in geometry strings the result is 0,
+                # which is also correct for that convention.
+                m = re.search(r'([+-]\d+)([+-]\d+)$', self.host.geometry())
+                host_geo_y = int(m.group(2)) if m else self.host.winfo_rooty()
+                deco_h = max(0, self.host.winfo_rooty() - host_geo_y)
 
-                # Outer-frame position that places the cursor at btn_offset within button:
-                #   outer_top + deco_h + btn_in_win_y + btn_offset_y == y_root  →  solve for outer_top
+                # Position the outer frame so cursor lands at btn_offset within button.
                 win_x = x_root - btn_offset_x - btn_in_win_x
                 win_y = y_root - btn_offset_y - btn_in_win_y - deco_h
 
