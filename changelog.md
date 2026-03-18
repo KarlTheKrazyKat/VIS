@@ -164,21 +164,22 @@ Updated
 
 **Tab right-click context menu**
 
-- Right-clicking any tab button shows a context menu with a "Pop out" option
-- `TabBar.on_tab_popout` callback → `TabManager._on_popout_request` → `TabManager.on_tab_popout` → `Host._on_tab_popout`
-- Pop out closes the tab in the current TabManager and opens it in a new `DetachedWindow`
+- Right-clicking any tab button shows a context menu with three options: **Open in new window**, **Force refresh**, and **Close**
+- **Open in new window** closes the tab in the current `TabManager` and opens it in a new `DetachedWindow`; `TabBar.on_tab_popout` → `TabManager._on_popout_request` → `TabManager.on_tab_popout` → `Host._on_tab_popout`
+- **Force refresh** re-imports and re-runs `setup(parent)` for the tab; hooks module is also re-imported; tab is reopened at its original position
+- **Close** closes the tab as if its close button were clicked
 
 **Tab drag-to-detach**
 
-- Dragging a tab more than 40 pixels vertically outside the tab bar fires `TabBar.on_drag_detach`
-- `Host._on_tab_detach` closes the tab from the main TabManager and opens it in a new `DetachedWindow`
-- `_drag_detach_fired` flag ensures the detach fires exactly once per drag gesture
+- Releasing a dragged tab outside all registered `TabBar` instances fires `TabBar.on_drag_detach`
+- `Host._on_tab_detach` closes the tab from the main `TabManager` and opens it in a new `DetachedWindow`
 
 **Tab drag-to-merge**
 
 - All live `TabBar` instances register in the module-level `_TABBAR_REGISTRY` list; they deregister in `TabBar.destroy()`
 - `TabBar.owner` attribute (set by `TabManager.__init__`) links each bar to its owning manager
-- During drag motion, if the cursor enters a different registered `TabBar`, that bar's `on_drag_merge(name, source_bar)` is fired; `_drag_merge_fired` gate prevents re-firing on subsequent motion events
+- During drag motion the cursor is checked against all registered bars; the hovered bar shows its insertion indicator at the would-be drop position
+- On release over a different `TabBar`, that bar's `on_drag_merge(name, source_bar, insert_idx)` is fired once
 - `TabManager._on_merge_request` closes the tab in the source manager and re-opens it in the receiving manager via `open_tab` (which re-calls `setup(parent)`)
 
 **DetachedWindow**
@@ -198,14 +199,7 @@ Updated
 - `TabBar.get_tab_idx(name)` — returns the 0-based position of a tab
 - `TabBar.set_insert_indicator(idx)` / `TabBar.clear_insert_indicator()` — placed via `place()` over the packed tab strip using `_INDICATOR_COLOR` (dodger blue)
 - `TabBar.open_tab` and `TabManager.open_tab` now accept `insert_idx` to insert at a specific position
-- `_DETACH_THRESHOLD` removed; detach now fires when the cursor is released outside all registered bars
 - `TabManager.force_refresh_tab(name)` — close and reopen at same position
-
-**Right-click context menu updates**
-
-- "Pop out" renamed to "Open in new window"
-- "Close" added — closes the tab as if its close button were clicked
-- "Force refresh" added — re-imports and re-runs `setup(parent)` for the tab; hooks module is also re-imported; tab is reopened at its original position
 
 **InfoRow copyright formatting**
 
@@ -235,7 +229,7 @@ Updated
 - `DetachedWindow` now contains a `HostMenu` (App → "Close Window"), a `TabManager`, and an `InfoRow` matching the main Host layout
 - `InfoRow` FPS is broadcast from `Host.tick_fps()` via `_fps_listeners`; `DetachedWindow` registers and deregisters automatically
 - Window icon is loaded from the project's default icon
-- Window is sized to match the Host window and positioned so the cursor lands on the tab button at the same offset as during the drag (two-pass: initial estimate then fine-tuned after `update_idletasks()`)
+- Window is sized to match the Host window and positioned so the cursor lands on the tab button at the same offset as during the drag; the window is withdrawn before placement and shown only after the exact position is calculated from measured widget layout offsets
 - `DetachedWindow` is created as a peer `Toplevel()` (no explicit parent) so all application windows are at the same level
 
 **Empty DetachedWindow does not close**
@@ -260,8 +254,6 @@ Updated
 
 - Opening a screen that is already open anywhere creates a new tab with a `(2)`, `(3)` suffix on the display name
 - `base_name` stored in each tab entry maps the display name back to the screen registry entry for re-import, refresh, and popout operations
-
-#### Planned
 
 ---
 
