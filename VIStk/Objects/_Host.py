@@ -128,6 +128,21 @@ class Host(Root):
             names.update(dw.tab_manager._tabs.keys())
         return names
 
+    def _find_tab_by_base(self, base_name: str) -> tuple["TabManager | None", "str | None"]:
+        """Return (tab_manager, display_name) for the first open tab whose base_name matches.
+
+        Searches the main window first, then detached windows.
+        Returns (None, None) if not found.
+        """
+        for display, entry in self.TabManager._tabs.items():
+            if entry.get("base_name", display) == base_name:
+                return self.TabManager, display
+        for dw in self._detached:
+            for display, entry in dw.tab_manager._tabs.items():
+                if entry.get("base_name", display) == base_name:
+                    return dw.tab_manager, display
+        return None, None
+
     def _unique_display_name(self, base: str) -> str:
         """Return a display name for *base* that doesn't conflict with open tabs."""
         existing = self._get_all_tab_names()
@@ -139,6 +154,21 @@ class Host(Root):
         return f"{base} ({n})"
 
     def _open_tab(self, scr):
+        if scr.single_instance:
+            tm, display = self._find_tab_by_base(scr.name)
+            if tm is not None:
+                tm.focus_tab(display)
+                # If the tab lives in a detached window, bring that window forward
+                for dw in self._detached:
+                    if dw.tab_manager is tm:
+                        try:
+                            dw.win.deiconify()
+                            dw.win.lift()
+                            dw.win.focus_force()
+                        except Exception:
+                            pass
+                        break
+                return
         display = self._unique_display_name(scr.name)
         module  = self._import_screen(scr)
         hooks   = self._import_hooks(scr)

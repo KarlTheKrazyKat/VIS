@@ -59,6 +59,8 @@ _RESERVED_VIS_COMMANDS = {
     "add", "Add", "a", "A",
     "stop", "Stop",
     "stitch", "Stitch", "s", "S",
+    "rename", "Rename",
+    "edit", "Edit",
     "release", "Release", "r", "R",
 }
 

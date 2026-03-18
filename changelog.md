@@ -264,19 +264,19 @@ Updated
 - New `single_instance` boolean field in each screen's `project.json` entry (default `false`)
 - `Screen.__init__` reads and exposes `screen.single_instance`
 - When `Host.open()` is called for a screen with `single_instance: true` that is already open anywhere (main window or any `DetachedWindow`), the existing tab is focused rather than creating a new instance; the `(2)` / `(3)` suffix logic is skipped entirely
-- `VIS add screen` prompts for single-instance preference alongside the existing `tabbed` prompt
-- Editable via `VIS edit` once that command is implemented
+- Set via `VIS edit <screenname> single_instance true`
 
 **`VIS rename <screenname> <newname>`**
 
-- Validates `newname` with the same rules as `VIS add screen` (no reserved words, valid identifier)
+- Validates `newname` against the same rules as `VIS add screen` (no reserved words, valid identifier, no conflicts)
 - Renames the screen's key in `project.json → Screens`
-- Renames the script file on disk if the filename matches the old screen name pattern (e.g. `oldname.py` → `newname.py`); updates the `script` field accordingly
+- Renames the script file on disk if the filename matches the old screen name pattern (`oldname.py` → `newname.py`); updates the `script` field accordingly
 - Renames `Screens/<oldname>/` → `Screens/<newname>/`
-- Renames `modules/<oldname>/` → `modules/<newname>/`
-- Rewrites all `Screens.<oldname>.` and `modules.<oldname>.` import references inside the screen script to use the new name
+- Renames `modules/<oldname>/` → `modules/<newname>/` and renames `m_<oldname>.py` → `m_<newname>.py` inside it
+- Rewrites all `Screens.<oldname>.` and `modules.<oldname>.` import references inside the screen script
 - Updates `default_screen` in `project.json` if it matches the old name
 - Runs `stitch` automatically after rename so import blocks are regenerated clean
+- `rename` and `Rename` added to `_RESERVED_VIS_COMMANDS`
 
 **`VIS edit <screenname> <attribute> <value>`**
 
@@ -286,9 +286,12 @@ Updated
   - `release`, `tabbed`, `single_instance` — `true`/`yes`/`1` → `True`; `false`/`no`/`0` → `False`
   - `icon`, `current` — `none`/`null` → `None`; any other string stored as-is
   - `version` — stored as string; must be valid `major.minor.patch` format
-  - `script`, `desc` — stored as plain string
-- Prints confirmation of the old and new value
-- Rejects unknown attribute names with a clear error message rather than silently writing garbage keys
+  - `script` — stored as plain string; rejects the value if the file does not exist in the project root
+  - `desc` — stored as plain string
+- Prints confirmation of old and new value
+- Rejects unknown attribute names with a clear error rather than silently writing garbage keys
+- Keeps the in-memory `Screen` object in sync immediately after writing
+- `edit` and `Edit` added to `_RESERVED_VIS_COMMANDS`
 
 ---
 

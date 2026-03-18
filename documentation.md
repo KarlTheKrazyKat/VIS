@@ -227,6 +227,53 @@ VIS MyApp                  # open default screen
 VIS MyApp WorkOrders       # open a specific screen
 ```
 
+### Rename a screen
+
+```text
+VIS rename <screen_name> <new_name>
+```
+
+Renames a screen throughout the project:
+
+- Renames the key in `project.json → Screens`
+- Renames the script file if it follows the default convention (`oldname.py` → `newname.py`); updates the `script` field accordingly
+- Renames `Screens/<oldname>/` → `Screens/<newname>/`
+- Renames `modules/<oldname>/` → `modules/<newname>/` and renames `m_<oldname>.py` → `m_<newname>.py` inside it
+- Rewrites all `Screens.<oldname>.` and `modules.<oldname>.` import references in the screen script
+- Updates `default_screen` in `project.json` if it points to the old name
+- Runs `stitch` automatically so import blocks are regenerated
+
+`<new_name>` is validated the same way as `VIS add screen` — no spaces, no reserved OS names, no name conflicts.
+
+### Edit a screen attribute
+
+```text
+VIS edit <screen_name> <attribute> <value>
+```
+
+Directly sets any attribute in a screen's `project.json` entry. Useful for changing settings without opening the JSON file.
+
+Editable attributes:
+
+| Attribute | Type | Notes |
+|-----------|------|-------|
+| `script` | string | Must point to an existing `.py` file in the project root; rejected if the file does not exist |
+| `release` | bool | `true`/`yes`/`1` or `false`/`no`/`0` |
+| `icon` | string / none | `none` or `null` clears the icon |
+| `desc` | string | Free-form description |
+| `tabbed` | bool | Whether this screen opens as a Host tab |
+| `single_instance` | bool | When `true`, re-opening this screen focuses the existing instance instead of creating a new one |
+| `version` | string | Must be `major.minor.patch` format |
+| `current` | string / none | `none` or `null` clears the value |
+
+Prints the old and new value as confirmation. Rejects unknown attribute names with a clear error.
+
+```text
+VIS edit WorkOrders single_instance true
+VIS edit Dashboard tabbed false
+VIS edit Settings version 2.0.0
+```
+
 ### Stop the Host
 
 ```text
@@ -1063,6 +1110,8 @@ project = Project()
 | `getInfo()` | `str` | Returns `"ProjectName ScreenName Version"` as a string |
 | `newScreen(name)` | `int` | Interactively creates a new screen (CLI use); prompts to set as default screen if none is set |
 | `set_default_screen(name)` | `bool` | Sets the named screen as the default screen opened on Host restore; persists to `project.json`; returns `False` if screen does not exist |
+| `rename_screen(old, new)` | `int` | Renames a screen: updates `project.json`, renames script/Screens/modules directories and hooks file, rewrites import references, re-stitches; returns `1` on success, `0` on failure |
+| `edit_screen(name, attr, value)` | `int` | Sets any attribute in a screen's `project.json` entry with automatic type coercion; keeps the in-memory `Screen` object in sync; returns `1` on success, `0` on failure |
 
 #### `open(name, stay_open=False)`
 
@@ -1098,6 +1147,7 @@ root.Project.open("Settings", stay_open=True)
 | `screen.path` | `str` | Absolute path to `Screens/<name>/` |
 | `screen.m_path` | `str` | Absolute path to `modules/<name>/` |
 | `screen.tabbed` | `bool` | If `True`, the screen opens as a tab inside the Host; if `False`, it runs as a standalone subprocess |
+| `screen.single_instance` | `bool` | If `True`, `Host.open()` focuses the existing tab instead of opening a duplicate; the `(2)` / `(3)` suffix logic is skipped |
 
 **Methods:**
 

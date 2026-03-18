@@ -46,6 +46,7 @@ class Screen(VINFO):
             info[self.title]["Screens"][self.name]["current"] = None#always making first major version of screen
 
             info[self.title]["Screens"][self.name]["tabbed"] = tabbed
+            info[self.title]["Screens"][self.name]["single_instance"] = False
 
             with open(self.p_sinfo,"w") as f:
                 json.dump(info,f,indent=4)
@@ -76,6 +77,8 @@ class Screen(VINFO):
         self.current = info[self.title]["Screens"][self.name]["current"]#remove later
         self.tabbed: bool = info[self.title]["Screens"][self.name].get("tabbed", False)
         """Whether this screen opens as a tab inside the Host window"""
+        self.single_instance: bool = info[self.title]["Screens"][self.name].get("single_instance", False)
+        """When True only one instance of this screen may be open at a time"""
       
     def addElement(self,element:str) -> int:
         if validName(element):

@@ -79,6 +79,18 @@ def __main__():
             else:
                 print("Screen does not exist")
 
+        case "rename" | "Rename":
+            if len(inp) < 4:
+                print("Usage: VIS rename <screenname> <newname>")
+            else:
+                Project().rename_screen(inp[2], inp[3])
+
+        case "edit" | "Edit":
+            if len(inp) < 5:
+                print("Usage: VIS edit <screenname> <attribute> <value>")
+            else:
+                Project().edit_screen(inp[2], inp[3], inp[4])
+
         case "release" | "Release" | "r" | "R":
             project=Project()
             flag:str=""
