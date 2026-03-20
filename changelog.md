@@ -1,54 +1,106 @@
 # Changelog and Roadmap
 
-## Changelog
+## Released
 
-### 0.3 Release
+### 0.4.1 Screen Management
 
-#### Changes
+**Single-instance screens**
 
-Releasing
+- New `single_instance` boolean field in each screen's `project.json` entry (default `false`)
+- `Screen.__init__` reads and exposes `screen.single_instance`
+- When `Host.open()` is called for a screen with `single_instance: true` that is already open anywhere (main window or any `DetachedWindow`), the existing tab is focused rather than creating a new instance; the `(2)` / `(3)` suffix logic is skipped entirely
+- Set via `VIS edit <screenname> single_instance true`
 
-- Added release command to release version of project
-- Using internal project.json to build spec file to create release
-- Can switch from Screen to Screen using internal methods (os)
-- Can release single Screen
-- Releasing creates Installers for the project
+**`VIS rename <screenname> <newname>`**
 
-Screen Functionality
+- Validates `newname` against the same rules as `VIS add screen` (no reserved words, valid identifier, no conflicts)
+- Renames the screen's key in `project.json → Screens`
+- Renames the script file on disk if the filename matches the old screen name pattern (`oldname.py` → `newname.py`); updates the `script` field accordingly
+- Renames `Screens/<oldname>/` → `Screens/<newname>/`
+- Renames `modules/<oldname>/` → `modules/<newname>/` and renames `m_<oldname>.py` → `m_<newname>.py` inside it
+- Rewrites all `Screens.<oldname>.` and `modules.<oldname>.` import references inside the screen script
+- Updates `default_screen` in `project.json` if it matches the old name
+- Runs `stitch` automatically after rename so import blocks are regenerated clean
+- `rename` and `Rename` added to `_RESERVED_VIS_COMMANDS`
 
-- Default Form Changed
-- Currently active Screen is tracked
-- Can load with args
+**`VIS edit <screenname> <attribute> <value>`**
 
-#### Objects
-
-New
-
-- VIMG can bind image path resizing to widget
-
-#### Widgets
-
-New
-
-- Window
-- Root Widget (Tk, Window)
-- SubRoot Widget (TopLevel, Window)
-- WindowGeometry
-- LayoutFrame (ttk.Frame)
-- QuestionWindow (SubRoot)
-- ScrollableFrame (ttk.Frame)
-- ScrollMenu (ScrollableFrame)
-
-Updated
-
-- Menu: buttons highlight on hover
--     : can provide screennames instead of paths
-- MenuItem(Button): now menuitem is the button and text autosizes
--                 : will use screen.load() if provided with screenname
+- Directly sets any attribute in the screen's `project.json` subdictionary
+- Editable attributes: `script`, `release`, `icon`, `desc`, `tabbed`, `single_instance`, `version`, `current`
+- Type coercion applied automatically by attribute:
+  - `release`, `tabbed`, `single_instance` — `true`/`yes`/`1` → `True`; `false`/`no`/`0` → `False`
+  - `icon`, `current` — `none`/`null` → `None`; any other string stored as-is
+  - `version` — stored as string; must be valid `major.minor.patch` format
+  - `script` — stored as plain string; rejects the value if the file does not exist in the project root
+  - `desc` — stored as plain string
+- Prints confirmation of old and new value
+- Rejects unknown attribute names with a clear error rather than silently writing garbage keys
+- Keeps the in-memory `Screen` object in sync immediately after writing
+- `edit` and `Edit` added to `_RESERVED_VIS_COMMANDS`
 
 ---
 
-### 0.4.X Host and Tabbed Screens
+### 0.4.2 Menus
+
+**Three-layer menubar model**
+
+The `HostMenu` menubar is now structured as three permanent layers in order:
+
+1. **Built-in layer** — the "App" cascade (Close Window / Quit), always first, built automatically by `attach()`
+2. **Project layer** — app-wide cascades defined once in `Host.py` at startup; never cleared during normal use
+3. **Screen layer** — cascades contributed by the active tab via `configure_menu(menubar)`; all cleared automatically on tab deactivation
+
+**`HostMenu` changes**
+
+- `set_project_items(items, label)` — new method; appends one cascade to the project layer; calling it multiple times adds multiple project-layer cascades in order; these persist across all tab changes
+- `clear_project_items()` — removes all project-layer cascades; intended for teardown, not normal use
+- `set_screen_items(items, label)` — behaviour change: **accumulates** rather than replaces; calling it multiple times within a single `configure_menu` hook adds multiple screen-layer cascades side by side; still the right method for screen contributions
+- `clear_screen_items()` — unchanged signature; now removes **all** accumulated screen cascades (tracked internally as a list of labels rather than a single slot)
+- `_project_labels: list[str]` replaces nothing (new); `_screen_labels: list[str]` replaces the single `_screen_cascade` / `_screen_label` pair
+
+**Usage pattern**
+
+Project-wide items are set once in `Host.py` after `Host()` is created:
+
+    host = Host()
+    host.HostMenu.set_project_items([
+        {"label": "File", "items": [
+            {"label": "New",  "command": new_fn},
+            {"separator": True},
+            {"label": "Exit", "command": host.quit_host},
+        ]},
+        {"label": "Help", "items": [
+            {"label": "About", "command": about_fn},
+        ]},
+    ], label="File")
+
+Screen-specific items are contributed as before via `configure_menu`:
+
+    def configure_menu(menubar):
+        menubar.set_screen_items([
+            {"label": "Export PDF", "command": export_pdf},
+            {"label": "Print",      "command": print_fn},
+        ], label="Work Orders")
+
+A screen that needs more than one cascade on the menu bar calls `set_screen_items` multiple times in one `configure_menu` call — all are cleared together on deactivation.
+
+**`VIS add screen <name> menu <menuname>`**
+
+- `Screen.addMenu(menu)` implemented (was a stub)
+- Creates `modules/<screen>/m_<menuname>.py` containing a `configure_menu(menubar)` function pre-filled with a commented cascade template
+- If `modules/<screen>/m_<screenname>.py` (the hooks module) already exists and does not define `configure_menu`, a delegation function is appended so the new menu module is wired in automatically
+- If `configure_menu` already exists in the hooks module, import instructions are added as comments for manual wiring
+- The generated file is a standard module file — developer fills in the item specs and it is picked up on next Host launch
+
+**Documentation updates**
+
+- `HostMenu` section updated to describe all three layers and the accumulate behaviour of `set_screen_items`
+- `configure_menu` hook documentation updated with a multi-cascade example
+- `VIS add screen <name> menu <menuname>` added to the CLI reference
+
+---
+
+### 0.4.0 Host and Tabbed Screens
 
 #### Completed
 
@@ -257,102 +309,53 @@ Updated
 
 ---
 
-### 0.4.1 Screen Management
+### 0.3 Release
 
-**Single-instance screens**
+#### Changes
 
-- New `single_instance` boolean field in each screen's `project.json` entry (default `false`)
-- `Screen.__init__` reads and exposes `screen.single_instance`
-- When `Host.open()` is called for a screen with `single_instance: true` that is already open anywhere (main window or any `DetachedWindow`), the existing tab is focused rather than creating a new instance; the `(2)` / `(3)` suffix logic is skipped entirely
-- Set via `VIS edit <screenname> single_instance true`
+Releasing
 
-**`VIS rename <screenname> <newname>`**
+- Added release command to release version of project
+- Using internal project.json to build spec file to create release
+- Can switch from Screen to Screen using internal methods (os)
+- Can release single Screen
+- Releasing creates Installers for the project
 
-- Validates `newname` against the same rules as `VIS add screen` (no reserved words, valid identifier, no conflicts)
-- Renames the screen's key in `project.json → Screens`
-- Renames the script file on disk if the filename matches the old screen name pattern (`oldname.py` → `newname.py`); updates the `script` field accordingly
-- Renames `Screens/<oldname>/` → `Screens/<newname>/`
-- Renames `modules/<oldname>/` → `modules/<newname>/` and renames `m_<oldname>.py` → `m_<newname>.py` inside it
-- Rewrites all `Screens.<oldname>.` and `modules.<oldname>.` import references inside the screen script
-- Updates `default_screen` in `project.json` if it matches the old name
-- Runs `stitch` automatically after rename so import blocks are regenerated clean
-- `rename` and `Rename` added to `_RESERVED_VIS_COMMANDS`
+Screen Functionality
 
-**`VIS edit <screenname> <attribute> <value>`**
+- Default Form Changed
+- Currently active Screen is tracked
+- Can load with args
 
-- Directly sets any attribute in the screen's `project.json` subdictionary
-- Editable attributes: `script`, `release`, `icon`, `desc`, `tabbed`, `single_instance`, `version`, `current`
-- Type coercion applied automatically by attribute:
-  - `release`, `tabbed`, `single_instance` — `true`/`yes`/`1` → `True`; `false`/`no`/`0` → `False`
-  - `icon`, `current` — `none`/`null` → `None`; any other string stored as-is
-  - `version` — stored as string; must be valid `major.minor.patch` format
-  - `script` — stored as plain string; rejects the value if the file does not exist in the project root
-  - `desc` — stored as plain string
-- Prints confirmation of old and new value
-- Rejects unknown attribute names with a clear error rather than silently writing garbage keys
-- Keeps the in-memory `Screen` object in sync immediately after writing
-- `edit` and `Edit` added to `_RESERVED_VIS_COMMANDS`
+#### Objects
 
----
+New
 
-### 0.4.2 Menus
+- VIMG can bind image path resizing to widget
 
-**Three-layer menubar model**
+#### Widgets
 
-The `HostMenu` menubar is now structured as three permanent layers in order:
+New
 
-1. **Built-in layer** — the "App" cascade (Close Window / Quit), always first, built automatically by `attach()`
-2. **Project layer** — app-wide cascades defined once in `Host.py` at startup; never cleared during normal use
-3. **Screen layer** — cascades contributed by the active tab via `configure_menu(menubar)`; all cleared automatically on tab deactivation
+- Window
+- Root Widget (Tk, Window)
+- SubRoot Widget (TopLevel, Window)
+- WindowGeometry
+- LayoutFrame (ttk.Frame)
+- QuestionWindow (SubRoot)
+- ScrollableFrame (ttk.Frame)
+- ScrollMenu (ScrollableFrame)
 
-**`HostMenu` changes**
+Updated
 
-- `set_project_items(items, label)` — new method; appends one cascade to the project layer; calling it multiple times adds multiple project-layer cascades in order; these persist across all tab changes
-- `clear_project_items()` — removes all project-layer cascades; intended for teardown, not normal use
-- `set_screen_items(items, label)` — behaviour change: **accumulates** rather than replaces; calling it multiple times within a single `configure_menu` hook adds multiple screen-layer cascades side by side; still the right method for screen contributions
-- `clear_screen_items()` — unchanged signature; now removes **all** accumulated screen cascades (tracked internally as a list of labels rather than a single slot)
-- `_project_labels: list[str]` replaces nothing (new); `_screen_labels: list[str]` replaces the single `_screen_cascade` / `_screen_label` pair
-
-**Usage pattern**
-
-Project-wide items are set once in `Host.py` after `Host()` is created:
-
-    host = Host()
-    host.HostMenu.set_project_items([
-        {"label": "File", "items": [
-            {"label": "New",  "command": new_fn},
-            {"separator": True},
-            {"label": "Exit", "command": host.quit_host},
-        ]},
-        {"label": "Help", "items": [
-            {"label": "About", "command": about_fn},
-        ]},
-    ], label="File")
-
-Screen-specific items are contributed as before via `configure_menu`:
-
-    def configure_menu(menubar):
-        menubar.set_screen_items([
-            {"label": "Export PDF", "command": export_pdf},
-            {"label": "Print",      "command": print_fn},
-        ], label="Work Orders")
-
-A screen that needs more than one cascade on the menu bar calls `set_screen_items` multiple times in one `configure_menu` call — all are cleared together on deactivation.
-
-**`VIS add screen <name> menu <menuname>` (implement the stub)**
-
-- `Screen.addMenu` is currently a stub (`pass`); implement it
-- Creates `modules/<screen>/m_<menuname>.py` containing a `configure_menu(menubar)` function pre-filled with a commented cascade template
-- If `modules/<screen>/m_<screenname>.py` (the hooks module) already exists, appends a delegation call so the new menu module's `configure_menu` is included automatically
-- The generated file is a standard module file — developer fills in the item specs and it is picked up on next Host launch
-
-**Documentation updates**
-
-- `HostMenu` section updated to describe all three layers and the accumulate behaviour of `set_screen_items`
-- `configure_menu` hook documentation updated with a multi-cascade example
-- `VIS add screen <name> menu <menuname>` added to the CLI reference
+- Menu: buttons highlight on hover
+-     : can provide screennames instead of paths
+- MenuItem(Button): now menuitem is the button and text autosizes
+-                 : will use screen.load() if provided with screenname
 
 ---
+
+## Upcoming
 
 ### 0.4.3 Split Layouts
 

@@ -167,8 +167,74 @@ class Screen(VINFO):
         for i in stitched:
             print(f"\t{i} to {self.name}")
 
-    def addMenu(self,menu:str) -> int:
-        pass #will be command line menu creation tool
+    def addMenu(self, menu: str) -> int:
+        """Create a configure_menu module file for this screen.
+
+        Creates ``modules/<screen>/m_<menu>.py`` pre-filled with a
+        ``configure_menu(menubar)`` stub.
+
+        If ``modules/<screen>/m_<screen>.py`` (the hooks module) already
+        exists and does not define ``configure_menu``, a delegation function
+        is appended so the new menu module is wired in automatically.  If
+        ``configure_menu`` already exists in the hooks module, import
+        instructions are added as comments for manual wiring.
+        """
+        menu_path = self.m_path + f"/m_{menu}.py"
+        if os.path.exists(menu_path):
+            print(f"Menu module m_{menu}.py already exists in {self.m_path}")
+            return 0
+
+        # Write the menu module with a commented cascade template
+        content = (
+            f"# configure_menu contributed by '{menu}' for screen '{self.name}'\n"
+            f"# Fill in the items list, then set label= to whatever should appear\n"
+            f"# in the Host menu bar.\n"
+            f"\n"
+            f"def configure_menu(menubar):\n"
+            f"    menubar.set_screen_items([\n"
+            f"        # {{\"label\": \"Item\",    \"command\": some_fn}},\n"
+            f"        # {{\"separator\": True}},\n"
+            f"        # {{\"label\": \"Submenu\", \"items\": [\n"
+            f"        #     {{\"label\": \"Sub-item\", \"command\": some_fn}},\n"
+            f"        # ]}},\n"
+            f"    ], label=\"{menu}\")\n"
+        )
+        with open(menu_path, "w") as f:
+            f.write(content)
+        print(f"Created menu module m_{menu}.py in {self.m_path}")
+
+        # Wire into the hooks module if it exists
+        hooks_path = self.m_path + f"/m_{self.name}.py"
+        if os.path.exists(hooks_path):
+            with open(hooks_path, "r") as f:
+                hooks_text = f.read()
+
+            if "def configure_menu" not in hooks_text:
+                # Safe to append a delegation function
+                delegation = (
+                    f"\n# Auto-wired by: VIS add screen {self.name} menu {menu}\n"
+                    f"from modules.{self.name}.m_{menu} import configure_menu as _cm_{menu}\n"
+                    f"\n"
+                    f"def configure_menu(menubar):\n"
+                    f"    _cm_{menu}(menubar)\n"
+                )
+                with open(hooks_path, "a") as f:
+                    f.write(delegation)
+                print(f"Wired configure_menu delegation into m_{self.name}.py")
+            else:
+                # configure_menu already exists — add import as comment
+                note = (
+                    f"\n# TODO: wire m_{menu} into your existing configure_menu\n"
+                    f"# from modules.{self.name}.m_{menu} import configure_menu as _cm_{menu}\n"
+                    f"# Then call _cm_{menu}(menubar) inside your configure_menu.\n"
+                )
+                with open(hooks_path, "a") as f:
+                    f.write(note)
+                print(
+                    f"m_{self.name}.py already has configure_menu — "
+                    f"added import comment for manual wiring."
+                )
+        return 1
 
     def load(self, *args):
         """Loads this screen.

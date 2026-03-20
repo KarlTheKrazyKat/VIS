@@ -174,6 +174,23 @@ VIS add screen <screen_name> elements <e1>-<e2>-<e3>
 
 Creates `f_<element>.py` in `Screens/<screen>/` and a blank `m_<element>.py` in `modules/<screen>/`, then runs `stitch` to wire them into the screen script. Multiple elements can be created in one call by separating names with `-`.
 
+### Add a menu module to a screen
+
+```text
+VIS add screen <screen_name> menu <menu_name>
+```
+
+Creates `modules/<screen>/m_<menu_name>.py` pre-filled with a `configure_menu(menubar)` stub. The stub calls `menubar.set_screen_items([...])` with commented-out examples of the item spec format.
+
+If `modules/<screen>/m_<screen>.py` (the hooks module) already exists:
+
+- If it does **not** define `configure_menu` — a delegation function is appended automatically so the new menu module is called on tab focus.
+- If it **already** defines `configure_menu` — import instructions are appended as comments for manual wiring.
+
+```text
+VIS add screen WorkOrders menu FileMenu
+```
+
 ### Stitch a screen
 
 ```text
@@ -791,12 +808,15 @@ All live `TabBar` instances are tracked in `VIStk.Widgets._TabBar._TABBAR_REGIST
 
 `HostMenu` wraps a `tk.Menu` that is attached to the Host window. It has two sections:
 
-- **Base items** — always present (created in `_build_base()`). Currently contains a single **App** cascade with a **Quit** item.
-- **Screen items** — contributed by the active tab's `configure_menu()` hook. Replaced each time a different tab activates; cleared when a tab deactivates.
+The menubar has three ordered layers:
+
+1. **Built-in layer** — the `App` cascade (Close Window / Quit), always first, built automatically by `attach()`.
+2. **Project layer** — app-wide cascades defined once in `Host.py` at startup via `set_project_items()`; persist across all tab changes.
+3. **Screen layer** — cascades contributed by the active tab's `configure_menu()` hook via `set_screen_items()`; all cleared automatically on tab deactivation.
 
 `HostMenu` is created automatically by `Host.__init__` and exposed as `host.HostMenu`. Call `host.HostMenu.attach()` to wire it to the window (done automatically by `Host`).
 
-**Item spec format** (used by `set_screen_items` and `configure_menu` hooks):
+**Item spec format:**
 
 ```python
 # Simple command
@@ -817,14 +837,45 @@ All live `TabBar` instances are tracked in `VIStk.Widgets._TabBar._TABBAR_REGIST
 | Method | Description |
 |--------|-------------|
 | `attach()` | Configure the parent window to show this menu bar and build the base items. Called once by `Host`. |
-| `set_screen_items(items, label="Screen")` | Replace the screen-contributed cascade with `items`. |
-| `clear_screen_items()` | Remove the screen-contributed cascade. Called automatically on tab deactivation. |
+| `set_project_items(items, label="Project")` | Add one cascade to the project layer. May be called multiple times to add multiple project-layer cascades in order. Persists across all tab changes. |
+| `clear_project_items()` | Remove all project-layer cascades. Intended for teardown; not normally needed during regular use. |
+| `set_screen_items(items, label="Screen")` | **Accumulates** — adds one cascade to the screen layer. Call multiple times in one `configure_menu` hook to contribute multiple cascades side by side; all are cleared together on tab deactivation. |
+| `clear_screen_items()` | Remove all accumulated screen cascades. Called automatically on tab deactivation. |
 
 **Attribute:**
 
 | Attribute | Type | Description |
 |-----------|------|-------------|
 | `hostmenu.menubar` | `Menu` | The underlying `tk.Menu` widget |
+
+**Usage pattern:**
+
+Project-wide items are set once in `Host.py` after `Host()` is created:
+
+```python
+host = Host()
+host.HostMenu.set_project_items([
+    {"label": "File", "items": [
+        {"label": "New",  "command": new_fn},
+        {"separator": True},
+        {"label": "Exit", "command": host.quit_host},
+    ]},
+], label="File")
+```
+
+Screen-specific items are contributed via `configure_menu`. A screen that needs multiple cascades calls `set_screen_items` more than once — all are cleared together when the tab loses focus:
+
+```python
+def configure_menu(menubar):
+    menubar.set_screen_items([
+        {"label": "Export PDF", "command": export_pdf},
+        {"label": "Print",      "command": print_fn},
+    ], label="Work Orders")
+
+    menubar.set_screen_items([
+        {"label": "About", "command": show_about},
+    ], label="Help")
+```
 
 ---
 
@@ -1156,6 +1207,7 @@ root.Project.open("Settings", stay_open=True)
 | `screen.load(*args)` | Switches to this screen. If a Host is running, routes via IPC (`send_to_host`) so the Host opens the screen. Falls back to replacing the current process with `os.execl` if no Host is detected. Any `args` are passed as command-line arguments and can be read with `ArgHandler`. |
 | `screen.close()` | Asks the Host to close this screen (tab or Toplevel) via `__VIS_CLOSE__:<name>` IPC. Returns `True` if delivered, `False` if no Host is running. |
 | `screen.addElement(name)` | Creates `f_<name>.py` and `m_<name>.py` from templates |
+| `screen.addMenu(name)` | Creates `modules/<screen>/m_<name>.py` with a `configure_menu` stub; wires it into the hooks module if one exists |
 | `screen.stitch()` | Rewrites import blocks in the screen script to include all `f_*` and `m_*` files |
 | `screen.getModules(script)` | Returns all `Screens.*` and `modules.*` imports found in the script, recursively |
 | `screen.isolate()` | Temporarily disables release for all other screens |

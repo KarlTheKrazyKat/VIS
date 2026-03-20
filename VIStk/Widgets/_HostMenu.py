@@ -4,23 +4,39 @@ from tkinter import Menu, Tk, Toplevel
 class HostMenu:
     """A persistent ``tk.Menu`` attached to the Host window.
 
-    Base items (e.g. Quit) are always present.  When a tab activates its
-    screen calls ``set_screen_items(items)`` to contribute screen-specific
-    cascades or commands; those are cleared automatically when the tab
-    deactivates.
+    The menubar has three ordered layers:
+
+    1. **Built-in layer** — the "App" cascade (Close Window / Quit), always
+       first, built automatically by :meth:`attach`.
+    2. **Project layer** — app-wide cascades added once at Host startup via
+       :meth:`set_project_items`.  They persist across all tab changes.
+    3. **Screen layer** — cascades contributed by the active tab's
+       ``configure_menu`` hook via :meth:`set_screen_items`.  All screen
+       cascades are cleared automatically when the tab deactivates.
+
+    ``set_screen_items`` **accumulates** — calling it more than once within a
+    single ``configure_menu`` hook appends multiple cascades side by side.
+    All are removed together by :meth:`clear_screen_items`.
 
     Usage::
 
-        host_menu = HostMenu(host_window)
+        host_menu = HostMenu(host_window, quit_command=host.quit_host)
         host_menu.attach()
 
-        # From a screen's configure_menu() hook:
-        host_menu.set_screen_items([
+        # In Host.py, once at startup — project-wide items:
+        host_menu.set_project_items([
             {"label": "File", "items": [
-                {"label": "Open",  "command": open_fn},
-                {"label": "Close", "command": close_fn},
+                {"label": "New",  "command": new_fn},
+                {"separator": True},
+                {"label": "Exit", "command": host.quit_host},
             ]},
-        ])
+        ], label="File")
+
+        # From a screen's configure_menu() hook — screen-specific items:
+        host_menu.set_screen_items([
+            {"label": "Export PDF", "command": export_pdf},
+            {"label": "Print",      "command": print_fn},
+        ], label="Work Orders")
 
     Item spec format (list of dicts)::
 
@@ -38,8 +54,8 @@ class HostMenu:
         self._parent = parent
         self._quit_command = quit_command
         self._close_command = close_command
-        self._screen_cascade: Menu | None = None
-        self._screen_label: str | None = None
+        self._project_labels: list[str] = []
+        self._screen_labels: list[str] = []
 
     # ── Public API ─────────────────────────────────────────────────────────────
 
@@ -48,31 +64,62 @@ class HostMenu:
         self._parent.config(menu=self.menubar)
         self._build_base()
 
-    def set_screen_items(self, items: list[dict], label: str = "Screen"):
-        """Replace the screen-contributed section with *items*.
+    def set_project_items(self, items: list[dict], label: str = "Project"):
+        """Add one cascade to the project layer.
+
+        May be called multiple times to add multiple project-layer cascades in
+        order.  Project cascades persist across all tab changes and are only
+        removed by :meth:`clear_project_items`.
 
         Args:
             items: List of item spec dicts (see class docstring).
-            label: Cascade label shown in the menu bar for screen items.
+            label: Cascade label shown in the menu bar.
         """
-        self.clear_screen_items()
         if not items:
             return
         cascade = Menu(self.menubar, tearoff=0)
         self._populate(cascade, items)
         self.menubar.add_cascade(label=label, menu=cascade)
-        self._screen_cascade = cascade
-        self._screen_label = label
+        self._project_labels.append(label)
 
-    def clear_screen_items(self):
-        """Remove the screen-contributed menu section."""
-        if self._screen_label is not None:
+    def clear_project_items(self):
+        """Remove all project-layer cascades.
+
+        Intended for teardown; not normally called during regular use.
+        """
+        for label in self._project_labels:
             try:
-                self.menubar.delete(self._screen_label)
+                self.menubar.delete(label)
             except Exception:
                 pass
-            self._screen_cascade = None
-            self._screen_label = None
+        self._project_labels.clear()
+
+    def set_screen_items(self, items: list[dict], label: str = "Screen"):
+        """Add one cascade to the screen layer (accumulates).
+
+        Calling this multiple times within a single ``configure_menu`` hook
+        appends multiple cascades side by side — all are cleared together when
+        the tab deactivates.
+
+        Args:
+            items: List of item spec dicts (see class docstring).
+            label: Cascade label shown in the menu bar.
+        """
+        if not items:
+            return
+        cascade = Menu(self.menubar, tearoff=0)
+        self._populate(cascade, items)
+        self.menubar.add_cascade(label=label, menu=cascade)
+        self._screen_labels.append(label)
+
+    def clear_screen_items(self):
+        """Remove all accumulated screen cascades."""
+        for label in self._screen_labels:
+            try:
+                self.menubar.delete(label)
+            except Exception:
+                pass
+        self._screen_labels.clear()
 
     # ── Internal ───────────────────────────────────────────────────────────────
 
