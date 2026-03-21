@@ -431,7 +431,11 @@ class Host(Root):
                     pass
         except queue.Empty:
             pass
-        self.after(50, self._poll_main_queue)
+        try:
+            if self.winfo_exists():
+                self.after(50, self._poll_main_queue)
+        except Exception:
+            pass
 
     # ── IPC server ─────────────────────────────────────────────────────────────
 
