@@ -195,6 +195,7 @@ class Host(Root):
             return None
 
     def _on_tab_activate(self, name: str, module):
+        self.HostMenu.clear_screen_items()
         hooks = self.TabManager._tabs.get(name, {}).get("hooks")
         cfg = (getattr(hooks, "configure_menu", None)
                or getattr(module, "configure_menu", None))
