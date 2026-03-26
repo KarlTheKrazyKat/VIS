@@ -141,53 +141,52 @@ class Release(Project):
         print("Appending Screen Data To Environment")
 
         #Append Screen Data
-        if self.flag == "":
-            #Remove Pre-existing Folders for Icons, Images, & .VIS
-            if exists(f"{self.location}{self.title}/Icons/"): shutil.rmtree(f"{self.location}{self.title}/Icons/")
-            if exists(f"{self.location}{self.title}/Images/"): shutil.rmtree(f"{self.location}{self.title}/Images/")
-            if exists(f"{self.location}{self.title}/.VIS/"): shutil.rmtree(f"{self.location}{self.title}/.VIS/")
+        pendix = self.title if self.flag == "" else f"{self.title}-{self.flag}"
+        out_dir = f"{self.location}{pendix}"
 
-            #Copy Project Folder for Icons, Images, & .VIS
-            shutil.copytree(self.p_project+"/Icons/",f"{self.location}{self.title}/Icons/",dirs_exist_ok=True)
-            shutil.copytree(self.p_project+"/Images/",f"{self.location}{self.title}/Images/",dirs_exist_ok=True)
-            shutil.copytree(self.p_project+"/.VIS/",f"{self.location}{self.title}/.VIS/",dirs_exist_ok=True)
-        
-        else:
-            #Remove Pre-existing Folders for Icons, Images, & .VIS
-            if exists(f"{self.location}{self.title}-{self.flag}/Icons/"): shutil.rmtree(f"{self.location}{self.title}-{self.flag}/Icons/")
-            if exists(f"{self.location}{self.title}-{self.flag}/Images/"): shutil.rmtree(f"{self.location}{self.title}-{self.flag}/Images/")
-            if exists(f"{self.location}{self.title}-{self.flag}/.VIS/"): shutil.rmtree(f"{self.location}{self.title}-{self.flag}/.VIS/")
+        #Remove Pre-existing Folders for Icons, Images, & .VIS
+        for folder in ("Icons", "Images", ".VIS"):
+            target = f"{out_dir}/{folder}/"
+            if exists(target):
+                shutil.rmtree(target)
 
-            #Copy Project Folder for Icons, Images, & .VIS
-            shutil.copytree(self.p_project+"/Icons/",f"{self.location}{self.title}-{self.flag}/Icons/",dirs_exist_ok=True)
-            shutil.copytree(self.p_project+"/Images/",f"{self.location}{self.title}-{self.flag}/Images/",dirs_exist_ok=True)
-            shutil.copytree(self.p_project+"/.VIS/",f"{self.location}{self.title}-{self.flag}/.VIS/",dirs_exist_ok=True)
+        #Copy Project Folder for Icons, Images, & .VIS
+        for folder in ("Icons", "Images", ".VIS"):
+            shutil.copytree(f"{self.p_project}/{folder}/", f"{out_dir}/{folder}/", dirs_exist_ok=True)
 
         #Announce Completion
         print(f"\n\nReleased a new{' '+self.flag+' ' if not self.flag is None else ''}build of {self.title}!")
 
     def newVersion(self):
         """Updates the project version, PERMANENT, cannot be undone"""
-        #Split Version for Addition
         old = str(self.Version)
 
-        #THIS DOES NOT WORK YET
-        #Interate Version Number
-        if self.Version == "Major":
+        if self.type == "Major":
             self.Version.major()
-        if self.Version == "Minor":
+        elif self.type == "Minor":
             self.Version.minor()
-        if self.Version == "Patch":
+        elif self.type == "Patch":
             self.Version.patch()
+        else:
+            print(f"Unknown version type '{self.type}'. Use Major, Minor, or Patch.")
+            return False
 
-        #Announce Completation
-        print(f"Updated Version {old}=>{self.Version}")
+        confirm = input(f"Version will change from {old} to {self.Version}. Proceed? (y/n): ")
+        if confirm.lower() not in ("y", "yes"):
+            # Revert to old version
+            self.Version = Version(old)
+            print("Version change cancelled.")
+            return False
+
+        print(f"Updated Version {old} => {self.Version}")
+        return True
 
     def release(self):
         """Releases a version of your project"""
         #Check Version
-        if self.type == "":
-            pass #self.newVersion()
+        if self.type != "":
+            if not self.newVersion():
+                return
 
         #Build
         self.build()
@@ -217,25 +216,16 @@ class Release(Project):
         self.clean()
 
         #%Installer Generation
-        #Move to Installer Build Location
-        returndir = os.getcwd()
-        if not returndir == self.location:
-            os.chdir(self.location)
-        
-        print(f"We are in {os.getcwd()}")
-
-        #Create Installer
-        final = "/".join(destination.split("/")[:-1])+"/"
-        pendix = self.title
-        if not self.flag == "": pendix = pendix + "-" + self.flag
-        final = final + pendix
+        pendix = self.title if self.flag == "" else f"{self.title}-{self.flag}"
+        final = f"{self.location}{pendix}"
+        binaries_zip = f"{self.location}binaries.zip"
 
         #Announce and binaries.zip
         print(f"Creating binaries.zip from {final} for installer")
-        shutil.make_archive(base_name="binaries",format="zip",root_dir=final)
+        shutil.make_archive(base_name=f"{self.location}binaries", format="zip", root_dir=final)
 
         #Load info from binaries.zip
-        archive = ZipFile('./binaries.zip','r')
+        archive = ZipFile(binaries_zip, 'r')
         pfile = archive.open(".VIS/project.json")
         info = json.load(pfile)
         pfile.close()
@@ -252,21 +242,19 @@ class Release(Project):
         #Name & Compile Installer
         installer = VISROOT.replace("\\","/")+"Structures/Installer.py"
         print(f"Compiling Installer for {pendix}")
-        subprocess.call(f"pyinstaller --noconfirm --onefile --add-data binaries.zip:. {'--uac-admin ' if sys.platform == 'win32' else ''}--windowed --name {pendix}_Installer --log-level FATAL --icon {icon_file} --hidden-import PIL._tkinter_finder {installer}", shell=True)
+        subprocess.call(f"pyinstaller --noconfirm --onefile --add-data {binaries_zip}:. {'--uac-admin ' if sys.platform == 'win32' else ''}--windowed --name {pendix}_Installer --log-level FATAL --icon {icon_file} --hidden-import PIL._tkinter_finder {installer}", shell=True, cwd=self.location)
 
         #Move Installer to Project Root
         print("Installer completed. Moving to project root...")
-        binstaller = glob.glob(f"{pendix}_Installer*",root_dir=self.location+"dist/")[0]
+        binstaller = glob.glob(f"{pendix}_Installer*", root_dir=self.location+"dist/")[0]
         if os.path.exists(self.p_project+"/"+binstaller):
             os.remove(self.p_project+"/"+binstaller)
 
-        shutil.move(self.location+f"dist/{binstaller}",self.p_project)
+        shutil.move(self.location+f"dist/{binstaller}", self.p_project)
 
         #Clean Installer Build Environment
         print("Cleaning up installer build environment...")
         shutil.rmtree(self.location+"dist/")
         shutil.rmtree(self.location+"build/")
-        #os.remove(self.location+"binaries.zip")
+        os.remove(binaries_zip)
         os.remove(self.location+f"{pendix}_installer.spec")
-
-        os.chdir(returndir)

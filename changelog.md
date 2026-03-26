@@ -2,6 +2,52 @@
 
 ## Released
 
+### 0.3 Release
+
+#### Changes
+
+Releasing
+
+- Added release command to release version of project
+- Using internal project.json to build spec file to create release
+- Can switch from Screen to Screen using internal methods (os)
+- Can release single Screen
+- Releasing creates Installers for the project
+
+Screen Functionality
+
+- Default Form Changed
+- Currently active Screen is tracked
+- Can load with args
+
+#### Objects
+
+New
+
+- VIMG can bind image path resizing to widget
+
+#### Widgets
+
+New
+
+- Window
+- Root Widget (Tk, Window)
+- SubRoot Widget (TopLevel, Window)
+- WindowGeometry
+- LayoutFrame (ttk.Frame)
+- QuestionWindow (SubRoot)
+- ScrollableFrame (ttk.Frame)
+- ScrollMenu (ScrollableFrame)
+
+Updated
+
+- Menu: buttons highlight on hover
+-     : can provide screennames instead of paths
+- MenuItem(Button): now menuitem is the button and text autosizes
+-                 : will use screen.load() if provided with screenname
+
+---
+
 ### 0.4.1 Screen Management
 
 **Single-instance screens**
@@ -91,6 +137,36 @@ A screen that needs more than one cascade on the menu bar calls `set_screen_item
 - If `modules/<screen>/m_<screenname>.py` (the hooks module) already exists and does not define `configure_menu`, a delegation function is appended so the new menu module is wired in automatically
 - If `configure_menu` already exists in the hooks module, import instructions are added as comments for manual wiring
 - The generated file is a standard module file — developer fills in the item specs and it is picked up on next Host launch
+
+**Installer & Release fixes**
+
+- Replaced `from tkinter import *` with `import tkinter as tk` in `Installer.py` — the wildcard import shadowed the builtin `all()`, breaking the "Select All" checkbox logic
+- Fixed `shortcut()`: used stale loop variable `i` instead of `name`, and called nonexistent `user_desktop_dir()` instead of `platformdirs.user_desktop_path()`
+- Removed stale `i_file.close()` in `makechecks` that closed the root icon handle instead of per-screen handles
+- Fixed `extal()`: only `chmod +x` actual binaries on Linux (no extension or `.sh`), not every extracted file
+- Replaced `os.mkdir` with `os.makedirs(exist_ok=True)` in `adjacents()` so nested directories don't fail
+- Deduplicated `installables` list to prevent duplicate checkboxes
+- Replaced `source.index(i)` with `enumerate` in `makechecks` to avoid wrong indices with duplicate names
+- Added `archive.close()` calls in quiet mode exit and GUI close button to release the zip handle
+- Fixed prefix matching in extraction: `file.startswith(i)` → `file == i or file.startswith(i + ".") or file.startswith(i + "/")` to prevent false matches
+- Fixed `_internal` filter: added trailing slash (`_internal/`) so files with `_internal` in their name are not incorrectly excluded from installables
+- Fixed `previous()`: module-level `next_btn` reference is now updated via `global next_btn` so Back→Next round-trips don't crash
+- Replaced four redundant extraction loops with a single-pass install + progress bar UI (filename above bar, installed/total size below-left, percentage below-right)
+- Added version display: app version in installer header, per-screen versions next to checkboxes
+- Fixed `binstall()`: takes a separate `selected_screens` parameter so installation proceeds regardless of shortcut checkbox state
+- Replaced manual argument parsing with `ArgHandler`; added `--Help`, `--Path`, and `--Desktop` flags with enforcement that `--Desktop` and `--Path` require `--Quiet`
+- `--Quiet` with no screen names now defaults to installing all screens
+- Added `binaries.zip` existence check with user-friendly error message on missing archive
+- Removed unused `shutil` import
+- Fixed `newVersion()` in `_Release.py`: compared `self.Version == "Major"` (Version object vs string) → `self.type == "Major"`
+- Added user confirmation prompt in `newVersion()` before applying a version change, with revert on cancel
+- Re-enabled `newVersion()` call in `release()` (was commented out)
+- Collapsed duplicated path logic in `clean()` into a single `pendix`/`out_dir` variable + loop
+- Removed `os.chdir()` from `release()`; all paths are now explicit with `cwd=` parameter for subprocess calls
+
+**Planned**
+
+- Auto-launch after install — optional checkbox on the completion page to launch the Host immediately after installation finishes
 
 **Documentation updates**
 
@@ -309,57 +385,24 @@ A screen that needs more than one cascade on the menu bar calls `set_screen_item
 
 ---
 
-### 0.3 Release
-
-#### Changes
-
-Releasing
-
-- Added release command to release version of project
-- Using internal project.json to build spec file to create release
-- Can switch from Screen to Screen using internal methods (os)
-- Can release single Screen
-- Releasing creates Installers for the project
-
-Screen Functionality
-
-- Default Form Changed
-- Currently active Screen is tracked
-- Can load with args
-
-#### Objects
-
-New
-
-- VIMG can bind image path resizing to widget
-
-#### Widgets
-
-New
-
-- Window
-- Root Widget (Tk, Window)
-- SubRoot Widget (TopLevel, Window)
-- WindowGeometry
-- LayoutFrame (ttk.Frame)
-- QuestionWindow (SubRoot)
-- ScrollableFrame (ttk.Frame)
-- ScrollMenu (ScrollableFrame)
-
-Updated
-
-- Menu: buttons highlight on hover
--     : can provide screennames instead of paths
-- MenuItem(Button): now menuitem is the button and text autosizes
--                 : will use screen.load() if provided with screenname
-
----
-
 ## Upcoming
 
-### 0.4.3 Split Layouts
+### 0.4.3 Split Layouts, Installer Uninstaller & Install Log
 
 Allow the Host window's content area to be divided into multiple panes, each with its own `TabBar` and `TabManager`, with a draggable sash between panes.  Two screens can then run side by side (or stacked) in a single window without spawning a `DetachedWindow`.
+
+**Uninstaller**
+
+- `Release.release()` generates an uninstaller executable alongside the installer
+- Uninstaller reads `.VIS/install_log.json` to know exactly which files and shortcuts were created
+- Removes all installed binaries, adjacent files, and desktop shortcuts
+- Optionally deregisters from Windows Add/Remove Programs if the installer registered there
+
+**Install log**
+
+- Installer writes `.VIS/install_log.json` after a successful install — records every extracted file path, every shortcut created, the install location, and a timestamp
+- The log is used by the uninstaller and by the update-in-place installer (0.4.4) to determine what is currently installed
+- Quiet mode (`--Quiet`) also writes the install log
 
 **`SplitView` widget**
 
@@ -417,12 +460,57 @@ No changes required to `_TabBar.py` or the drag system.  Cross-bar merge already
 
 ---
 
-### 0.4.4 Tab Bar Enhancements
+### 0.4.4 Tab Bar Enhancements, Installer Update & Integrity
+
+**Tab bar enhancements**
 
 - Tab bar position — top, left, bottom, or right
 - Maximum simultaneous open tabs — enforced when opening new tabs
 - Close confirmation — warn when closing a tab with unsaved state (requires `has_unsaved()` hook)
 - Multiple tabs of the same screen — already implemented via `_unique_display_name()` (`Name (2)`, `Name (3)` suffixes); verify behaviour holds correctly with split layouts introduced in 0.4.3
+
+**Update-in-place / patch installer**
+
+- Installer detects an existing installation at the target path by reading `.VIS/install_log.json`
+- Compares archive checksums against installed files and only extracts changed or new files
+- Preserves user-modified files (e.g. settings) unless explicitly overwritten
+- Significantly reduces install time for updates compared to a full reinstall
+
+**Rollback on failure**
+
+- If extraction fails mid-install, the installer cleans up all partially extracted files from the current run
+- If updating an existing installation, the previous state is restored from a temporary backup created before extraction began
+
+**Verify installation**
+
+- Post-install integrity check confirms all expected files are present and match expected sizes from the archive
+- Can be triggered manually from the installer menubar or via `--Verify` in quiet mode
+
+**Installer menubar**
+
+- Installer GUI gains a menubar with an "Options" dropdown
+- Options menu entries: "Run Uninstaller" (launches the uninstaller if installed), "Verify File Integrity" (runs the verification check against `install_log.json`)
+
+---
+
+### 0.4.5 Installer Polish
+
+**License / EULA page**
+
+- Optional installer page that displays a license agreement loaded from a `LICENSE` or `EULA.txt` file in the archive
+- "I agree" checkbox gates the Next button; installation cannot proceed without acceptance
+- Skipped automatically if no license file is present in the archive
+
+**Silent progress output**
+
+- In `--Quiet` mode, print a progress bar to stdout using `\r` carriage returns instead of one line per extracted file
+- Shows current file, percentage, and installed/total size inline
+
+**Custom installer icon**
+
+- `project.json` gains an optional `metadata.installer_icon` field
+- If set, `Release.release()` uses it for the installer executable instead of the default app icon
+- Falls back to the app icon if not specified
 
 ---
 
