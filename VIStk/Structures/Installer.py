@@ -293,15 +293,17 @@ def makechecks(source:list[str], show_versions:bool=True):
         install_options.rowconfigure(row,weight=1)
 
         #Resolve Installable Icon
+        #Should probably do a search for the appropriate icon or image file.
+        #This will be easier once VIS can turn any image into an .ICO or .XBM
         if info[title]["Screens"][name].get("icon") is None:
             img_options.append(PIL.ImageTk.PhotoImage(d_icon.resize((16,16))))
 
         else:
             scr_icon = info[title]["Screens"][name]["icon"]
             if sys.platform == "win32":
-                scr_icon = scr_icon + ".ico"
+                scr_icon = scr_icon + ".ICO"
             else:
-                scr_icon = scr_icon + ".xbm"
+                scr_icon = scr_icon + ".XBM"
 
             img_options.append(PIL.ImageTk.PhotoImage(Image.open(archive.open("Icons/"+scr_icon)).resize((16,16))))
         #Create Checkbox in List
