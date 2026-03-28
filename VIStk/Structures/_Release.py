@@ -301,4 +301,11 @@ class Release(Project):
 
         #Clean up temporary binaries.zip
         os.remove(binaries_zip)
-        print(f"Installer ready: {final_installer}")
+
+        #Move installer to Downloads folder
+        from pathlib import Path as _Path
+        downloads_installer = str(_Path.home() / "Downloads" / installer_name)
+        if os.path.exists(downloads_installer):
+            os.remove(downloads_installer)
+        shutil.move(final_installer, downloads_installer)
+        print(f"Installer ready: {downloads_installer}")
