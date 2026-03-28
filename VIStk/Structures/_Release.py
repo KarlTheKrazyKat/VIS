@@ -6,6 +6,7 @@ import shutil
 from os.path import exists
 from zipfile import *
 import datetime
+import hashlib
 from VIStk.Structures._Version import Version
 
 class Release(Project):
@@ -23,10 +24,10 @@ class Release(Project):
     def build(self):
         """Build project spec file for release
         """
-        
+
         #Announce Spec Creation
         print(f"Creating project.spec for {self.title}")
-        
+
         #Ensure spec template has hidden imports
         with open(self.p_vinfo+"/Templates/spec.txt","r+") as f:
             oldspec = f.readlines()
@@ -44,7 +45,7 @@ class Release(Project):
             spec = f.read()
         with open(self.p_vinfo+"/Templates/collect.txt","r") as f:
             collect = f.read()
-        
+
         #Initialize locations for builds
         spec_list = []
         name_list = []
@@ -90,12 +91,12 @@ class Release(Project):
                 else:
                     meta = meta.replace("            VALUE \"CompanyName\",      VER_COMPANYNAME_STR\n","")
                     meta = meta.replace("            VALUE \"LegalCopyright\",   VER_LEGALCOPYRIGHT_STR\n","")
-                    meta = meta.replace("#define VER_LEGAL_COPYRIGHT_STR     \"Copyright © $year$ $company$\\0\"\n\n","")
-                
+                    meta = meta.replace("#define VER_LEGAL_COPYRIGHT_STR     \"Copyright \u00a9 $year$ $company$\\0\"\n\n","")
+
                 #Update Name & Description
                 meta = meta.replace("$name$",i.name)
                 meta = meta.replace("$desc$",i.desc)
-                
+
                 #Write Screen Version Metadata to .txt
                 with open(self.p_vinfo+f"/Build/{i.name}.txt","w") as f:
                     f.write(meta)
@@ -115,7 +116,7 @@ class Release(Project):
                 insert=insert+"\n\t"+i+"_exe,\n\t"+i+"_a.binaries,\n\t"+i+"_a.zipfiles,\n\t"+i+"_a.datas,"
             collect = collect.replace("$insert$",insert)
             collect = collect.replace("$version$",self.title+"-"+self.flag) if not self.flag == "" else collect.replace("$version$",self.title)
-            
+
         #Header for specfile
         header = "# -*- mode: python ; coding: utf-8 -*-\n\n\n"
 
@@ -211,7 +212,7 @@ class Release(Project):
         #Announce and Run PyInstaller
         print(f"Running PyInstaller for {self.title}{' ' + self.flag if not self.flag =='' else ''}")
         subprocess.call(f"pyinstaller {self.p_vinfo}/project.spec --noconfirm --distpath {destination} --log-level FATAL",shell=True,cwd=self.p_vinfo)
-        
+
         #Clean Environment
         self.clean()
 
@@ -220,41 +221,84 @@ class Release(Project):
         final = f"{self.location}{pendix}"
         binaries_zip = f"{self.location}binaries.zip"
 
-        #Announce and binaries.zip
+        #Create binaries.zip from built output
         print(f"Creating binaries.zip from {final} for installer")
         shutil.make_archive(base_name=f"{self.location}binaries", format="zip", root_dir=final)
 
-        #Load info from binaries.zip
-        archive = ZipFile(binaries_zip, 'r')
-        pfile = archive.open(".VIS/project.json")
-        info = json.load(pfile)
-        pfile.close()
-        archive.close()
-        title = list(info.keys())[0]
-
-        #Get Installer Icon
-        icon_file = info[title]["defaults"]["icon"]
+        #Resolve installer icon
+        icon_file = self.d_icon
         if sys.platform == "win32":
             icon_file = self.p_project + "/Icons/" + icon_file + ".ico"
         else:
             icon_file = self.p_project + "/Icons/" + icon_file + ".xbm"
 
-        #Name & Compile Installer
-        installer = VISROOT.replace("\\","/")+"Structures/Installer.py"
-        print(f"Compiling Installer for {pendix}")
-        subprocess.call(f"pyinstaller --noconfirm --onefile --add-data {binaries_zip}:. {'--uac-admin ' if sys.platform == 'win32' else ''}--windowed --name {pendix}_Installer --log-level FATAL --icon {icon_file} --hidden-import PIL._tkinter_finder {installer}", shell=True, cwd=self.location)
+        #Installer cache — skip PyInstaller if Installer.py and icon are unchanged
+        installer_src = VISROOT.replace("\\","/")+"Structures/Installer.py"
+        cache_dir = self.p_vinfo + "/cache"
+        os.makedirs(cache_dir, exist_ok=True)
 
-        #Move Installer to Project Root
-        print("Installer completed. Moving to project root...")
-        binstaller = glob.glob(f"{pendix}_Installer*", root_dir=self.location+"dist/")[0]
-        if os.path.exists(self.p_project+"/"+binstaller):
-            os.remove(self.p_project+"/"+binstaller)
+        cache_base = cache_dir + "/installer_base"
+        if sys.platform == "win32":
+            cache_base += ".exe"
+        cache_hash_file = cache_dir + "/installer.hash"
 
-        shutil.move(self.location+f"dist/{binstaller}", self.p_project)
+        #Hash installer source + icon to detect changes
+        hasher = hashlib.sha256()
+        for path in (installer_src, icon_file):
+            with open(path, "rb") as f:
+                hasher.update(f.read())
+        current_hash = hasher.hexdigest()
 
-        #Clean Installer Build Environment
-        print("Cleaning up installer build environment...")
-        shutil.rmtree(self.location+"dist/")
-        shutil.rmtree(self.location+"build/")
+        #Check if cached base installer is still valid
+        cached_hash = ""
+        if os.path.exists(cache_hash_file) and os.path.exists(cache_base):
+            with open(cache_hash_file, "r") as f:
+                cached_hash = f.read().strip()
+
+        if cached_hash == current_hash:
+            print("Installer source unchanged — using cached base installer")
+        else:
+            print(f"Compiling base installer for {pendix}")
+            subprocess.call(
+                f"pyinstaller --noconfirm --onefile "
+                f"{'--uac-admin ' if sys.platform == 'win32' else ''}"
+                f"--windowed --name installer_base --log-level FATAL "
+                f"--icon {icon_file} --hidden-import PIL._tkinter_finder "
+                f"{installer_src}",
+                shell=True, cwd=self.location
+            )
+
+            #Cache the compiled base installer
+            built_base = glob.glob("installer_base*", root_dir=self.location+"dist/")[0]
+            shutil.copy2(self.location+f"dist/{built_base}", cache_base)
+
+            #Save hash for future comparisons
+            with open(cache_hash_file, "w") as f:
+                f.write(current_hash)
+
+            #Clean PyInstaller build artifacts
+            shutil.rmtree(self.location+"dist/")
+            shutil.rmtree(self.location+"build/")
+            if os.path.exists(self.location+"installer_base.spec"):
+                os.remove(self.location+"installer_base.spec")
+
+            print("Base installer cached for future releases")
+
+        #Concatenate: cached base exe + binaries.zip = final installer
+        installer_name = f"{pendix}_Installer"
+        if sys.platform == "win32":
+            installer_name += ".exe"
+        final_installer = f"{self.p_project}/{installer_name}"
+
+        print(f"Assembling {installer_name} (base + binaries.zip)")
+        if os.path.exists(final_installer):
+            os.remove(final_installer)
+        with open(final_installer, "wb") as out:
+            with open(cache_base, "rb") as base:
+                out.write(base.read())
+            with open(binaries_zip, "rb") as data:
+                out.write(data.read())
+
+        #Clean up temporary binaries.zip
         os.remove(binaries_zip)
-        os.remove(self.location+f"{pendix}_installer.spec")
+        print(f"Installer ready: {final_installer}")

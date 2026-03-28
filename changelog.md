@@ -164,6 +164,13 @@ A screen that needs more than one cascade on the menu bar calls `set_screen_item
 - Collapsed duplicated path logic in `clean()` into a single `pendix`/`out_dir` variable + loop
 - Removed `os.chdir()` from `release()`; all paths are now explicit with `cwd=` parameter for subprocess calls
 
+**Cached installer builds**
+
+- `_Release.py` no longer runs PyInstaller for the installer on every release; the base installer exe is compiled once and cached in `.VIS/cache/`
+- On subsequent releases, `binaries.zip` is appended directly to the cached base exe — `ZipFile(sys.executable)` reads the appended zip from the end of the file
+- A SHA-256 hash of `Installer.py` + the icon file is stored alongside the cache; the base is only recompiled when the installer source or icon changes
+- `Installer.py` tries self-contained mode first (`sys.frozen` + `ZipFile(sys.executable)`), falls back to external `binaries.zip` for development/testing
+
 **Planned**
 
 - Auto-launch after install — optional checkbox on the completion page to launch the Host immediately after installation finishes
@@ -529,6 +536,8 @@ Widgets that Tkinter does not provide natively. General-purpose and usable in an
 ---
 
 ### 0.5.X Project Upgrade Tool
+
+# this kinda seems like a bad idea looking at it now
 
 `VIS upgrade` — bring an existing VIS project forward to the installed version of VIStk without touching user-written code.
 

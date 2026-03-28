@@ -66,15 +66,26 @@ if not QUIET and (dinstalls or custom_path):
 
 #%Installer Code
 #Load .VIS project info
-root_location = Path(__file__).parent
+#Try self-contained mode: binaries.zip appended to the executable itself
+archive = None
+if getattr(sys, 'frozen', False):
+    try:
+        test = ZipFile(sys.executable, 'r')
+        test.open(".VIS/project.json").close()
+        test.close()
+        archive = ZipFile(sys.executable, 'r')
+    except Exception:
+        pass
 
-archive_path = os.path.join(root_location, 'binaries.zip')
-if not os.path.exists(archive_path):
-    print(f"Error: Could not find binaries.zip at {root_location}")
-    print("The installer archive is missing or was not bundled correctly.")
-    sys.exit(1)
-
-archive = ZipFile(archive_path, 'r')
+#Fall back to external binaries.zip
+if archive is None:
+    root_location = Path(__file__).parent
+    archive_path = os.path.join(root_location, 'binaries.zip')
+    if not os.path.exists(archive_path):
+        print(f"Error: Could not find binaries.zip")
+        print("The installer archive is missing or was not bundled correctly.")
+        sys.exit(1)
+    archive = ZipFile(archive_path, 'r')
 pfile = archive.open(".VIS/project.json")
 info = json.load(pfile)
 pfile.close()

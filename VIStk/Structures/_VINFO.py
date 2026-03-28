@@ -30,6 +30,11 @@ def send_to_host(project_title: str, screen_name: str) -> bool:
             s.sendall(screen_name.encode("utf-8"))
         return True
     except Exception:
+        # Host unreachable — port file is stale; remove it so a new Host can start
+        try:
+            os.remove(port_file)
+        except OSError:
+            pass
         return False
 
 VISROOT = VIStk.__file__.replace("__init__.pyc","").replace("__init__.py","")
