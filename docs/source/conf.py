@@ -32,7 +32,6 @@ html_title = "VIStk Documentation"
 html_theme_options = {
     "home_page_in_toc": True,
     "toc_title": "Table of Contents",
-    "navbar_start": ["logo.html"],
 }
 
 nitpicky = False
