@@ -40,9 +40,11 @@ class MenuItem(Button):
         """Opens the given path or exe for the button
         """
         #Should have a more VIStk way to switch screens
-        
+
         if not self.screen is None:
             self.screen.load()
+            self.root.destroy()
+            return
         if ".exe" in self.path:
             #os.execl(self.path,*(self.path))
             os.startfile(self.path)

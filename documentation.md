@@ -465,6 +465,7 @@ Screen modules are imported by the Host and passed to `open_tab`. `TabManager` c
 | `focus_tab(name)` | `bool` | Focus the named tab. |
 | `has_tab(name)` | `bool` | Whether a tab with this name is open. |
 | `force_refresh_tab(name)` | `bool` | Close and reopen at the same position, re-running `setup(parent)`. |
+| `set_tab_info(frame, text_or_var)` | `None` | Set the info string shown in the Host InfoRow for the tab identified by `frame`. `text_or_var` can be a plain string or a `tk.StringVar`. |
 
 `TabManager` is not normally used directly — `host.open()` handles all navigation.
 
@@ -899,6 +900,8 @@ The copyright string is normalised at construction: if it does not already conta
 | `set_fps(fps)` | Update the FPS counter. Called by `Host.tick_fps()`. |
 
 `InfoRow` is managed entirely by `Host` — you do not need to call its methods directly.
+
+When a tab's info string is set via `set_tab_info()`, the Host window title follows the pattern `"project: screen — info"`.
 
 ---
 

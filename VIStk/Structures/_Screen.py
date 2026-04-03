@@ -8,6 +8,7 @@ from tkinter import *
 from pathlib import Path
 import sys
 import os
+import subprocess
 from notifypy import Notify
 
 class Screen(VINFO):
@@ -245,7 +246,18 @@ class Screen(VINFO):
         """
         if send_to_host(self.title, self.name):
             return
-        os.execl(sys.executable, *(sys.executable, Path(getPath() + "/" + self.script), *args))
+        import time, tempfile
+        host_path = str(Path(getPath()) / ".VIS" / "Host.py")
+        subprocess.Popen([sys.executable, host_path])
+        port_file = os.path.join(tempfile.gettempdir(),
+                                 self.title.replace(" ", "_") + "_vis_host.port")
+        for _ in range(30):
+            time.sleep(0.1)
+            if os.path.exists(port_file):
+                time.sleep(0.1)
+                break
+        send_to_host(self.title, self.name)
+        sys.exit(0)
 
     def close(self) -> bool:
         """Ask the Host to close this screen (tab or Toplevel).

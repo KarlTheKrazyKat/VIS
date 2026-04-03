@@ -4,19 +4,22 @@ from tkinter import Menu, Tk, Toplevel
 class HostMenu:
     """A persistent ``tk.Menu`` attached to the Host window.
 
-    The menubar has three ordered layers:
+    The menubar has two ordered layers:
 
-    1. **Built-in layer** — the "App" cascade (Close Window / Quit), always
-       first, built automatically by :meth:`attach`.
-    2. **Project layer** — app-wide cascades added once at Host startup via
+    1. **Project layer** — app-wide cascades added once at Host startup via
        :meth:`set_project_items`.  They persist across all tab changes.
-    3. **Screen layer** — cascades contributed by the active tab's
+    2. **Screen layer** — cascades contributed by the active tab's
        ``configure_menu`` hook via :meth:`set_screen_items`.  All screen
        cascades are cleared automatically when the tab deactivates.
 
     ``set_screen_items`` **accumulates** — calling it more than once within a
     single ``configure_menu`` hook appends multiple cascades side by side.
     All are removed together by :meth:`clear_screen_items`.
+
+    A third, optional layer is the **shared layer** — persistent cascades
+    built once at startup via :meth:`build_shared_menu` whose individual leaf
+    items can be patched per-tab with :meth:`apply_overrides` and restored to
+    their build-time defaults with :meth:`reset_overrides`.
 
     Usage::
 
@@ -55,7 +58,9 @@ class HostMenu:
         self._quit_command = quit_command
         self._close_command = close_command
         self._project_labels: list[str] = []
-        self._screen_labels: list[str] = []
+        self._screen_indices: list[int] = []
+        self._shared_menus: dict[str, Menu] = {}
+        self._shared_defaults: dict[str, dict[str, dict]] = {}
 
     # ── Public API ─────────────────────────────────────────────────────────────
 
@@ -110,30 +115,122 @@ class HostMenu:
         cascade = Menu(self.menubar, tearoff=0)
         self._populate(cascade, items)
         self.menubar.add_cascade(label=label, menu=cascade)
-        self._screen_labels.append(label)
+        self._screen_indices.append(self.menubar.index("end"))
 
     def clear_screen_items(self):
         """Remove all accumulated screen cascades."""
-        for label in self._screen_labels:
+        for idx in reversed(self._screen_indices):
             try:
-                self.menubar.delete(label)
+                self.menubar.delete(idx)
             except Exception:
                 pass
-        self._screen_labels.clear()
+        self._screen_indices.clear()
+
+    def build_shared_menu(self, structure: dict):
+        """Build the persistent shared menu from a structure dict.
+
+        Called once at Host startup. Creates one cascade per top-level key
+        (e.g. "File", "Edit") and adds them to the menubar as project-layer
+        items. Stores Menu widget references in _shared_menus and default
+        command/state values for every leaf item in _shared_defaults so that
+        reset_overrides() can restore them.
+
+        structure format::
+
+            {
+                "File": [
+                    {"label": "Open...", "command": None, "state": "disabled"},
+                    {"separator": True},
+                    {"label": "Exit", "command": exit_fn},
+                    {"label": "New", "items": [...]},  # submenu — not patchable
+                ],
+                "Edit": [...],
+            }
+
+        Only top-level items (direct children of a cascade) are tracked for
+        override/reset. Nested submenu items are static.
+
+        Args:
+            structure: Mapping of cascade label to list of item spec dicts.
+                       Each item spec may include a ``state`` key
+                       (``"normal"`` or ``"disabled"``); defaults to
+                       ``"normal"`` when omitted.
+        """
+        self._shared_structure = structure
+        for label, items in structure.items():
+            cascade = Menu(self.menubar, tearoff=0)
+            defaults: dict[str, dict] = {}
+            for item in items:
+                if item.get("separator"):
+                    cascade.add_separator()
+                elif "items" in item:
+                    sub = Menu(cascade, tearoff=0)
+                    self._populate(sub, item["items"])
+                    cascade.add_cascade(label=item.get("label", ""), menu=sub)
+                else:
+                    kw = {
+                        "label":   item.get("label", ""),
+                        "command": item.get("command"),
+                        "state":   item.get("state", "normal"),
+                    }
+                    cascade.add_command(**kw)
+                    # Record defaults so reset_overrides can restore them
+                    defaults[kw["label"]] = {
+                        "command": kw["command"],
+                        "state":   kw["state"],
+                    }
+            self.menubar.add_cascade(label=label, menu=cascade)
+            self._project_labels.append(label)
+            self._shared_menus[label] = cascade
+            self._shared_defaults[label] = defaults
+
+    def apply_overrides(self, overrides: dict):
+        """Patch shared menu items with screen-specific commands/states.
+
+        overrides format::
+
+            {
+                "File": {
+                    "Open...": {"command": fn, "state": "normal"},
+                    "Save":    {"command": fn, "state": "normal"},
+                },
+            }
+
+        Unknown cascade labels or item labels are silently ignored.
+
+        Args:
+            overrides: Mapping of cascade label to a mapping of item label
+                       to ``entryconfig`` keyword arguments.
+        """
+        for cascade_label, items in overrides.items():
+            cascade = self._shared_menus.get(cascade_label)
+            if cascade is None:
+                continue
+            for item_label, opts in items.items():
+                try:
+                    cascade.entryconfig(item_label, **opts)
+                except Exception:
+                    pass
+
+    def reset_overrides(self):
+        """Restore all shared menu items to their build-time defaults.
+
+        Called on tab deactivate and before apply_overrides on tab activate.
+        """
+        for cascade_label, defaults in self._shared_defaults.items():
+            cascade = self._shared_menus.get(cascade_label)
+            if cascade is None:
+                continue
+            for item_label, opts in defaults.items():
+                try:
+                    cascade.entryconfig(item_label, **opts)
+                except Exception:
+                    pass
 
     # ── Internal ───────────────────────────────────────────────────────────────
 
     def _build_base(self):
-        app_menu = Menu(self.menubar, tearoff=0)
-        if self._close_command:
-            app_menu.add_command(label="Close Window", command=self._close_command)
-        if self._quit_command:
-            if self._close_command:
-                app_menu.add_separator()
-            app_menu.add_command(label="Quit", command=self._quit_command)
-        elif not self._close_command:
-            app_menu.add_command(label="Quit", command=self._parent.destroy)
-        self.menubar.add_cascade(label="App", menu=app_menu)
+        pass
 
     def _populate(self, menu: Menu, items: list[dict]):
         for item in items:

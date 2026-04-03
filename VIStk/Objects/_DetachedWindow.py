@@ -55,6 +55,8 @@ class DetachedWindow:
         # ── Menu bar ──────────────────────────────────────────────────────────
         self.HostMenu = HostMenu(self.win, close_command=self._on_close)
         self.HostMenu.attach()
+        if getattr(host.HostMenu, "_shared_structure", None):
+            self.HostMenu.build_shared_menu(host.HostMenu._shared_structure)
 
         # ── Tab content area ──────────────────────────────────────────────────
         self.tab_manager = TabManager(self.win)
@@ -161,12 +163,13 @@ class DetachedWindow:
 
     def _on_tab_activate(self, name: str, module):
         """Update title, InfoRow, and menu when a tab gains focus."""
+        self.HostMenu.clear_screen_items()
+        self.HostMenu.reset_overrides()
         info = self.tab_manager._tabs.get(name, {}).get("info", "")
         self._set_title(name, info)
         base_name = self.tab_manager._tabs.get(name, {}).get("base_name", name)
         scr = self.host.Project.getScreen(base_name)
         self.InfoRow.set_screen(name, str(scr.s_version) if scr else "")
-        # configure_menu: hooks module first, then screen module
         hooks = self.tab_manager._tabs.get(name, {}).get("hooks")
         cfg = (getattr(hooks, "configure_menu", None)
                or getattr(module, "configure_menu", None))
@@ -175,9 +178,17 @@ class DetachedWindow:
                 cfg(self.HostMenu)
             except Exception:
                 pass
+        overrides = (getattr(hooks, "MENU_OVERRIDES", None)
+                     or getattr(module, "MENU_OVERRIDES", None))
+        if overrides:
+            try:
+                self.HostMenu.apply_overrides(overrides)
+            except Exception:
+                pass
 
     def _on_tab_deactivate(self, name: str | None):
         self.HostMenu.clear_screen_items()
+        self.HostMenu.reset_overrides()
         if name is None:
             # All tabs removed — show empty state but don't close
             self.win.title(self.host.Project.title)

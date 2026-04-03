@@ -25,6 +25,16 @@ def _ipc_port_file(project_title: str) -> str:
     return os.path.join(tempfile.gettempdir(), f"{safe}_vis_host.port")
 
 
+def _parse_open_arg() -> "str | None":
+    """Return the value of ``--open <name>`` from ``sys.argv``, or ``None``."""
+    args = sys.argv[1:]
+    try:
+        idx = args.index("--open")
+        return args[idx + 1]
+    except (ValueError, IndexError):
+        return None
+
+
 class Host(Root):
     """Persistent application host that owns the Tk root window.
 
@@ -102,6 +112,12 @@ class Host(Root):
         self._register_startup()
 
         _HOST_INSTANCE = self
+
+        # If launched by Screen.load() on first boot, open the requested screen.
+        _open_arg = _parse_open_arg()
+        if _open_arg:
+            start_hidden = False
+            self.after(0, lambda: self.open(_open_arg))
 
         if start_hidden:
             self.withdraw()
@@ -196,12 +212,20 @@ class Host(Root):
 
     def _on_tab_activate(self, name: str, module):
         self.HostMenu.clear_screen_items()
+        self.HostMenu.reset_overrides()
         hooks = self.TabManager._tabs.get(name, {}).get("hooks")
         cfg = (getattr(hooks, "configure_menu", None)
                or getattr(module, "configure_menu", None))
         if cfg:
             try:
                 cfg(self.HostMenu)
+            except Exception:
+                pass
+        overrides = (getattr(hooks, "MENU_OVERRIDES", None)
+                     or getattr(module, "MENU_OVERRIDES", None))
+        if overrides:
+            try:
+                self.HostMenu.apply_overrides(overrides)
             except Exception:
                 pass
         scr = self.Project.getScreen(
@@ -214,6 +238,7 @@ class Host(Root):
 
     def _on_tab_deactivate(self, name: str | None):
         self.HostMenu.clear_screen_items()
+        self.HostMenu.reset_overrides()
         self.InfoRow.set_screen("")
         if name is None:
             # All tabs closed — reset to project title
