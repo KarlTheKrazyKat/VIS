@@ -1,0 +1,90 @@
+0.4.2 --- Menus
+===============
+
+*Released* --- current version
+
+The 0.4.2 release introduced the three-layer menubar model, menu module scaffolding, and
+a large batch of installer and release pipeline fixes.
+
+Three-Layer Menubar Model
+-------------------------
+
+The ``HostMenu`` menubar is now structured as three permanent layers:
+
+1. **Built-in layer** --- the ``App`` cascade (Close Window / Quit), always first, built
+   automatically by ``attach()``
+2. **Project layer** --- app-wide cascades defined once in ``Host.py`` at startup; never
+   cleared during normal use
+3. **Screen layer** --- cascades contributed by the active tab via
+   ``configure_menu(menubar)``; all cleared automatically on tab deactivation
+
+HostMenu API Changes
+~~~~~~~~~~~~~~~~~~~~
+
+- ``set_project_items(items, label)`` --- new method; appends one cascade to the project
+  layer; calling multiple times adds multiple cascades; these persist across tab changes
+- ``clear_project_items()`` --- removes all project-layer cascades
+- ``set_screen_items(items, label)`` --- **accumulates** rather than replaces; calling
+  multiple times adds multiple screen-layer cascades side by side
+- ``clear_screen_items()`` --- removes **all** accumulated screen cascades
+- ``_project_labels: list[str]`` and ``_screen_labels: list[str]`` replace the single
+  ``_screen_cascade`` / ``_screen_label`` pair
+
+``VIS add screen <name> menu <menuname>``
+-----------------------------------------
+
+- ``Screen.addMenu(menu)`` implemented (was a stub)
+- Creates ``modules/<screen>/m_<menuname>.py`` with a ``configure_menu(menubar)``
+  function pre-filled with a commented cascade template
+- If ``modules/<screen>/m_<screenname>.py`` (hooks module) already exists and does not
+  define ``configure_menu``, a delegation function is appended automatically
+- If ``configure_menu`` already exists, import instructions are added as comments for
+  manual wiring
+
+Installer & Release Fixes
+--------------------------
+
+- Replaced ``from tkinter import *`` with ``import tkinter as tk`` in ``Installer.py``
+  (wildcard import shadowed ``all()``)
+- Fixed ``shortcut()``: stale loop variable and nonexistent ``user_desktop_dir()``
+- Removed stale ``i_file.close()`` in ``makechecks``
+- Fixed ``extal()``: only ``chmod +x`` actual binaries on Linux
+- Replaced ``os.mkdir`` with ``os.makedirs(exist_ok=True)`` in ``adjacents()``
+- Deduplicated ``installables`` list
+- Replaced ``source.index(i)`` with ``enumerate`` in ``makechecks``
+- Added ``archive.close()`` calls in quiet mode exit and GUI close button
+- Fixed prefix matching in extraction to prevent false matches
+- Fixed ``_internal`` filter to use trailing slash
+- Fixed ``previous()`` crash via ``global next_btn``
+- Replaced four redundant extraction loops with single-pass install + progress bar
+- Added version display in installer header and next to checkboxes
+- Fixed ``binstall()`` to take separate ``selected_screens`` parameter
+- Replaced manual argument parsing with ``ArgHandler``; added ``--Help``, ``--Path``,
+  ``--Desktop`` flags
+- ``--Quiet`` with no screen names now defaults to installing all screens
+- Added ``binaries.zip`` existence check with user-friendly error
+- Removed unused ``shutil`` import
+
+Release Pipeline Fixes
+~~~~~~~~~~~~~~~~~~~~~~
+
+- Fixed ``newVersion()``: compared Version object vs string
+- Added user confirmation prompt in ``newVersion()`` before applying a version change
+- Re-enabled ``newVersion()`` call in ``release()`` (was commented out)
+- Collapsed duplicated path logic in ``clean()``
+- Removed ``os.chdir()`` from ``release()``
+
+Cached Installer Builds
+------------------------
+
+- ``_Release.py`` no longer runs PyInstaller for the installer on every release; the base
+  installer exe is compiled once and cached in ``.VIS/cache/``
+- SHA-256 hash of ``Installer.py`` + icon file stored alongside the cache; recompiled
+  only when source or icon changes
+- ``Installer.py`` tries self-contained mode first (``sys.frozen`` +
+  ``ZipFile(sys.executable)``), falls back to external ``binaries.zip``
+
+Planned
+-------
+
+- Auto-launch after install --- optional checkbox on the completion page

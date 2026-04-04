@@ -1,0 +1,27 @@
+0.4.5 --- Installer Polish
+==========================
+
+*Upcoming*
+
+License / EULA Page
+-------------------
+
+- Optional installer page that displays a license agreement loaded from a ``LICENSE`` or
+  ``EULA.txt`` file in the archive
+- "I agree" checkbox gates the Next button; installation cannot proceed without acceptance
+- Skipped automatically if no license file is present
+
+Silent Progress Output
+----------------------
+
+- In ``--Quiet`` mode, print a progress bar to stdout using ``\r`` carriage returns
+  instead of one line per extracted file
+- Shows current file, percentage, and installed/total size inline
+
+Custom Installer Icon
+---------------------
+
+- ``project.json`` gains an optional ``metadata.installer_icon`` field
+- ``Release.release()`` uses it for the installer executable instead of the default app
+  icon
+- Falls back to the app icon if not specified

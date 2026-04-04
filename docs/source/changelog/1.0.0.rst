@@ -1,0 +1,9 @@
+1.0.0 --- Full Release
+======================
+
+*Upcoming*
+
+- Tkinter styles system
+   - Setting screen styles
+   - Creating global styles
+- Sample VIS programs showing Icons, modules, Screens, and menus

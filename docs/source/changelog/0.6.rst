@@ -1,0 +1,50 @@
+0.6 --- Application Settings
+============================
+
+*Upcoming*
+
+Settings stored per-project in ``.VIS/settings.json``, accessed via ``Project.settings``.
+
+Storage and API
+---------------
+
+- ``Project.settings.get(key, default)`` --- read a setting
+- ``Project.settings.set(key, value)`` --- write a setting
+- ``Project.settings.save()`` --- persist to ``.VIS/settings.json``; called automatically
+  on Host close
+
+Window and Display
+------------------
+
+- Default window size, alignment, and minimum size
+- Remember last window size and position; restore on next open
+- Open fullscreen on launch toggle
+
+Host and Tray
+-------------
+
+- Start Host with OS --- toggle that enables/disables the startup registry entry
+- Start minimized --- Host starts hidden in tray rather than showing the window
+- Remember open tabs --- reopen the tabs that were open when the Host last closed
+
+Appearance
+----------
+
+- Default font family and size
+- Color scheme selection --- placeholder for the styles system
+
+Notifications
+-------------
+
+- Enable/disable toast notifications globally
+- Toast display duration in milliseconds
+
+Settings UI
+------------
+
+- Built-in settings panel opens from HostMenu > Settings
+- Tabbed interface --- VIStk settings on one tab, developer's custom settings on
+  additional tabs
+- Developer registers a custom settings panel via
+  ``host.register_settings_panel(name, setup_fn)``
+- Tray menu includes a Settings entry

@@ -1,0 +1,87 @@
+0.4.1 --- Screen Management
+===========================
+
+*Released*
+
+The 0.4.1 release added single-instance screens, screen renaming, and screen attribute
+editing from the CLI.
+
+Single-Instance Screens
+-----------------------
+
+- New ``single_instance`` boolean field in each screen's ``project.json`` entry (default
+  ``false``)
+- ``Screen.__init__`` reads and exposes ``screen.single_instance``
+- When ``Host.open()`` is called for a screen with ``single_instance: true`` that is
+  already open anywhere (main window or any ``DetachedWindow``), the existing tab is
+  focused rather than creating a new instance; the ``(2)`` / ``(3)`` suffix logic is
+  skipped entirely
+- Set via ``VIS edit <screenname> single_instance true``
+
+``VIS rename``
+--------------
+
+.. code-block:: text
+
+   VIS rename <screenname> <newname>
+
+- Validates ``newname`` against the same rules as ``VIS add screen`` (no reserved words,
+  valid identifier, no conflicts)
+- Renames the screen's key in ``project.json``
+- Renames the script file on disk if it matches the old name pattern; updates the
+  ``script`` field
+- Renames ``Screens/<oldname>/`` to ``Screens/<newname>/``
+- Renames ``modules/<oldname>/`` to ``modules/<newname>/`` and renames
+  ``m_<oldname>.py`` to ``m_<newname>.py`` inside it
+- Rewrites all ``Screens.<oldname>.`` and ``modules.<oldname>.`` import references
+- Updates ``default_screen`` in ``project.json`` if it matches the old name
+- Runs ``stitch`` automatically after rename
+- ``rename`` and ``Rename`` added to ``_RESERVED_VIS_COMMANDS``
+
+``VIS edit``
+------------
+
+.. code-block:: text
+
+   VIS edit <screenname> <attribute> <value>
+
+Directly sets any attribute in the screen's ``project.json`` subdictionary.
+
+**Editable attributes:**
+
+.. list-table::
+   :header-rows: 1
+   :widths: 25 15 60
+
+   * - Attribute
+     - Type
+     - Notes
+   * - ``script``
+     - string
+     - Rejects the value if the file does not exist in the project root
+   * - ``release``
+     - bool
+     - ``true``/``yes``/``1`` or ``false``/``no``/``0``
+   * - ``icon``
+     - string/none
+     - ``none``/``null`` clears the icon
+   * - ``desc``
+     - string
+     - Free-form description
+   * - ``tabbed``
+     - bool
+     - Whether this screen opens as a Host tab
+   * - ``single_instance``
+     - bool
+     - Prevent duplicate tabs
+   * - ``version``
+     - string
+     - Must be valid ``major.minor.patch`` format
+   * - ``current``
+     - string/none
+     - ``none``/``null`` clears the value
+
+- Prints confirmation of old and new value
+- Rejects unknown attribute names with a clear error
+- Keeps the in-memory ``Screen`` object in sync immediately
+- ``edit`` and ``Edit`` added to ``_RESERVED_VIS_COMMANDS``

@@ -1,0 +1,192 @@
+0.4.0 --- Host and Tabbed Screens
+=================================
+
+*Released*
+
+The 0.4.0 release introduced the Host-based tabbed application model, IPC communication,
+and drag-to-reorder/detach/merge tab interactions.
+
+Host Object
+-----------
+
+- ``Host`` --- persistent ``Root`` subclass; hides to system tray on window close; never
+  destroys
+- Registers itself in the Windows startup registry on first run
+  (``_register_startup``)
+- Always the parent process and sole owner of the Tk root window
+- Closing the window hides to tray; ``VIS stop`` or tray Quit fully shuts it down
+- Thread-safe cross-thread call queue (``queue.SimpleQueue``) polled by
+  ``_poll_main_queue``; pystray and IPC threads never call Tkinter directly
+- ``_HOST_INSTANCE`` module-level singleton; ``Project.open()`` checks it to route
+  navigation
+
+TabManager and TabBar
+---------------------
+
+- ``TabManager`` --- ``Frame`` subclass that owns the tab strip and content area
+- ``TabBar`` --- row of clickable tabs; flat buttons with configurable background colours;
+  active/inactive/hover states; close button per tab; vertical separator between tabs
+- Tab buttons show the screen icon (16x16 PIL image) to the left of the screen name
+- Full hover behaviour: hovering the tab name changes both name and close button together;
+  hovering close alone changes only the close button to IndianRed
+
+Screen Navigation
+-----------------
+
+- ``host.open(screen)`` --- unified navigation; tabbed screens open as Frame tabs;
+  standalone screens open as ``Toplevel`` windows
+- ``TabManager.open_tab`` / ``TabManager.close_tab`` --- full tab lifecycle with
+  ``setup()``, ``on_activate()``, ``on_deactivate()`` hooks
+- ``__VIS_CLOSE__:<name>`` IPC message --- a screen can ask the Host to close itself
+
+IPC
+---
+
+- ``send_to_host(project_title, message)`` --- sends any message to a running Host via
+  localhost TCP
+- Host writes its port to ``%TEMP%/<ProjectTitle>_vis_host.port`` on startup; removed on
+  quit
+- Messages: screen name (open), ``__VIS_QUIT__`` (shut down),
+  ``__VIS_CLOSE__:<name>`` (close one screen)
+
+Screen Hooks
+------------
+
+- ``setup(parent)`` --- called with the tab Frame; all widget creation must be inside
+- ``configure_menu(menubar)`` --- called when tab activates; items cleared on deactivation
+- ``on_activate()`` / ``on_deactivate()`` --- lifecycle hooks on tab focus change
+
+.. note::
+
+   ``on_activate`` / ``on_deactivate`` were renamed to ``on_focused`` / ``on_unfocused``
+   later in this release cycle. See **Hook rename** below.
+
+Screen Template
+---------------
+
+- Hook stubs placed before ``setup()`` so ``stitch()`` cannot overwrite them
+- Widget creation sections (``#%Screen Grid``, ``#%Screen Elements``) placed inside
+  ``setup(parent)`` to avoid import side-effects
+- Standalone entry point uses ``if __name__ == "__main__":`` guard
+- ``_replace_section`` regex fixed for adjacent ``#%`` markers
+
+VIS Commands
+------------
+
+- ``VIS stop`` --- sends ``__VIS_QUIT__`` to a running Host via IPC
+- ``VIS <ProjectName>`` --- starts Host if not running, sends default screen via IPC
+- ``VIS <ProjectName> <ScreenName>`` --- starts Host, sends screen name; no longer falls
+  back to ``os.execl``
+- ``VIS new`` --- prompts for default screen name after project creation
+
+Project Creation
+----------------
+
+- Project name defaults to the current folder name
+- Name validated against reserved VIS commands
+- ``Host.py`` generated into ``.VIS/Host.py`` instead of the project root
+- ``default_screen`` stored under ``defaults.default_screen`` in ``project.json``
+
+Tab Drag-to-Reorder
+--------------------
+
+- Tabs can be dragged left or right to reorder
+- 8-pixel motion threshold distinguishes a drag from a click
+- Click action suppressed when a drag occurred in the same press
+
+Tab Right-Click Context Menu
+-----------------------------
+
+- **Open in new window**, **Force refresh**, and **Close**
+- Open in new window creates a new ``DetachedWindow``
+- Force refresh re-imports and re-runs ``setup(parent)``
+
+Tab Drag-to-Detach
+-------------------
+
+- Releasing a dragged tab outside all registered ``TabBar`` instances fires
+  ``TabBar.on_drag_detach``
+- Host closes the tab from the main ``TabManager`` and opens it in a new
+  ``DetachedWindow``
+
+Tab Drag-to-Merge
+------------------
+
+- All live ``TabBar`` instances register in ``_TABBAR_REGISTRY``
+- During drag motion, cursor is checked against all registered bars
+- On release over a different ``TabBar``, ``on_drag_merge`` fires
+- Tab is closed in source manager and re-opened in the receiving manager
+
+DetachedWindow
+--------------
+
+- Wraps a ``Toplevel`` + ``TabManager`` for popped-out or drag-detached tabs
+- Closing the window runs ``on_unfocused`` on all tabs before destroying them
+- ``Host._do_quit()`` closes all ``DetachedWindow`` instances before tearing down main
+  window
+- Contains its own ``HostMenu``, ``InfoRow``, and window icon
+- Sized to match Host window; positioned so cursor lands on the tab button at the same
+  drag offset
+
+Drag Ghost Window
+-----------------
+
+- Semi-transparent ``overrideredirect(True)`` ghost ``Toplevel`` follows cursor during drag
+- Replicates the tab label and icon at 75% opacity
+- Thin coloured vertical insertion indicator shows where the tab will land
+- Dragged tab is dimmed while ghost is live; restored on release
+
+InfoRow Widget
+--------------
+
+- Left: active screen name and version
+- Centre: project copyright string (auto-prepends year and copyright symbol)
+- Right: app version and live FPS counter
+
+Layout Constraint Enforcement
+-----------------------------
+
+- ``Layout.apply(widget, row, col, ...)`` places with absolute pixel coordinates and
+  re-places on every parent ``<Configure>`` event, enforcing ``minsize``/``maxsize``
+
+Screen Lifecycle Additions
+--------------------------
+
+- ``Screen.close()`` --- sends ``__VIS_CLOSE__`` via IPC
+- ``Project.set_default_screen(name)`` --- persists to ``project.json``
+- ``newScreen`` prompts whether the new screen should be tabbed
+
+Per-Screen Characteristic Info
+------------------------------
+
+- ``TabManager.set_tab_info(name, text_or_var)`` --- set a characteristic string;
+  accepts ``str`` or ``tk.StringVar``
+- Title format: ``"project: screen --- info"``; tab label: ``"screen --- info"``
+- StringVar traces removed automatically on tab close
+
+Multiple Instances of the Same Screen
+--------------------------------------
+
+- Opening an already-open screen creates a tab with ``(2)``, ``(3)`` suffix
+- ``base_name`` maps display name back to the screen registry entry
+
+Hook Rename
+-----------
+
+- ``on_activate()`` / ``on_deactivate()`` renamed to ``on_focused()`` / ``on_unfocused()``
+- Hooks now looked up in ``modules/<screen>/m_<screen>.py`` first; screen script as
+  fallback
+
+Dependencies Added
+------------------
+
+- ``pystray`` --- cross-platform system tray support
+
+Bug Fixes
+---------
+
+- ``TabBar._btn_click`` drag suppression now works correctly
+- ``Layout.rowSize`` / ``colSize`` no longer mutate the caller's list
+- Tab insertion positions corrected for ``_reorder_to_idx``
+- Ghost cursor alignment preserved via ``_drag_btn_offset_x/y``
+- Empty ``TabBar`` shows 28px drop-zone strip with hover highlight

@@ -1,0 +1,7 @@
+0.9 --- Notifications
+=====================
+
+*Upcoming*
+
+- ``Toast`` --- non-blocking status overlay that auto-dismisses after a configurable
+  delay; respects the global notification enable/disable setting from 0.6

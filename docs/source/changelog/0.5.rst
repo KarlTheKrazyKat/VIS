@@ -1,0 +1,74 @@
+0.5 --- VIS Widgets & Project Upgrade Tool
+==========================================
+
+*Upcoming*
+
+VIS Widgets
+-----------
+
+General-purpose widgets that Tkinter does not provide natively.
+
+- ``Tooltip`` --- hover tooltip bound to any widget
+- ``CollapsibleFrame`` --- frame with a header button that toggles content visibility
+- ``AutocompleteEntry`` --- Entry with a filtered dropdown suggestion list
+- ``DateEntry`` --- date input widget with format validation and optional calendar picker
+  popup
+- Expanded custom frames
+- Additional menu options
+- **Color palette feature** --- recolor default VIStk widgets; accessible throughout user
+  code
+
+Project Upgrade Tool
+--------------------
+
+``VIS upgrade`` --- bring an existing VIS project forward to the installed version of
+VIStk without touching user-written code.
+
+What Gets Updated
+~~~~~~~~~~~~~~~~~
+
+Three things are replaced or patched; user screen scripts, ``Screens/``, and ``modules/``
+are never touched:
+
+- **``.VIS/Host.py``** --- regenerated from the current ``host.txt`` template; the icon
+  name is read from ``project.json`` before overwriting
+- **``.VIS/Templates/``** --- overwritten from the VIStk install directory; ensures
+  templates match the installed version
+- **``project.json`` schema migration** --- new keys required by newer VIStk versions are
+  added with default values; existing keys are never changed or removed
+
+Compatibility Tracking
+~~~~~~~~~~~~~~~~~~~~~~
+
+- ``vis_version`` field added to ``metadata`` at first upgrade (and at project creation
+  going forward)
+- The upgrade tool reads this to determine which migrations have been applied
+- On success the field is updated to the current VIStk version
+
+Migration Registry
+~~~~~~~~~~~~~~~~~~
+
+Migrations live in ``VIStk/Structures/_Upgrade.py`` as an ordered list of
+``(version_string, step_fn)`` pairs. Each ``step_fn(info: dict)`` receives the raw
+``project.json`` dict and adds or coerces a single field. Upgrading across multiple
+releases applies every migration in order.
+
+``VIS upgrade`` Command
+~~~~~~~~~~~~~~~~~~~~~~~
+
+.. code-block:: text
+
+   VIS upgrade
+   VIS upgrade --dry-run
+
+Steps:
+
+1. Load ``project.json`` and read ``metadata.vis_version`` (missing treated as ``0.0.0``)
+2. Run all pending schema migrations in version order
+3. Regenerate ``.VIS/Host.py`` from the current template
+4. Overwrite ``.VIS/Templates/`` from the VIStk install
+5. Create any missing directories (``Screens/``, ``modules/``, ``Icons/``, ``Images/``)
+6. Write updated ``project.json`` with ``vis_version`` set to current VIStk version
+7. Print per-step summary
+
+``--dry-run`` prints what would change without writing files.

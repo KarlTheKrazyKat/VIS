@@ -1,0 +1,82 @@
+0.4.3 --- Split Layouts, Installer Uninstaller & Install Log
+=============================================================
+
+*Upcoming*
+
+SplitView Widget
+----------------
+
+Allow the Host window's content area to be divided into multiple panes, each with its
+own ``TabBar`` and ``TabManager``, with a draggable sash between panes. Two screens can
+run side by side (or stacked) in a single window without spawning a ``DetachedWindow``.
+
+- New ``SplitView`` widget (``VIStk/Widgets/_SplitView.py``) replaces the single
+  ``TabManager`` in ``Host``
+- Wraps a ``ttk.PanedWindow`` (horizontal or vertical); each slot is either a
+  ``TabManager`` (leaf) or a nested ``SplitView`` (branch)
+- Tree-of-panes model supports arbitrary split arrangements
+- ``SplitView.split(pane, direction)`` --- replaces a ``TabManager`` leaf with a new
+  ``SplitView`` containing the original pane and a fresh empty ``TabManager``; direction
+  is ``"right"`` or ``"down"``
+- ``SplitView.remove_pane(pane)`` --- collapses the parent ``SplitView``, promoting the
+  surviving sibling; dissolves if root becomes a single ``TabManager``
+- Sash positions default to 50/50; user can drag freely
+
+Focused Pane
+~~~~~~~~~~~~
+
+- ``SplitView.focused_pane`` tracks the last-interacted pane
+- Clicking a tab or content frame sets that pane as focused
+- ``HostMenu`` and window title always reflect the focused pane's active tab
+- Focus transfers to the nearest remaining pane when the focused pane is removed
+
+Right-Click Split Actions
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Two new entries in the ``TabBar`` right-click context menu:
+
+- **Split right** --- horizontal split, tab moves to the new right pane
+- **Split down** --- vertical split, tab moves to the new bottom pane
+
+Pane Auto-Removal
+~~~~~~~~~~~~~~~~~
+
+- When a pane's tab count reaches zero, it calls ``on_pane_empty`` on its ``SplitView``
+- The ``SplitView`` removes the empty pane and promotes the surviving sibling
+
+Drag Between Panes
+~~~~~~~~~~~~~~~~~~
+
+No changes to ``_TabBar.py`` or the drag system. Cross-bar merge already works for any
+two registered ``TabBar`` instances.
+
+Host Changes
+~~~~~~~~~~~~
+
+- ``self.TabManager`` replaced by ``self.split_view: SplitView``
+- ``host.open()`` opens new tabs into ``split_view.focused_pane``
+- ``host._get_all_tab_names()`` walks the full ``SplitView`` tree
+- Activate/deactivate/menu/title callbacks wired to all panes
+
+TabBar Changes
+~~~~~~~~~~~~~~
+
+- ``on_tab_split: callable | None`` --- new callback ``(name: str, direction: str)``
+- Right-click menu gains "Split right" and "Split down"
+
+Uninstaller
+-----------
+
+- ``Release.release()`` generates an uninstaller executable alongside the installer
+- Reads ``.VIS/install_log.json`` to know exactly which files and shortcuts were created
+- Removes all installed binaries, adjacent files, and desktop shortcuts
+- Optionally deregisters from Windows Add/Remove Programs
+
+Install Log
+-----------
+
+- Installer writes ``.VIS/install_log.json`` after a successful install
+- Records every extracted file path, every shortcut created, the install location, and a
+  timestamp
+- Used by the uninstaller and the update-in-place installer (0.4.4)
+- Quiet mode (``--Quiet``) also writes the install log

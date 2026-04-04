@@ -1,0 +1,8 @@
+0.8 --- Advanced Creation and Restoration
+=========================================
+
+*Upcoming*
+
+- Create VIS project in a new folder (not just the current directory)
+- Default ``.gitignore`` for VIS projects
+- Repair broken screens to use templates

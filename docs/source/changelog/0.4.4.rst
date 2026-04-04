@@ -1,0 +1,45 @@
+0.4.4 --- Tab Bar Enhancements, Installer Update & Integrity
+=============================================================
+
+*Upcoming*
+
+Tab Bar Enhancements
+--------------------
+
+- **Tab bar position** --- top, left, bottom, or right
+- **Maximum simultaneous open tabs** --- enforced when opening new tabs
+- **Close confirmation** --- warn when closing a tab with unsaved state (requires
+  ``has_unsaved()`` hook)
+- **Multiple tabs of the same screen** --- verify ``_unique_display_name()`` behaviour
+  holds correctly with split layouts from 0.4.3
+
+Update-in-Place Installer
+--------------------------
+
+- Installer detects an existing installation at the target path by reading
+  ``.VIS/install_log.json``
+- Compares archive checksums against installed files and only extracts changed or new
+  files
+- Preserves user-modified files (e.g. settings) unless explicitly overwritten
+- Reduces install time for updates compared to a full reinstall
+
+Rollback on Failure
+-------------------
+
+- If extraction fails mid-install, the installer cleans up all partially extracted files
+- If updating an existing installation, previous state is restored from a temporary backup
+  created before extraction began
+
+Verify Installation
+-------------------
+
+- Post-install integrity check confirms all expected files are present and match expected
+  sizes from the archive
+- Triggered manually from the installer menubar or via ``--Verify`` in quiet mode
+
+Installer Menubar
+-----------------
+
+- Installer GUI gains a menubar with an "Options" dropdown
+- Entries: "Run Uninstaller" (launches uninstaller if installed), "Verify File Integrity"
+  (runs check against ``install_log.json``)
