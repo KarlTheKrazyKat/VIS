@@ -449,12 +449,12 @@ class Host(Root):
         hooks     = entry.get("hooks")
         icon      = entry.get("icon")
         base_name = entry.get("base_name", name)
-        # Create the new pane via split
-        new_pane = self._split_view.split(pane, direction)
-        # Move the tab from the original pane to the new one
-        pane.close_tab(name)
-        new_pane.open_tab(name, module, hooks=hooks, icon=icon,
-                          base_name=base_name)
+        # Split transfers all tabs to left_pane; right_pane is empty
+        left_pane, right_pane = self._split_view.split(pane, direction)
+        # Move the clicked tab from left to right
+        left_pane.close_tab(name)
+        right_pane.open_tab(name, module, hooks=hooks, icon=icon,
+                            base_name=base_name)
 
     def _open_detached(self, name: str, module, hooks, icon, base_name: str,
                        x_root: int, y_root: int,

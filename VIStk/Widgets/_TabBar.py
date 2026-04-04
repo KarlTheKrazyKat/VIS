@@ -10,6 +10,8 @@ _SEP_BG          = "grey50"    # vertical divider between tabs
 _INDICATOR_COLOR = "dodger blue"  # drag insertion indicator
 _BG_EMPTY        = "grey55"    # empty bar thin drop-zone line
 _BG_HOVER_EMPTY  = "grey68"    # empty bar highlighted during drag hover
+_BG_FOCUSED      = "grey62"    # tab strip when pane is focused (same as default)
+_BG_UNFOCUSED    = "grey52"    # tab strip when pane is NOT focused (darker)
 
 _DRAG_THRESHOLD  = 8           # pixels of motion (any direction) to activate drag ghost
 _EMPTY_BAR_H     = 28          # height of the bar when no tabs are open
@@ -217,6 +219,21 @@ class TabBar(Frame):
         """Update the displayed text of tab *name*'s button."""
         if name in self._tabs:
             self._tabs[name]["button"].config(text=display)
+
+    def set_focused_style(self, focused: bool):
+        """Toggle the visual focused/unfocused state of the bar.
+
+        When focused the bar uses the normal background; when unfocused
+        it dims slightly so the user can see which pane is active.
+        """
+        bg = _BG_FOCUSED if focused else _BG_UNFOCUSED
+        self.configure(bg=bg)
+        # Update inactive tab buttons to match the bar
+        inactive_bg = _BG_INACTIVE if focused else _BG_UNFOCUSED
+        for name, entry in self._tabs.items():
+            if name != self.active:
+                entry["button"].configure(bg=inactive_bg)
+                entry["close"].configure(bg=inactive_bg)
 
     def set_insert_indicator(self, idx: int, drag_name: str = None):
         """Show the insertion indicator for a drop at position *idx*."""
