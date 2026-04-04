@@ -62,6 +62,7 @@ class TabBar(Frame):
         self.on_tab_refresh  = None
         self.on_drag_detach  = None
         self.on_drag_merge   = None     # (name, source_bar, insert_idx)
+        self.on_tab_split    = None     # (name, direction)  "right" or "down"
 
         # Drag state
         self._drag_name: str | None = None
@@ -268,6 +269,10 @@ class TabBar(Frame):
         menu = Menu(self, tearoff=0)
         menu.add_command(label="Open in new window",
                          command=lambda: self._do_popout(name))
+        menu.add_command(label="Split right",
+                         command=lambda: self._do_split(name, "right"))
+        menu.add_command(label="Split down",
+                         command=lambda: self._do_split(name, "down"))
         menu.add_command(label="Force refresh",
                          command=lambda: self._do_refresh(name))
         menu.add_separator()
@@ -281,6 +286,10 @@ class TabBar(Frame):
     def _do_popout(self, name: str):
         if self.on_tab_popout:
             self.on_tab_popout(name)
+
+    def _do_split(self, name: str, direction: str):
+        if self.on_tab_split:
+            self.on_tab_split(name, direction)
 
     def _do_refresh(self, name: str):
         if self.on_tab_refresh:

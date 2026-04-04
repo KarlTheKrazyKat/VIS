@@ -7,6 +7,7 @@ from VIStk.Widgets._WarningWindow import WarningWindow
 from VIStk.Widgets._TabBar import TabBar
 from VIStk.Widgets._HostMenu import HostMenu
 from VIStk.Widgets._InfoRow import InfoRow
+from VIStk.Widgets._SplitView import SplitView
 
 
 __all__ = ["VISMenu",
@@ -18,4 +19,5 @@ __all__ = ["VISMenu",
            "TabBar",
            "HostMenu",
            "InfoRow",
+           "SplitView",
            ]

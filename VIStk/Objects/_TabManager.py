@@ -59,6 +59,7 @@ class TabManager(Frame):
         on_tab_detach      (callable | None) ``(name)``
         on_tab_refresh     (callable | None) ``(name)``
         on_tab_info_change (callable | None) ``(name, info)``
+        on_tab_split       (callable | None) ``(name, direction)``
     """
 
     def __init__(self, parent, **kwargs):
@@ -75,6 +76,7 @@ class TabManager(Frame):
         self.on_tab_detach     = None
         self.on_tab_refresh    = None
         self.on_tab_info_change = None
+        self.on_tab_split      = None
 
         self.tab_bar = TabBar(self)
         self.tab_bar.pack(side="top", fill="x")
@@ -89,6 +91,7 @@ class TabManager(Frame):
         self.tab_bar.on_tab_refresh  = self._on_refresh_request
         self.tab_bar.on_drag_detach  = self._on_detach_request
         self.tab_bar.on_drag_merge   = self._on_merge_request
+        self.tab_bar.on_tab_split    = self._on_split_request
 
     # ── Public API ─────────────────────────────────────────────────────────────
 
@@ -284,6 +287,10 @@ class TabManager(Frame):
     def _on_detach_request(self, name: str):
         if self.on_tab_detach:
             self.on_tab_detach(name)
+
+    def _on_split_request(self, name: str, direction: str):
+        if self.on_tab_split:
+            self.on_tab_split(name, direction)
 
     def _on_merge_request(self, name: str, source_bar: "TabBar", insert_idx: int = -1):
         """A drag from *source_bar* was released over this bar at *insert_idx*."""

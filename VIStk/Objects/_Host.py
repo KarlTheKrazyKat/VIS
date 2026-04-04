@@ -12,9 +12,10 @@ import time
 from tkinter import Toplevel
 
 from VIStk.Objects._Root import Root
-from VIStk.Objects._TabManager import TabManager
+from VIStk.Objects._TabManager import TabManager as _TabManager
 from VIStk.Widgets._HostMenu import HostMenu
 from VIStk.Widgets._InfoRow import InfoRow
+from VIStk.Widgets._SplitView import SplitView
 
 # Module-level singleton reference — set by Host.__init__, cleared on quit_host.
 _HOST_INSTANCE: "Host | None" = None
@@ -51,7 +52,8 @@ class Host(Root):
     characteristic info string.
 
     Attributes:
-        TabManager (TabManager)
+        TabManager (TabManager): Property shim — returns the focused pane
+            from the underlying ``SplitView``.
         HostMenu   (HostMenu)
         InfoRow    (InfoRow)
         fps        (float)
@@ -66,14 +68,17 @@ class Host(Root):
 
         self.protocol("WM_DELETE_WINDOW", self._hide_to_tray)
 
-        self.TabManager = TabManager(self)
-        self.TabManager.pack(fill="both", expand=True)
-        self.TabManager.on_tab_activate    = self._on_tab_activate
-        self.TabManager.on_tab_deactivate  = self._on_tab_deactivate
-        self.TabManager.on_tab_popout      = self._on_tab_popout
-        self.TabManager.on_tab_detach      = self._on_tab_detach
-        self.TabManager.on_tab_refresh     = self._on_tab_refresh
-        self.TabManager.on_tab_info_change = self._on_tab_info_change
+        self._split_view = SplitView(self, host=self)
+        self._split_view.pack(fill="both", expand=True)
+        self._split_view.set_callbacks({
+            "on_tab_activate":    self._on_tab_activate,
+            "on_tab_deactivate":  self._on_tab_deactivate,
+            "on_tab_popout":      self._on_tab_popout,
+            "on_tab_detach":      self._on_tab_detach,
+            "on_tab_refresh":     self._on_tab_refresh,
+            "on_tab_info_change": self._on_tab_info_change,
+            "on_tab_split":       self._on_tab_split,
+        })
 
         # Detached window tracking
         self._detached: list = []
@@ -122,6 +127,18 @@ class Host(Root):
         if start_hidden:
             self.withdraw()
 
+    # ── Compatibility shim ─────────────────────────────────────────────────────
+
+    @property
+    def TabManager(self) -> "_TabManager":
+        """Return the focused pane from the SplitView.
+
+        Existing code that reads ``host.TabManager`` gets the pane the user
+        last interacted with.  Methods that need *all* panes should use
+        ``self._split_view`` directly.
+        """
+        return self._split_view.focused_pane
+
     # ── Navigation ─────────────────────────────────────────────────────────────
 
     def open(self, screen_name: str, stay_open: bool = False):
@@ -139,20 +156,21 @@ class Host(Root):
 
     def _get_all_tab_names(self) -> set[str]:
         """Return all display names currently open in any window."""
-        names: set[str] = set(self.TabManager._tabs.keys())
+        names: set[str] = set(self._split_view.all_tabs().keys())
         for dw in self._detached:
             names.update(dw.tab_manager._tabs.keys())
         return names
 
-    def _find_tab_by_base(self, base_name: str) -> tuple["TabManager | None", "str | None"]:
+    def _find_tab_by_base(self, base_name: str) -> tuple["_TabManager | None", "str | None"]:
         """Return (tab_manager, display_name) for the first open tab whose base_name matches.
 
-        Searches the main window first, then detached windows.
+        Searches all main-window panes first, then detached windows.
         Returns (None, None) if not found.
         """
-        for display, entry in self.TabManager._tabs.items():
-            if entry.get("base_name", display) == base_name:
-                return self.TabManager, display
+        for pane in self._split_view.all_tab_managers():
+            for display, entry in pane._tabs.items():
+                if entry.get("base_name", display) == base_name:
+                    return pane, display
         for dw in self._detached:
             for display, entry in dw.tab_manager._tabs.items():
                 if entry.get("base_name", display) == base_name:
@@ -213,7 +231,10 @@ class Host(Root):
     def _on_tab_activate(self, name: str, module):
         self.HostMenu.clear_screen_items()
         self.HostMenu.reset_overrides()
-        hooks = self.TabManager._tabs.get(name, {}).get("hooks")
+        pane = self._split_view.find_pane_for_tab(name)
+        if pane is None:
+            return
+        hooks = pane._tabs.get(name, {}).get("hooks")
         cfg = (getattr(hooks, "configure_menu", None)
                or getattr(module, "configure_menu", None))
         if cfg:
@@ -229,11 +250,11 @@ class Host(Root):
             except Exception:
                 pass
         scr = self.Project.getScreen(
-            self.TabManager._tabs.get(name, {}).get("base_name", name)
+            pane._tabs.get(name, {}).get("base_name", name)
         )
         self.InfoRow.set_screen(name, str(scr.s_version) if scr else "")
         # Update window title (include info if already set)
-        info = self.TabManager._tabs.get(name, {}).get("info", "")
+        info = pane._tabs.get(name, {}).get("info", "")
         self._set_title(name, info)
 
     def _on_tab_deactivate(self, name: str | None):
@@ -246,7 +267,8 @@ class Host(Root):
 
     def _on_tab_info_change(self, name: str, info: str):
         """Triggered when a tab's characteristic info string changes."""
-        if self.TabManager.active == name:
+        pane = self._split_view.find_pane_for_tab(name)
+        if pane is not None and pane is self._split_view.focused_pane and pane.active == name:
             self._set_title(name, info)
 
     def _set_title(self, screen: str, info: str = ""):
@@ -304,8 +326,9 @@ class Host(Root):
         win.protocol("WM_DELETE_WINDOW", _on_close)
 
     def _close_screen(self, name: str):
-        if self.TabManager.has_tab(name):
-            self.TabManager.close_tab(name)
+        pane = self._split_view.find_pane_for_tab(name)
+        if pane is not None:
+            pane.close_tab(name)
         elif name in self._toplevels:
             self._close_toplevel(name)
 
@@ -365,14 +388,15 @@ class Host(Root):
 
     def _on_tab_popout(self, name: str):
         """Pop out via right-click — use current pointer position."""
-        if not self.TabManager.has_tab(name):
+        pane = self._split_view.find_pane_for_tab(name)
+        if pane is None:
             return
-        entry     = self.TabManager._tabs[name]
+        entry     = pane._tabs[name]
         module    = entry.get("module")
         hooks     = entry.get("hooks")
         icon      = entry.get("icon")
         base_name = entry.get("base_name", name)
-        self.TabManager.close_tab(name)
+        pane.close_tab(name)
         x = self.winfo_pointerx()
         y = self.winfo_pointery()
         self._open_detached(name, module, hooks, icon, base_name,
@@ -380,16 +404,17 @@ class Host(Root):
 
     def _on_tab_detach(self, name: str):
         """Handle drag-to-detach — use pointer position and stored drag offsets."""
-        if not self.TabManager.has_tab(name):
+        pane = self._split_view.find_pane_for_tab(name)
+        if pane is None:
             return
-        entry     = self.TabManager._tabs[name]
+        entry     = pane._tabs[name]
         module    = entry.get("module")
         hooks     = entry.get("hooks")
         icon      = entry.get("icon")
         base_name = entry.get("base_name", name)
-        bx = self.TabManager.tab_bar._last_drag_btn_offset_x
-        by = self.TabManager.tab_bar._last_drag_btn_offset_y
-        self.TabManager.close_tab(name)
+        bx = pane.tab_bar._last_drag_btn_offset_x
+        by = pane.tab_bar._last_drag_btn_offset_y
+        pane.close_tab(name)
         x = self.winfo_pointerx()
         y = self.winfo_pointery()
         self._open_detached(name, module, hooks, icon, base_name,
@@ -397,21 +422,39 @@ class Host(Root):
 
     def _on_tab_refresh(self, name: str):
         """Re-import and reopen the named tab at its current position."""
-        if not self.TabManager.has_tab(name):
+        pane = self._split_view.find_pane_for_tab(name)
+        if pane is None:
             return
-        entry     = self.TabManager._tabs[name]
+        entry     = pane._tabs[name]
         base_name = entry.get("base_name", name)
         icon      = entry.get("icon")
-        idx       = self.TabManager.tab_bar.get_tab_idx(name)
+        idx       = pane.tab_bar.get_tab_idx(name)
         scr = self.Project.getScreen(base_name)
         if scr is None:
-            self.TabManager.force_refresh_tab(name)
+            pane.force_refresh_tab(name)
             return
-        self.TabManager.close_tab(name)
+        pane.close_tab(name)
         module = self._import_screen(scr)
         hooks  = self._import_hooks(scr)
-        self.TabManager.open_tab(name, module, hooks=hooks, icon=icon,
-                                 insert_idx=idx, base_name=base_name)
+        pane.open_tab(name, module, hooks=hooks, icon=icon,
+                      insert_idx=idx, base_name=base_name)
+
+    def _on_tab_split(self, name: str, direction: str):
+        """Handle right-click 'Split right' / 'Split down'."""
+        pane = self._split_view.find_pane_for_tab(name)
+        if pane is None:
+            return
+        entry     = pane._tabs[name]
+        module    = entry.get("module")
+        hooks     = entry.get("hooks")
+        icon      = entry.get("icon")
+        base_name = entry.get("base_name", name)
+        # Create the new pane via split
+        new_pane = self._split_view.split(pane, direction)
+        # Move the tab from the original pane to the new one
+        pane.close_tab(name)
+        new_pane.open_tab(name, module, hooks=hooks, icon=icon,
+                          base_name=base_name)
 
     def _open_detached(self, name: str, module, hooks, icon, base_name: str,
                        x_root: int, y_root: int,
@@ -613,8 +656,9 @@ class Host(Root):
             self._close_toplevel(name)
         for dw in list(self._detached):
             dw._on_close()
-        for name in list(self.TabManager._tabs.keys()):
-            self.TabManager.close_tab(name)
+        for pane in self._split_view.all_tab_managers():
+            for name in list(pane._tabs.keys()):
+                pane.close_tab(name)
         if self._tray_icon:
             try:
                 self._tray_icon.stop()

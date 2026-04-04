@@ -216,26 +216,81 @@ class Release(Project):
         #Clean Environment
         self.clean()
 
-        #%Installer Generation
+        #%Installer & Uninstaller Generation
         pendix = self.title if self.flag == "" else f"{self.title}-{self.flag}"
         final = f"{self.location}{pendix}"
         binaries_zip = f"{self.location}binaries.zip"
 
-        #Create binaries.zip from built output
-        print(f"Creating binaries.zip from {final} for installer")
-        shutil.make_archive(base_name=f"{self.location}binaries", format="zip", root_dir=final)
-
-        #Resolve installer icon
+        #Resolve icon for both installer and uninstaller
         icon_file = self.d_icon
         if sys.platform == "win32":
             icon_file = self.p_project + "/Icons/" + icon_file + ".ico"
         else:
             icon_file = self.p_project + "/Icons/" + icon_file + ".xbm"
 
-        #Installer cache — skip PyInstaller if Installer.py and icon are unchanged
-        installer_src = VISROOT.replace("\\","/")+"Structures/Installer.py"
         cache_dir = self.p_vinfo + "/cache"
         os.makedirs(cache_dir, exist_ok=True)
+
+        #%Uninstaller compilation (cached)
+        uninstaller_src = VISROOT.replace("\\","/")+"Structures/Uninstaller.py"
+        cache_uninstaller = cache_dir + "/uninstaller_base"
+        if sys.platform == "win32":
+            cache_uninstaller += ".exe"
+        uninst_hash_file = cache_dir + "/uninstaller.hash"
+
+        #Hash uninstaller source + icon to detect changes
+        uninst_hasher = hashlib.sha256()
+        for path in (uninstaller_src, icon_file):
+            with open(path, "rb") as f:
+                uninst_hasher.update(f.read())
+        uninst_current_hash = uninst_hasher.hexdigest()
+
+        #Check if cached uninstaller is still valid
+        uninst_cached_hash = ""
+        if os.path.exists(uninst_hash_file) and os.path.exists(cache_uninstaller):
+            with open(uninst_hash_file, "r") as f:
+                uninst_cached_hash = f.read().strip()
+
+        if uninst_cached_hash == uninst_current_hash:
+            print("Uninstaller source unchanged — using cached uninstaller")
+        else:
+            print(f"Compiling uninstaller for {pendix}")
+            subprocess.call(
+                f"pyinstaller --noconfirm --onefile "
+                f"{'--uac-admin ' if sys.platform == 'win32' else ''}"
+                f"--windowed --name Uninstaller --log-level FATAL "
+                f"--icon {icon_file} --hidden-import PIL._tkinter_finder "
+                f"{uninstaller_src}",
+                shell=True, cwd=self.location
+            )
+
+            #Cache the compiled uninstaller
+            built_uninst = glob.glob("Uninstaller*", root_dir=self.location+"dist/")[0]
+            shutil.copy2(self.location+f"dist/{built_uninst}", cache_uninstaller)
+
+            #Save hash for future comparisons
+            with open(uninst_hash_file, "w") as f:
+                f.write(uninst_current_hash)
+
+            #Clean PyInstaller build artifacts
+            shutil.rmtree(self.location+"dist/")
+            shutil.rmtree(self.location+"build/")
+            if os.path.exists(self.location+"Uninstaller.spec"):
+                os.remove(self.location+"Uninstaller.spec")
+
+            print("Uninstaller cached for future releases")
+
+        #Copy uninstaller into build output so it ends up in binaries.zip
+        uninst_dest_name = "Uninstaller.exe" if sys.platform == "win32" else "Uninstaller"
+        shutil.copy2(cache_uninstaller, f"{final}/{uninst_dest_name}")
+        print(f"Uninstaller included in release: {uninst_dest_name}")
+
+        #Create binaries.zip from built output
+        print(f"Creating binaries.zip from {final} for installer")
+        shutil.make_archive(base_name=f"{self.location}binaries", format="zip", root_dir=final)
+
+        #%Installer compilation (cached)
+        installer_src = VISROOT.replace("\\","/")+"Structures/Installer.py"
 
         cache_base = cache_dir + "/installer_base"
         if sys.platform == "win32":

@@ -10,6 +10,7 @@ import sys
 import json
 import os
 import subprocess
+import datetime
 import platformdirs
 if sys.platform == "win32": import winshell
 from pathlib import Path
@@ -152,6 +153,94 @@ def adjacents(location):
     os.makedirs(os.path.join(location, "Icons"), exist_ok=True)
     os.makedirs(os.path.join(location, "_internal"), exist_ok=True)
 
+
+def write_install_log(location, selected_screens, desktop_shortcuts):
+    """Write install_log.json recording what was installed."""
+    # Collect _internal/ subdirectories (immediate children only)
+    internal_dir = os.path.join(location, "_internal")
+    directories = [".VIS", "Icons", "Images", "_internal"]
+    if os.path.isdir(internal_dir):
+        for entry in os.listdir(internal_dir):
+            if os.path.isdir(os.path.join(internal_dir, entry)):
+                directories.append(f"_internal/{entry}")
+
+    # Build screen list with versions
+    screens = []
+    for name in selected_screens:
+        scr_info = info[title]["Screens"].get(name, {})
+        ext = ".exe" if sys.platform == "win32" else ""
+        screens.append({
+            "name": name,
+            "version": scr_info.get("version", ""),
+            "executable": name + ext,
+        })
+
+    registry_key = ""
+    if sys.platform == "win32":
+        registry_key = f"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{title}"
+
+    log = {
+        "app_name": title,
+        "app_version": app_version,
+        "install_date": datetime.datetime.now().isoformat(timespec="seconds"),
+        "install_location": str(location),
+        "company": info[title].get("metadata", {}).get("company", ""),
+        "screens": screens,
+        "desktop_shortcuts": list(desktop_shortcuts),
+        "directories": directories,
+        "registry_key": registry_key,
+    }
+
+    log_path = os.path.join(location, "install_log.json")
+    with open(log_path, "w") as f:
+        json.dump(log, f, indent=2)
+
+
+def register_uninstall(location):
+    """Register the application in Windows Add/Remove Programs."""
+    if sys.platform != "win32":
+        return
+    try:
+        import winreg
+        key_path = f"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{title}"
+        uninstaller = os.path.join(location, "Uninstaller.exe")
+
+        # Estimate installed size in KB
+        total_kb = 0
+        for dirpath, dirnames, filenames in os.walk(str(location)):
+            for fn in filenames:
+                try:
+                    total_kb += os.path.getsize(os.path.join(dirpath, fn))
+                except OSError:
+                    pass
+        total_kb = total_kb // 1024
+
+        icon_name = info[title]["defaults"].get("icon", "VIS")
+        icon_path = os.path.join(location, "Icons", icon_name + ".ico")
+
+        with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, key_path, 0,
+                                winreg.KEY_SET_VALUE) as key:
+            winreg.SetValueEx(key, "DisplayName", 0, winreg.REG_SZ, title)
+            winreg.SetValueEx(key, "UninstallString", 0, winreg.REG_SZ,
+                              f'"{uninstaller}"')
+            winreg.SetValueEx(key, "InstallLocation", 0, winreg.REG_SZ,
+                              str(location))
+            winreg.SetValueEx(key, "DisplayVersion", 0, winreg.REG_SZ,
+                              app_version)
+            company = info[title].get("metadata", {}).get("company", "")
+            if company:
+                winreg.SetValueEx(key, "Publisher", 0, winreg.REG_SZ, company)
+            if os.path.exists(icon_path):
+                winreg.SetValueEx(key, "DisplayIcon", 0, winreg.REG_SZ,
+                                  icon_path)
+            winreg.SetValueEx(key, "EstimatedSize", 0, winreg.REG_DWORD,
+                              total_kb)
+            winreg.SetValueEx(key, "NoModify", 0, winreg.REG_DWORD, 1)
+            winreg.SetValueEx(key, "NoRepair", 0, winreg.REG_DWORD, 1)
+    except Exception:
+        pass
+
+
 #%Install & Escape Command Line Args
 if QUIET is True:
     if custom_path:
@@ -185,6 +274,8 @@ if QUIET is True:
         print(f"  Creating shortcut: {i}")
         shortcut(i, location)
 
+    write_install_log(location, cinstalls, dinstalls)
+    register_uninstall(location)
     print("Installation complete.")
     archive.close()
     sys.exit()
@@ -468,11 +559,19 @@ def binstall(desktop:list[str], selected_screens:list[str]):
         root.update()
 
     # Create desktop shortcuts
+    actual_shortcuts = []
     for idx, name in enumerate(desktop):
         if var_options[idx].get() == 1:
             file_label.config(text=f"Creating shortcut: {name}")
             root.update()
             shortcut(name, location)
+            actual_shortcuts.append(name)
+
+    # Write install log and register in Add/Remove Programs
+    file_label.config(text="Registering installation...")
+    root.update()
+    write_install_log(location, selected_screens, actual_shortcuts)
+    register_uninstall(location)
 
     file_label.config(text="Installation complete.")
     progress_bar.config(value=100)
