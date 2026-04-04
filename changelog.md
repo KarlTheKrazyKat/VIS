@@ -171,9 +171,11 @@ A screen that needs more than one cascade on the menu bar calls `set_screen_item
 - A SHA-256 hash of `Installer.py` + the icon file is stored alongside the cache; the base is only recompiled when the installer source or icon changes
 - `Installer.py` tries self-contained mode first (`sys.frozen` + `ZipFile(sys.executable)`), falls back to external `binaries.zip` for development/testing
 
-**Planned**
+**Auto-launch after install**
 
-- Auto-launch after install — optional checkbox on the completion page to launch the Host immediately after installation finishes
+- Optional "Launch [AppName]" checkbox on the completion page, checked by default
+- On Close, launches the default screen binary (which starts the Host if not running); falls back to the first installed screen if the default was not selected
+- Checkbox only appears when at least one screen was installed
 
 **Documentation updates**
 

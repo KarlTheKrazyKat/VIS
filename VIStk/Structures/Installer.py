@@ -478,7 +478,37 @@ def binstall(desktop:list[str], selected_screens:list[str]):
     progress_bar.config(value=100)
     pct_label.config(text="100%")
     close.state(["!disabled"])
-    close.config(command=lambda: (archive.close(), root.destroy()))
+
+    # Auto-launch checkbox
+    launch_var = tk.IntVar(value=1)
+    default_screen = info[title].get("defaults", {}).get("default_screen")
+    launch_target = None
+    if default_screen and default_screen in selected_screens:
+        launch_target = default_screen
+    elif selected_screens:
+        launch_target = selected_screens[0]
+
+    if launch_target:
+        launch_check = ttk.Checkbutton(progress_frame, text=f"Launch {title}",
+                                       variable=launch_var)
+        launch_check.pack(pady=(4, 8))
+        launch_check.state(['!alternate'])
+
+        def _close_and_maybe_launch():
+            archive.close()
+            if launch_var.get():
+                if sys.platform == "win32":
+                    exe = os.path.join(location, launch_target + ".exe")
+                else:
+                    exe = os.path.join(location, launch_target)
+                if os.path.exists(str(exe)):
+                    subprocess.Popen([str(exe)], cwd=str(location))
+            root.destroy()
+
+        close.config(command=_close_and_maybe_launch)
+    else:
+        close.config(command=lambda: (archive.close(), root.destroy()))
+
     root.update()
 
 def nextpage():
