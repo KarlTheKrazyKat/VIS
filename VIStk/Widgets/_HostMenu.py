@@ -59,8 +59,10 @@ class HostMenu:
         self._close_command = close_command
         self._project_labels: list[str] = []
         self._screen_indices: list[int] = []
+        self._replaced_shared: set[int] = set()
         self._shared_menus: dict[str, Menu] = {}
         self._shared_defaults: dict[str, dict[str, dict]] = {}
+        self._hidden_shared: list[tuple[str, int, Menu]] = []
 
     # ── Public API ─────────────────────────────────────────────────────────────
 
@@ -102,9 +104,10 @@ class HostMenu:
     def set_screen_items(self, items: list[dict], label: str = "Screen"):
         """Add one cascade to the screen layer (accumulates).
 
-        Calling this multiple times within a single ``configure_menu`` hook
-        appends multiple cascades side by side — all are cleared together when
-        the tab deactivates.
+        If *label* matches an existing shared-menu cascade, the shared
+        cascade is temporarily replaced in-place so the menu bar keeps
+        the same ordering.  On :meth:`clear_screen_items` the shared
+        cascade is restored automatically.
 
         Args:
             items: List of item spec dicts (see class docstring).
@@ -114,17 +117,41 @@ class HostMenu:
             return
         cascade = Menu(self.menubar, tearoff=0)
         self._populate(cascade, items)
+
+        # If a shared cascade with this label exists, replace it in-place
+        if label in self._shared_menus:
+            try:
+                idx = self.menubar.index(label)
+                old_menu = self._shared_menus[label]
+                self._hidden_shared.append((label, idx, old_menu))
+                self.menubar.entryconfigure(idx, menu=cascade)
+                self._replaced_shared.add(idx)
+                self._screen_indices.append(idx)
+                return
+            except Exception:
+                pass
+
         self.menubar.add_cascade(label=label, menu=cascade)
         self._screen_indices.append(self.menubar.index("end"))
 
     def clear_screen_items(self):
-        """Remove all accumulated screen cascades."""
+        """Remove all accumulated screen cascades and restore shared ones."""
         for idx in reversed(self._screen_indices):
+            if idx in self._replaced_shared:
+                continue
             try:
                 self.menubar.delete(idx)
             except Exception:
                 pass
         self._screen_indices.clear()
+        self._replaced_shared.clear()
+        # Restore hidden shared cascades
+        for label, idx, old_menu in self._hidden_shared:
+            try:
+                self.menubar.entryconfigure(idx, menu=old_menu)
+            except Exception:
+                pass
+        self._hidden_shared.clear()
 
     def build_shared_menu(self, structure: dict):
         """Build the persistent shared menu from a structure dict.

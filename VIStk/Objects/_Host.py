@@ -148,7 +148,24 @@ class Host(Root):
             return
         if scr.tabbed:
             self._open_tab(scr)
-            self.deiconify()
+            # Only raise Host if the tab was opened there, not in a DetachedWindow
+            from VIStk.Widgets._SplitView import SplitView
+            target = SplitView._global_focused_pane
+            opened_in_host = (target is None or
+                              id(target) in self._split_view._pane_parents)
+            if opened_in_host:
+                self.deiconify()
+            else:
+                # Raise the DetachedWindow that owns the target pane
+                for dw in self._detached:
+                    if id(target) in dw._split_view._pane_parents:
+                        try:
+                            dw.win.deiconify()
+                            dw.win.lift()
+                            dw.win.focus_force()
+                        except Exception:
+                            pass
+                        break
         else:
             self._open_toplevel(scr)
 
@@ -207,8 +224,11 @@ class Host(Root):
         module  = self._import_screen(scr)
         hooks   = self._import_hooks(scr)
         icon    = self._load_tab_icon(scr)
-        self.TabManager.open_tab(display, module, hooks=hooks, icon=icon,
-                                 base_name=scr.name)
+        # Open in whichever pane was last focused (Host or DetachedWindow)
+        from VIStk.Widgets._SplitView import SplitView
+        target = SplitView._global_focused_pane or self.TabManager
+        target.open_tab(display, module, hooks=hooks, icon=icon,
+                        base_name=scr.name)
 
     def _load_tab_icon(self, scr) -> "PIL.ImageTk.PhotoImage | None":
         if not scr.icon:
@@ -439,22 +459,53 @@ class Host(Root):
         pane.open_tab(name, module, hooks=hooks, icon=icon,
                       insert_idx=idx, base_name=base_name)
 
-    def _on_tab_split(self, name: str, direction: str):
-        """Handle right-click 'Split right' / 'Split down'."""
-        pane = self._split_view.find_pane_for_tab(name)
-        if pane is None:
+    def _on_tab_split(self, name: str, direction: str, target_pane=None):
+        """Handle right-click 'Split right' / 'Split down' or drag-to-split.
+
+        *target_pane* overrides the default (pane owning *name*) — used
+        when a tab is dragged onto another pane's split zone.  The target
+        may belong to a different SplitView (cross-window drop).
+        """
+        from VIStk.Widgets._SplitView import SplitView
+
+        source_pane = self._split_view.find_pane_for_tab(name)
+        if source_pane is None:
             return
-        entry     = pane._tabs[name]
+        split_pane = target_pane if target_pane is not None else source_pane
+        entry     = source_pane._tabs[name]
         module    = entry.get("module")
         hooks     = entry.get("hooks")
         icon      = entry.get("icon")
         base_name = entry.get("base_name", name)
-        # Split transfers all tabs to left_pane; right_pane is empty
-        left_pane, right_pane = self._split_view.split(pane, direction)
-        # Move the clicked tab from left to right
-        left_pane.close_tab(name)
-        right_pane.open_tab(name, module, hooks=hooks, icon=icon,
-                            base_name=base_name)
+
+        # Find which SplitView owns the target pane
+        target_sv = SplitView.find_owner(split_pane)
+        if target_sv is None:
+            target_sv = self._split_view
+
+        if direction == "center":
+            # Drop into existing pane — add tab without splitting
+            if split_pane is source_pane:
+                return  # already in this pane
+            source_pane.close_tab(name)
+            split_pane.open_tab(name, module, hooks=hooks, icon=icon,
+                                base_name=base_name)
+        elif split_pane is source_pane:
+            # Only tab in the pane — splitting would just recreate the same state
+            if len(source_pane._tabs) <= 1:
+                return
+            # Exclude the moving tab so it's only created once (in right_pane)
+            left_pane, right_pane = target_sv.split(
+                split_pane, direction, exclude={name})
+            right_pane.open_tab(name, module, hooks=hooks, icon=icon,
+                                base_name=base_name)
+        else:
+            # Drag onto a different pane's zone (same or cross-window):
+            # Close from source, then split the target
+            source_pane.close_tab(name)
+            left_pane, right_pane = target_sv.split(split_pane, direction)
+            right_pane.open_tab(name, module, hooks=hooks, icon=icon,
+                                base_name=base_name)
 
     def _open_detached(self, name: str, module, hooks, icon, base_name: str,
                        x_root: int, y_root: int,

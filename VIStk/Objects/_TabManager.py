@@ -288,9 +288,9 @@ class TabManager(Frame):
         if self.on_tab_detach:
             self.on_tab_detach(name)
 
-    def _on_split_request(self, name: str, direction: str):
+    def _on_split_request(self, name: str, direction: str, target_pane=None):
         if self.on_tab_split:
-            self.on_tab_split(name, direction)
+            self.on_tab_split(name, direction, target_pane)
 
     def _on_merge_request(self, name: str, source_bar: "TabBar", insert_idx: int = -1):
         """A drag from *source_bar* was released over this bar at *insert_idx*."""

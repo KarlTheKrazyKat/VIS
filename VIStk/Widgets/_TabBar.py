@@ -12,6 +12,7 @@ _BG_EMPTY        = "grey55"    # empty bar thin drop-zone line
 _BG_HOVER_EMPTY  = "grey68"    # empty bar highlighted during drag hover
 _BG_FOCUSED      = "grey62"    # tab strip when pane is focused (same as default)
 _BG_UNFOCUSED    = "grey52"    # tab strip when pane is NOT focused (darker)
+_BG_ACTIVE_UNFOC = "grey65"    # active tab in an unfocused pane (dimmed but visible)
 
 _DRAG_THRESHOLD  = 8           # pixels of motion (any direction) to activate drag ghost
 _EMPTY_BAR_H     = 28          # height of the bar when no tabs are open
@@ -65,6 +66,8 @@ class TabBar(Frame):
         self.on_drag_detach  = None
         self.on_drag_merge   = None     # (name, source_bar, insert_idx)
         self.on_tab_split    = None     # (name, direction)  "right" or "down"
+        self.on_drag_zone    = None     # (x_root, y_root) → (pane, direction) | None
+        self._focused: bool  = True     # visual focused state (set by set_focused_style)
 
         # Drag state
         self._drag_name: str | None = None
@@ -226,12 +229,16 @@ class TabBar(Frame):
         When focused the bar uses the normal background; when unfocused
         it dims slightly so the user can see which pane is active.
         """
+        self._focused = focused
         bg = _BG_FOCUSED if focused else _BG_UNFOCUSED
         self.configure(bg=bg)
-        # Update inactive tab buttons to match the bar
         inactive_bg = _BG_INACTIVE if focused else _BG_UNFOCUSED
+        active_bg = _BG_ACTIVE if focused else _BG_ACTIVE_UNFOC
         for name, entry in self._tabs.items():
-            if name != self.active:
+            if name == self.active:
+                entry["button"].configure(bg=active_bg)
+                entry["close"].configure(bg=active_bg)
+            else:
                 entry["button"].configure(bg=inactive_bg)
                 entry["close"].configure(bg=inactive_bg)
 
@@ -471,11 +478,17 @@ class TabBar(Frame):
             self._insert_bar = target_bar
             self._insert_idx = idx
             target_bar.set_insert_indicator(idx, drag)
+            # Clear any drop-zone overlay when over a tab bar
+            if self.on_drag_zone:
+                self.on_drag_zone("hide", x, y)
         else:
             if self._insert_bar is not None:
                 self._insert_bar.clear_insert_indicator()
             self._insert_bar = None
             self._insert_idx = -1
+            # Check for split drop zones in pane content areas
+            if self.on_drag_zone:
+                self.on_drag_zone("check", x, y)
 
     def _on_drag_release(self, event):
         drag_name  = self._drag_name
@@ -491,6 +504,8 @@ class TabBar(Frame):
 
         if not self._drag_active or drag_name is None:
             self._destroy_ghost(drag_name)
+            if self.on_drag_zone:
+                self.on_drag_zone("hide", 0, 0)
             return
 
         if insert_bar is self:
@@ -501,17 +516,27 @@ class TabBar(Frame):
             if insert_bar.on_drag_merge:
                 insert_bar.on_drag_merge(drag_name, self, insert_idx)
         else:
-            # Transfer ghost ownership — keep alive while DetachedWindow is created
-            # and positioned, so the user sees no gap between ghost and window.
-            ghost = self._ghost
-            self._ghost = None
-            if self.on_drag_detach:
-                self.on_drag_detach(drag_name)
-            if ghost is not None:
-                try:
-                    ghost.destroy()
-                except Exception:
-                    pass
+            # Check if dropping on a split zone
+            drop_info = None
+            if self.on_drag_zone:
+                drop_info = self.on_drag_zone("drop", event.x_root, event.y_root)
+            if drop_info is not None:
+                self._destroy_ghost(drag_name)
+                pane, direction = drop_info
+                if self.on_tab_split:
+                    self.on_tab_split(drag_name, direction, pane)
+            else:
+                # Transfer ghost ownership — keep alive while DetachedWindow is created
+                # and positioned, so the user sees no gap between ghost and window.
+                ghost = self._ghost
+                self._ghost = None
+                if self.on_drag_detach:
+                    self.on_drag_detach(drag_name)
+                if ghost is not None:
+                    try:
+                        ghost.destroy()
+                    except Exception:
+                        pass
         # _drag_active intentionally NOT cleared here; _btn_click reads and clears it
 
     def _reorder_to_idx(self, dragged: str, idx: int):
@@ -558,7 +583,9 @@ class TabBar(Frame):
             self.focus_tab(name)
 
     def _tab_bg(self, name: str) -> str:
-        return _BG_ACTIVE if name == self.active else _BG_INACTIVE
+        if name == self.active:
+            return _BG_ACTIVE if self._focused else _BG_ACTIVE_UNFOC
+        return _BG_INACTIVE if self._focused else _BG_UNFOCUSED
 
     def _close(self, name: str):
         if self.on_tab_close:
@@ -566,7 +593,10 @@ class TabBar(Frame):
         self.close_tab(name)
 
     def _on_tab_enter(self, name: str):
-        if name in self._tabs and name != self.active:
+        if name not in self._tabs:
+            return
+        # Always highlight inactive tabs; highlight active tab only in unfocused panes
+        if name != self.active or not self._focused:
             self._tabs[name]["button"].config(bg=_BG_HOVER_TAB)
             self._tabs[name]["close"].config(bg=_BG_HOVER_TAB)
 

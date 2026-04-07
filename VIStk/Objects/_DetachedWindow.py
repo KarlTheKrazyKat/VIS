@@ -58,9 +58,19 @@ class DetachedWindow:
         if getattr(host.HostMenu, "_shared_structure", None):
             self.HostMenu.build_shared_menu(host.HostMenu._shared_structure)
 
-        # ── Tab content area ──────────────────────────────────────────────────
-        self.tab_manager = TabManager(self.win)
-        self.tab_manager.pack(fill="both", expand=True)
+        # ── Tab content area (SplitView for cross-window drag-to-split) ─────
+        from VIStk.Widgets._SplitView import SplitView
+        self._split_view = SplitView(self.win, host=host)
+        self._split_view.pack(fill="both", expand=True)
+        self._split_view.set_callbacks({
+            "on_tab_activate":    self._on_tab_activate,
+            "on_tab_deactivate":  self._on_tab_deactivate,
+            "on_tab_popout":      self._on_tab_popout,
+            "on_tab_detach":      self._on_tab_detach,
+            "on_tab_refresh":     self._on_tab_refresh,
+            "on_tab_info_change": self._on_tab_info_change,
+            "on_tab_split":       self._on_tab_split,
+        })
 
         # ── Status bar ────────────────────────────────────────────────────────
         self.InfoRow = InfoRow(self.win, host.Project)
@@ -68,14 +78,6 @@ class DetachedWindow:
 
         # Register for FPS updates from the Host tick loop
         host._fps_listeners.append(self.InfoRow.set_fps)
-
-        # Wire lifecycle callbacks
-        self.tab_manager.on_tab_activate    = self._on_tab_activate
-        self.tab_manager.on_tab_deactivate  = self._on_tab_deactivate
-        self.tab_manager.on_tab_popout      = self._on_tab_popout
-        self.tab_manager.on_tab_detach      = self._on_tab_detach
-        self.tab_manager.on_tab_refresh     = self._on_tab_refresh
-        self.tab_manager.on_tab_info_change = self._on_tab_info_change
 
         # Set window icon
         self._load_icon()
@@ -86,6 +88,13 @@ class DetachedWindow:
 
         # Position the window so the cursor lands on the tab at the same offset
         self._position_window(x_root, y_root, btn_offset_x, btn_offset_y)
+
+    # ── Property shim ─────────────────────────────────────────────────────────
+
+    @property
+    def tab_manager(self):
+        """Return the focused pane's TabManager (mirrors Host.TabManager)."""
+        return self._split_view.focused_pane
 
     # ── Positioning ────────────────────────────────────────────────────────────
 
@@ -247,6 +256,43 @@ class DetachedWindow:
         )
         self.host._detached.append(dw)
 
+    def _on_tab_split(self, name: str, direction: str, target_pane=None):
+        """Handle right-click 'Split right' / 'Split down' or drag-to-split."""
+        from VIStk.Widgets._SplitView import SplitView
+
+        source_pane = self._split_view.find_pane_for_tab(name)
+        if source_pane is None:
+            return
+        split_pane = target_pane if target_pane is not None else source_pane
+        entry     = source_pane._tabs[name]
+        module    = entry.get("module")
+        hooks     = entry.get("hooks")
+        icon      = entry.get("icon")
+        base_name = entry.get("base_name", name)
+
+        target_sv = SplitView.find_owner(split_pane)
+        if target_sv is None:
+            target_sv = self._split_view
+
+        if direction == "center":
+            if split_pane is source_pane:
+                return
+            source_pane.close_tab(name)
+            split_pane.open_tab(name, module, hooks=hooks, icon=icon,
+                                base_name=base_name)
+        elif split_pane is source_pane:
+            if len(source_pane._tabs) <= 1:
+                return
+            left_pane, right_pane = target_sv.split(
+                split_pane, direction, exclude={name})
+            right_pane.open_tab(name, module, hooks=hooks, icon=icon,
+                                base_name=base_name)
+        else:
+            source_pane.close_tab(name)
+            left_pane, right_pane = target_sv.split(split_pane, direction)
+            right_pane.open_tab(name, module, hooks=hooks, icon=icon,
+                                base_name=base_name)
+
     def _on_tab_refresh(self, name: str):
         if not self.tab_manager.has_tab(name):
             return
@@ -269,8 +315,9 @@ class DetachedWindow:
         if self._closing:
             return
         self._closing = True
-        for name in list(self.tab_manager._tabs.keys()):
-            self.tab_manager.close_tab(name)
+        for pane in self._split_view.all_tab_managers():
+            for name in list(pane._tabs.keys()):
+                pane.close_tab(name)
         # Deregister FPS listener
         try:
             self.host._fps_listeners.remove(self.InfoRow.set_fps)
