@@ -13,7 +13,12 @@
       "Bash(git push:*)",
       "Bash(pip show:*)",
       "Bash(pip install:*)",
-      "Bash(gh run:*)"
+      "Bash(gh run:*)",
+      "Bash(VIS PYWOM:*)",
+      "Bash(echo \"Host launched, PID: $!\")",
+      "Bash(grep -r \"SplitView\\\\|HostMenu\\\\|DetachedWindow\\\\|TabBar\\\\|Host\" /c/Users/elija/Documents/VIStk/docs/source/*.rst)",
+      "Bash(ls -1 /c/Users/elija/Documents/VIStk/docs/source/changelog/*.rst)",
+      "Bash(make html:*)"
     ]
   }
 }
