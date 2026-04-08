@@ -443,29 +443,64 @@ The existing "Open in new window" entry is unchanged; it still creates a `Detach
 - When a pane's tab count reaches zero (last tab closed or dragged elsewhere), the pane calls `on_pane_empty` on its owning `SplitView`
 - The `SplitView` removes the empty pane and promotes the surviving sibling; if the root pane becomes empty there is nothing to promote — Host falls back to showing a single empty `TabManager`
 
-**Drag between panes**
+**Drag-to-split**
 
-No changes required to `_TabBar.py` or the drag system.  Cross-bar merge already works for any two registered `TabBar` instances.  A tab dragged from one split pane into another pane's bar merges as normal.  A tab dragged outside all bars still detaches to a `DetachedWindow`.
+- Dragging a tab into the outer 25% of any pane's content area shows a translucent blue overlay indicating a split zone (right, left, down, up)
+- Releasing in a split zone creates the split and places the tab in the new pane
+- Dragging to the center of a pane shows a full-pane overlay; dropping there adds the tab to that pane without splitting
+- If a pane has only one tab, dragging it over its own pane shows the center overlay (no split possible)
+- Tab bar insertion indicator shown alongside the center overlay to preview where the tab will appear
+- Parent sash positions are preserved when performing nested splits (e.g. splitting the right pane vertically no longer shifts the left pane's width)
+
+**Cross-window drag-to-split**
+
+- Drag-to-split works across Host and DetachedWindows in both directions
+- `DetachedWindow` is now wrapped in `SplitView` — same split, drop zone, and focus behaviour as the Host
+- `SplitView._registry` (class-level list) enables cross-window zone detection; all registered SplitViews are checked during a drag
+- Z-order aware: when windows overlap, only the frontmost window at the cursor position shows drop zones (uses Tk `wm stackorder`)
+- Target window is lifted to the front as soon as the cursor enters its non-overlapping area during a drag; overlapping areas respect stacking order
+
+**Focus-aware tab styling**
+
+- Active tab in the focused pane is shown in a brighter grey; active tabs in unfocused panes are dimmer
+- When a window loses OS focus (`<FocusOut>`), all pane focus indicators dim; they restore on `<FocusIn>`
+- `SplitView._global_focused_pane` tracks the last-focused pane across all windows (Host and DetachedWindows)
+
+**Global focus tracking**
+
+- Clicking any widget inside a pane (buttons, entries, etc.) sets focus to that pane via a toplevel-level `<Button-1>` binding that walks the widget tree
+- `Host._open_tab()` uses `SplitView._global_focused_pane` to open new tabs in the correct pane, even when the call originates from a DetachedWindow
+- `Host.open()` only raises the Host window if the tab was opened there; if the tab was opened in a DetachedWindow, that window is raised instead
+
+**Menu bar fixes**
+
+- `HostMenu.set_screen_items()` now replaces shared cascades in-place (via `entryconfigure`) when the label matches an existing shared cascade, preventing duplicate File/Edit/View/Tools menus
+- `HostMenu.clear_screen_items()` restores the original shared cascade menus
+- `HostMenu.reset_overrides()` called on tab deactivate to prevent stale overrides from carrying over
 
 **`Host` changes**
 
-- `self.TabManager` replaced by `self.split_view: SplitView`; `SplitView` exposes `focused_pane` as a drop-in for the single-pane API
-- `Host.open()` opens new tabs into `split_view.focused_pane` (the pane the user last interacted with)
+- `self.TabManager` replaced by `self._split_view: SplitView`; `TabManager` property returns `self._split_view.focused_pane` as a drop-in for the single-pane API
+- `Host.open()` opens new tabs into the globally focused pane (may be Host or DetachedWindow)
 - `Host._get_all_tab_names()` walks the full `SplitView` tree rather than a single `TabManager`
 - Activate/deactivate/menu/title callbacks wired to all panes; focused pane arbitrates which tab drives `HostMenu` and the title bar
 - `Host._on_tab_detach` and `Host._on_tab_popout` resolved through the originating pane's `TabManager`
+- `Host._on_tab_split` handles within-pane splits, cross-pane splits, center drops, and cross-window drops
+
+**`DetachedWindow` changes**
+
+- Content area now wrapped in `SplitView` (was bare `TabManager`) — supports splits, drop zones, and focus tracking
+- `tab_manager` property returns `self._split_view.focused_pane`
+- `_on_tab_split` mirrors Host's implementation (within-window, cross-window, and center drops)
+- `_on_close` iterates all panes in the SplitView tree, not just the focused pane
 
 **`TabBar` changes**
 
-- `on_tab_split: callable | None` — new callback `(name: str, direction: str)`
+- `on_tab_split: callable | None` — new callback `(name: str, direction: str, target_pane=None)`
+- `on_drag_zone: callable | None` — new callback for drag-to-split zone detection during motion events
 - Right-click menu gains "Split right" and "Split down" entries that fire `on_tab_split`
-- No other changes to `_TabBar.py`
-
-**Documentation updates**
-
-- New `SplitView` class documented with split/remove API and tree-of-panes model
-- `Host` documentation updated to reflect `split_view` replacing `TabManager`
-- `configure_menu` and `on_tab_activate` notes updated: these now fire per focused-pane activation, not per-window
+- Drag motion checks all registered SplitViews for drop zones when cursor is not over any TabBar
+- Focus-aware `_tab_bg()` returns different colours based on pane focus state
 
 ---
 

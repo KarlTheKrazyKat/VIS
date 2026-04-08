@@ -131,8 +131,12 @@ To show the window immediately on launch, pass ``start_hidden=False``:
      - Type
      - Description
    * - ``host.TabManager``
-     - ``TabManager``
-     - Owns the tab strip and all screen content frames
+     - ``TabManager`` (property)
+     - Returns the focused pane's ``TabManager`` via ``host._split_view.focused_pane``.
+       The Host content area is managed by a ``SplitView`` that may contain multiple panes.
+   * - ``host._split_view``
+     - ``SplitView``
+     - Tree-of-panes container managing all ``TabManager`` panes in the Host window
    * - ``host.HostMenu``
      - ``HostMenu``
      - The persistent menu bar
@@ -261,20 +265,28 @@ fallback.
 DetachedWindow
 --------------
 
-``DetachedWindow`` — A floating ``Toplevel`` window containing its own ``TabManager``. Created by
-the Host when a tab is popped out via the right-click context menu or drag-to-detach. Tracked in
-``host._detached``.
+``DetachedWindow`` — A floating ``Toplevel`` window containing its own ``SplitView`` (which wraps
+one or more ``TabManager`` panes). Created by the Host when a tab is popped out via the right-click
+context menu or drag-to-detach. Tracked in ``host._detached``.
 
 Popping a tab out re-runs ``setup(parent)`` in the new window, so screen UI state is reset.
 
+**Attributes:**
+
+- ``dw._split_view`` — ``SplitView`` managing the window's content area
+- ``dw.tab_manager`` — property returning ``dw._split_view.focused_pane``
+- ``dw.HostMenu`` — menu bar (shared cascades cloned from Host)
+- ``dw.InfoRow`` — status bar
+
 **Behaviour:**
 
-- Right-clicking a tab and choosing **Open in new window** sends the tab back to the main Host
-  ``TabManager``.
-- Dragging a tab and releasing it outside all bars sends it back to the main Host.
+- Right-clicking a tab and choosing **Open in new window** sends the tab back to the main Host.
+- Dragging a tab and releasing it outside all bars creates a new ``DetachedWindow``.
 - Dragging a tab from one bar into another registered ``TabBar`` merges it there.
+- Dragging a tab into a split zone (edge or center) of any pane in any window creates a split
+  or adds the tab to the target pane — cross-window drag-to-split is fully supported.
 - **Force refresh** re-imports the screen module and re-runs ``setup(parent)`` in-place.
-- Closing the window runs ``on_unfocused`` on all its tabs and destroys them.
+- Closing the window runs ``on_unfocused`` on all tabs across all panes and destroys them.
 - When the Host shuts down, all ``DetachedWindow`` instances are closed first.
 
 ``DetachedWindow`` is created internally — you do not instantiate it directly.

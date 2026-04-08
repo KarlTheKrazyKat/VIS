@@ -44,25 +44,74 @@ Pane Auto-Removal
 - When a pane's tab count reaches zero, it calls ``on_pane_empty`` on its ``SplitView``
 - The ``SplitView`` removes the empty pane and promotes the surviving sibling
 
-Drag Between Panes
-~~~~~~~~~~~~~~~~~~
+Drag-to-Split
+~~~~~~~~~~~~~~
 
-No changes to ``_TabBar.py`` or the drag system. Cross-bar merge already works for any
-two registered ``TabBar`` instances.
+- Dragging a tab into the outer 25% of any pane's content area shows a translucent blue
+  overlay indicating the split direction (right, left, down, up)
+- Dragging to the center shows a full-pane overlay; dropping there adds the tab to the
+  pane without splitting
+- If a pane has only one tab, dragging it over its own pane shows the center overlay
+- Tab bar insertion indicator shown alongside center overlay to preview tab placement
+- Parent sash positions preserved during nested splits
+
+Cross-Window Drag-to-Split
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+- Drag-to-split works across Host and ``DetachedWindow`` in both directions
+- ``DetachedWindow`` is now wrapped in ``SplitView`` with full split and focus support
+- ``SplitView._registry`` enables cross-window zone detection
+- Z-order aware: overlapping windows only show drop zones for the frontmost window at
+  the cursor position (uses Tk ``wm stackorder``)
+- Target window lifts to the front as the cursor enters its non-overlapping area
+
+Focus-Aware Tab Styling
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+- Active tab in the focused pane shown in brighter grey; unfocused panes are dimmer
+- When a window loses OS focus, all pane focus indicators dim; restore on regain
+- ``SplitView._global_focused_pane`` tracks the last-focused pane across all windows
+
+Global Focus Tracking
+~~~~~~~~~~~~~~~~~~~~~
+
+- Clicking any widget inside a pane (buttons, entries, etc.) sets focus to that pane
+  via a toplevel-level ``<Button-1>`` binding
+- ``Host._open_tab()`` uses the globally focused pane, even from ``DetachedWindow``
+- ``Host.open()`` raises the correct window (Host or DetachedWindow)
+
+Menu Bar Fixes
+~~~~~~~~~~~~~~
+
+- ``HostMenu.set_screen_items()`` replaces shared cascades in-place when the label
+  matches an existing shared cascade, preventing duplicate menus
+- ``HostMenu.clear_screen_items()`` restores original shared cascade menus
+- ``HostMenu.reset_overrides()`` called on tab deactivate
 
 Host Changes
 ~~~~~~~~~~~~
 
-- ``self.TabManager`` replaced by ``self.split_view: SplitView``
-- ``host.open()`` opens new tabs into ``split_view.focused_pane``
+- ``self.TabManager`` property returns ``self._split_view.focused_pane``
+- ``host.open()`` opens new tabs into the globally focused pane (Host or DetachedWindow)
 - ``host._get_all_tab_names()`` walks the full ``SplitView`` tree
 - Activate/deactivate/menu/title callbacks wired to all panes
+- ``_on_tab_split`` handles within-pane, cross-pane, center, and cross-window drops
+
+DetachedWindow Changes
+~~~~~~~~~~~~~~~~~~~~~~
+
+- Content area now wrapped in ``SplitView`` (was bare ``TabManager``)
+- ``tab_manager`` property returns ``_split_view.focused_pane``
+- ``_on_tab_split`` mirrors Host implementation
+- ``_on_close`` iterates all panes in the SplitView tree
 
 TabBar Changes
 ~~~~~~~~~~~~~~
 
-- ``on_tab_split: callable | None`` --- new callback ``(name: str, direction: str)``
+- ``on_tab_split: callable | None`` --- callback ``(name, direction, target_pane)``
+- ``on_drag_zone: callable | None`` --- drag-to-split zone detection during motion
 - Right-click menu gains "Split right" and "Split down"
+- Focus-aware ``_tab_bg()`` returns different colours based on pane focus state
 
 Uninstaller
 -----------

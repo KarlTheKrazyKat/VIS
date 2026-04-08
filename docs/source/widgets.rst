@@ -124,6 +124,78 @@ list is used during drag motion to detect cross-bar merges.
 
 ----
 
+SplitView
+---------
+
+``SplitView(Frame)`` — A tree-of-panes container that allows the Host (or DetachedWindow) content
+area to be divided into multiple panes, each with its own ``TabManager`` and ``TabBar``. Panes are
+separated by draggable sashes.
+
+Each ``SplitView`` instance holds a root widget that is either a single ``TabManager`` (no split)
+or a ``_SplitNode`` wrapping a ``ttk.PanedWindow`` with two child slots. Each slot is either a
+``TabManager`` (leaf) or another ``_SplitNode`` (branch), forming an arbitrary binary tree.
+
+Import: ``from VIStk.Widgets._SplitView import SplitView``
+
+Key methods
+~~~~~~~~~~~
+
+.. list-table::
+   :header-rows: 1
+   :widths: 40 60
+
+   * - Method
+     - Description
+   * - ``split(pane, direction, exclude=None)``
+     - Split *pane* into two side-by-side panes. *direction* is ``"right"`` (horizontal) or
+       ``"down"`` (vertical). Returns ``(left_pane, right_pane)``. Tabs in *pane* transfer to
+       *left_pane*; names in *exclude* are skipped.
+   * - ``remove_pane(pane)``
+     - Collapse *pane* out of the tree, promoting the surviving sibling. If the root becomes a
+       single ``TabManager``, the ``_SplitNode`` wrapper is dissolved.
+   * - ``all_tab_managers()``
+     - Walk the tree and return all leaf ``TabManager`` instances.
+   * - ``all_tabs()``
+     - Aggregate ``_tabs`` dicts from all panes into a single dict.
+   * - ``find_pane_for_tab(name)``
+     - Locate which ``TabManager`` owns *name*; returns ``None`` if not found.
+   * - ``set_callbacks(callbacks)``
+     - Store a callback dict and apply to all current and future ``TabManager`` panes.
+
+Focus tracking
+~~~~~~~~~~~~~~
+
+- ``focused_pane`` (property) — the ``TabManager`` the user last interacted with.
+- Clicking anywhere inside a pane (including child widgets like buttons) sets that pane as focused
+  via a toplevel-level ``<Button-1>`` binding.
+- ``_global_focused_pane`` (class attribute) — tracks the last-focused pane across all windows
+  (Host and DetachedWindows). Used by ``Host._open_tab()`` to open new tabs in the correct pane.
+- When a window loses OS focus, all pane focus indicators dim. They restore on ``<FocusIn>``.
+
+Drag-to-split
+~~~~~~~~~~~~~
+
+- Dragging a tab into the outer 25% of any pane's content area shows a translucent blue overlay
+  (``Toplevel`` with ``alpha=0.22``) indicating the split direction.
+- Dragging to the center shows a full-pane overlay; dropping there adds the tab to that pane.
+- ``detect_drop_zone(x_root, y_root)`` — returns ``(pane, direction)`` or ``None``.
+- ``detect_any_drop_zone(x_root, y_root)`` — class method that checks all registered SplitViews,
+  respecting window z-order via ``wm stackorder``.
+- ``lift_window_at(x_root, y_root)`` — class method that lifts the target window to the front
+  when the cursor enters its non-overlapping area during a drag.
+
+Cross-window support
+~~~~~~~~~~~~~~~~~~~~
+
+All live ``SplitView`` instances are tracked in ``SplitView._registry`` (class-level list).
+This enables cross-window drag-to-split: a tab dragged from one window can be dropped into a
+split zone in another window.
+
+When windows overlap, only the frontmost window at the cursor position shows drop zones.
+The stacking order is determined by Tk's ``wm stackorder`` command.
+
+----
+
 HostMenu
 --------
 
