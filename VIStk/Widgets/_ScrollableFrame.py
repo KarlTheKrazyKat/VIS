@@ -3,6 +3,8 @@ from tkinter import *
 import sys
 
 class ScrollableFrame(ttk.Frame):
+    _active = None  # class-level: which instance currently owns the scroll
+
     def __init__(self, root, *args, **kwargs):
         super().__init__(root, *args, **kwargs)
         self.canvas = Canvas(self)
@@ -27,9 +29,24 @@ class ScrollableFrame(ttk.Frame):
 
         self.canvas.pack(side="left",fill="both",expand=True)
         self.scrollbar.pack(side="right",fill="y")
-        
-        self.canvas.bind("<Enter>", lambda e: self.canvas.bind_all("<MouseWheel>", self.scroll))
-        self.canvas.bind("<Leave>", lambda e: self.canvas.unbind_all("<MouseWheel>"))
+
+        self.canvas.bind("<Enter>", self._on_enter)
+        self.canvas.bind("<Leave>", self._on_leave)
+
+    def _on_enter(self, event):
+        ScrollableFrame._active = self
+        self.canvas.bind_all("<MouseWheel>", ScrollableFrame._dispatch_scroll)
+
+    def _on_leave(self, event):
+        if ScrollableFrame._active is self:
+            ScrollableFrame._active = None
+            self.canvas.unbind_all("<MouseWheel>")
+
+    @staticmethod
+    def _dispatch_scroll(event):
+        active = ScrollableFrame._active
+        if active is not None:
+            active.scroll(event)
 
 
     def sizeFrame(self, event:Event):

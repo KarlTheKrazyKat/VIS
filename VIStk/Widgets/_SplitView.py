@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from tkinter import Frame, Toplevel, ttk
+from tkinter import Frame, Toplevel, TclError, ttk
 
 
 class SplitView(Frame):
@@ -21,16 +21,17 @@ class SplitView(Frame):
     _registry: list["SplitView"] = []
     _global_focused_pane = None  # last-focused pane across all windows
 
-    def __init__(self, parent, host=None, **kwargs):
+    def __init__(self, parent, host=None, tab_position: str = "top", **kwargs):
         super().__init__(parent, **kwargs)
         self._host = host
         self._callbacks: dict = {}
+        self._tab_position: str = tab_position
 
         # Import here to avoid circular import at module level
         from VIStk.Objects._TabManager import TabManager
 
         # Start with a single TabManager leaf
-        self._root_widget: TabManager | _SplitNode = TabManager(self)
+        self._root_widget: TabManager | _SplitNode = TabManager(self, position=tab_position)
         self._root_widget.pack(fill="both", expand=True)
         self._focused_pane: TabManager = self._root_widget
 
@@ -84,7 +85,7 @@ class SplitView(Frame):
                 stack = stack.split()
             else:
                 stack = list(stack)
-        except Exception:
+        except TclError:
             stack = []
         stack_rank = {str(path): i for i, path in enumerate(stack)}
 
@@ -92,7 +93,7 @@ class SplitView(Frame):
         def _rank(sv):
             try:
                 return stack_rank.get(str(sv.winfo_toplevel()), -1)
-            except Exception:
+            except TclError:
                 return -1
 
         sorted_svs = sorted(cls._registry, key=_rank, reverse=True)
@@ -107,7 +108,7 @@ class SplitView(Frame):
                 wh = tl.winfo_height()
                 if not (wx <= x_root < wx + ww and wy <= y_root < wy + wh):
                     continue
-            except Exception:
+            except TclError:
                 continue
             result = sv.detect_drop_zone(x_root, y_root)
             if result:
@@ -138,7 +139,7 @@ class SplitView(Frame):
                 wh = tl.winfo_height()
                 if wx <= x_root < wx + ww and wy <= y_root < wy + wh:
                     hits.append(tl)
-            except Exception:
+            except TclError:
                 continue
         if len(hits) == 1:
             # Only one window at this position — bring it to front
@@ -247,7 +248,7 @@ class SplitView(Frame):
                 cy = content.winfo_rooty()
                 cw = content.winfo_width()
                 ch = content.winfo_height()
-            except Exception:
+            except TclError:
                 continue
             if not (cx <= x_root < cx + cw and cy <= y_root < cy + ch):
                 continue
@@ -286,7 +287,7 @@ class SplitView(Frame):
             cy = content.winfo_rooty()
             cw = content.winfo_width()
             ch = content.winfo_height()
-        except Exception:
+        except TclError:
             return
         # Compute overlay rectangle (screen coords)
         if direction == "right":
@@ -320,7 +321,7 @@ class SplitView(Frame):
                 n = len(pane.tab_bar._tabs)
                 pane.tab_bar.set_insert_indicator(n)
                 self._drop_indicator_pane = pane
-            except Exception:
+            except TclError:
                 pass
 
     def hide_drop_overlay(self):
@@ -328,13 +329,13 @@ class SplitView(Frame):
         if getattr(self, "_drop_indicator_pane", None) is not None:
             try:
                 self._drop_indicator_pane.tab_bar.clear_insert_indicator()
-            except Exception:
+            except TclError:
                 pass
             self._drop_indicator_pane = None
         if self._drop_overlay is not None:
             try:
                 self._drop_overlay.destroy()
-            except Exception:
+            except TclError:
                 pass
             self._drop_overlay = None
             self._drop_zone_info = None
@@ -383,7 +384,7 @@ class SplitView(Frame):
             try:
                 parent_node.paned.update_idletasks()
                 parent_sash_pos = parent_node.paned.sashpos(0)
-            except Exception:
+            except TclError:
                 pass
 
         # Replace pane with the new node in its parent
@@ -395,8 +396,8 @@ class SplitView(Frame):
             parent_node.replace_child(pane, node)
 
         # Both new panes must be Tk children of the PanedWindow
-        left_pane = TabManager(node.paned)
-        right_pane = TabManager(node.paned)
+        left_pane = TabManager(node.paned, position=self._tab_position)
+        right_pane = TabManager(node.paned, position=self._tab_position)
         node.set_slot1(left_pane)
         node.set_slot2(right_pane)
 
@@ -436,17 +437,17 @@ class SplitView(Frame):
                 var, tid = trace_info
                 try:
                     var.trace_remove("write", tid)
-                except Exception:
+                except TclError:
                     pass
             try:
                 pane._tabs[tab_name]["frame"].destroy()
-            except Exception:
+            except TclError:
                 pass
         pane._tabs.clear()
         del self._pane_parents[id(pane)]
         try:
             pane.destroy()
-        except Exception:
+        except TclError:
             pass
 
         # Update focused pane if it was the old one
@@ -459,7 +460,7 @@ class SplitView(Frame):
             if parent_sash_pos is not None and parent_node is not None:
                 try:
                     parent_node.paned.sashpos(0, parent_sash_pos)
-                except Exception:
+                except TclError:
                     pass
         node.paned.after_idle(_fix_sashes)
 
@@ -515,17 +516,17 @@ class SplitView(Frame):
         if grandparent_node is not None:
             try:
                 grandparent_node.paned.forget(parent_node)
-            except Exception:
+            except TclError:
                 pass
 
         # Destroy the entire parent_node (both panes + the PanedWindow)
         try:
             parent_node.pack_forget()
-        except Exception:
+        except TclError:
             pass
         try:
             parent_node.destroy()
-        except Exception:
+        except TclError:
             pass
 
         # Rebuild the surviving sibling under the correct Tk parent
@@ -598,7 +599,7 @@ class SplitView(Frame):
                     self._set_focused(panes[id(w)])
                     return
                 w = w.master
-        except Exception:
+        except TclError:
             pass
 
     def _wire_pane(self, pane):
@@ -766,7 +767,7 @@ class SplitView(Frame):
                     var, _ = info_trace
                     try:
                         tab_data["info_str"] = var.get()
-                    except Exception:
+                    except TclError:
                         pass
                 tabs.append(tab_data)
             return {
@@ -801,7 +802,7 @@ class SplitView(Frame):
         from VIStk.Objects._TabManager import TabManager
 
         if snapshot["type"] == "leaf":
-            pane = TabManager(tk_parent)
+            pane = TabManager(tk_parent, position=self._tab_position)
             self._wire_pane(pane)
             # Re-open all tabs
             for tab_data in snapshot["tabs"]:
@@ -862,7 +863,7 @@ class SplitView(Frame):
                 total = node.paned.winfo_height()
             if total > 1:
                 node.paned.sashpos(0, total // 2)
-        except Exception:
+        except TclError:
             pass
 
 
@@ -887,7 +888,7 @@ class _SplitNode(Frame):
         # Reparent widget into the PanedWindow
         try:
             widget.pack_forget()
-        except Exception:
+        except TclError:
             pass
         self.paned.add(widget, weight=1)
 
@@ -915,12 +916,12 @@ class _SplitNode(Frame):
                     break
 
             self.paned.forget(old_child)
-        except Exception:
+        except TclError:
             idx = None
 
         try:
             old_child.pack_forget()
-        except Exception:
+        except TclError:
             pass
 
         if self.slot1 is old_child:
@@ -933,7 +934,7 @@ class _SplitNode(Frame):
             # New child should be first — remove slot2, add new, re-add slot2
             try:
                 self.paned.forget(self.slot2)
-            except Exception:
+            except TclError:
                 pass
             self.paned.add(new_child, weight=1)
             self.paned.add(self.slot2, weight=1)
@@ -953,7 +954,7 @@ class _SplitNode(Frame):
         try:
             for p in list(self.paned.panes()):
                 self.paned.forget(p)
-        except Exception:
+        except TclError:
             pass
 
         if self.slot1 is not None:

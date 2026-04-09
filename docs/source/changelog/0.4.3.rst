@@ -1,7 +1,7 @@
 0.4.3 --- Split Layouts, Installer Uninstaller & Install Log
 =============================================================
 
-*Upcoming*
+*Released*
 
 SplitView Widget
 ----------------

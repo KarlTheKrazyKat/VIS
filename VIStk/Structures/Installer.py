@@ -9,8 +9,10 @@ import PIL.ImageTk
 import sys
 import json
 import os
+import shutil
 import subprocess
 import datetime
+import tempfile
 import platformdirs
 if sys.platform == "win32": import winshell
 from pathlib import Path
@@ -36,22 +38,36 @@ def _on_path(args):
         custom_path = " ".join(args)
 
 def _on_help(args):
-    print("Usage: Installer.exe [--Quiet [screens...]] [--Desktop <screens...>] [--Path <dir>] [--Help]")
+    print("Usage: Installer.exe [--Quiet [screens...]] [--Desktop <screens...>] [--Path <dir>] [--Verify] [--Help]")
     print()
     print("Flags:")
     print("  --Quiet   [s1] [s2] ...  Install silently (no GUI); installs all screens if none listed")
     print("  --Desktop <s1> <s2> ...  Create desktop shortcuts for listed screens (requires --Quiet)")
     print("  --Path    <directory>    Override the install location (requires --Quiet)")
+    print("  --Verify                 Verify an existing installation's file integrity and exit")
     print("  --Help                   Show this message and exit")
     print()
     print("If no flags are given, the GUI installer will launch.")
     sys.exit(0)
+
+def _on_verify(args):
+    global custom_path
+    if custom_path:
+        v_loc = Path(custom_path)
+    else:
+        comp = None   # archive not loaded yet at handler time; use platformdirs default
+        v_loc = None  # resolved after archive loads below
+    # Store flag; actual verify runs after archive loads
+    _VERIFY_MODE[0] = True
+
+_VERIFY_MODE = [False]  # mutable flag so _on_verify can set it before archive loads
 
 handler = ArgHandler()
 handler.newFlag("Quiet", _on_quiet)
 handler.newFlag("Desktop", _on_desktop)
 handler.newFlag("Path", _on_path)
 handler.newFlag("Help", _on_help)
+handler.newFlag("Verify", _on_verify)
 handler.handle(sys.argv)
 
 # Enforce --Quiet requirement for --Desktop and --Path
@@ -95,6 +111,7 @@ title = list(info.keys())[0]
 app_version = info[title].get("metadata", {}).get("version", "unknown")
 
 #%Locate Binaries
+_ALWAYS_INSTALL = {"Uninstaller"}  # binaries extracted on every install, not user-selectable
 installables = []
 for i in archive.namelist():
     if not any(breaker in i for breaker in ["Icons/","Images/",".VIS/","_internal/"]):
@@ -102,7 +119,7 @@ for i in archive.namelist():
             name = ".".join(i.split(".")[:-1])
         else: #Sometimes No Extension
             name = i
-        if name and name not in installables:
+        if name and name not in installables and name in info[title]["Screens"]:
             installables.append(name)
 
 #%Core Install & Shorcut Creation
@@ -241,7 +258,85 @@ def register_uninstall(location):
         pass
 
 
+def verify_installation(location) -> list[str]:
+    """Check all installed files exist and match archive sizes.
+
+    Returns a list of issue strings; empty list means everything is OK.
+    """
+    log_path = os.path.join(location, "install_log.json")
+    if not os.path.exists(log_path):
+        return ["install_log.json not found — cannot verify."]
+    try:
+        with open(log_path) as f:
+            log = json.load(f)
+    except Exception as e:
+        return [f"Could not read install_log.json: {e}"]
+
+    install_dir = Path(log.get("install_location", str(location)))
+    issues = []
+
+    # Check screen executables and adjacent files against archive
+    archive_sizes = {f: archive.getinfo(f).file_size for f in archive.namelist()}
+    for scr in log.get("screens", []):
+        exe = scr["executable"]
+        exe_path = install_dir / exe
+        if not exe_path.exists():
+            issues.append(f"Missing: {exe}")
+        else:
+            # Find corresponding archive entry (strip .exe on Windows)
+            base = exe.rsplit(".", 1)[0] if "." in exe else exe
+            arc_entry = next(
+                (f for f in archive_sizes if f == exe or f.startswith(base + ".")),
+                None,
+            )
+            if arc_entry and exe_path.stat().st_size != archive_sizes[arc_entry]:
+                issues.append(
+                    f"Size mismatch: {exe} "
+                    f"(archive {archive_sizes[arc_entry]}B, "
+                    f"installed {exe_path.stat().st_size}B)"
+                )
+
+    # Check adjacent directories
+    for d in log.get("directories", []):
+        if not (install_dir / d).exists():
+            issues.append(f"Missing directory: {d}")
+
+    return issues
+
+
+def _should_extract(file: str, location) -> bool:
+    """Return True if *file* should be extracted (missing or size differs from archive)."""
+    dest = Path(location) / file
+    if not dest.exists():
+        return True
+    try:
+        return dest.stat().st_size != archive.getinfo(file).file_size
+    except Exception:
+        return True
+
+
 #%Install & Escape Command Line Args
+# Handle --Verify after archive is loaded
+if _VERIFY_MODE[0]:
+    if custom_path:
+        v_loc = Path(custom_path)
+    else:
+        v_loc = Path(
+            platformdirs.user_config_path(
+                appauthor=info[title]["metadata"].get("company"), appname=title
+            ),
+            title,
+        )
+    issues = verify_installation(v_loc)
+    if issues:
+        print(f"Integrity check FAILED for {v_loc}:")
+        for issue in issues:
+            print(f"  {issue}")
+    else:
+        print(f"All files verified OK ({v_loc}).")
+    archive.close()
+    sys.exit(0 if not issues else 1)
+
 if QUIET is True:
     if custom_path:
         floc = custom_path
@@ -257,18 +352,70 @@ if QUIET is True:
         cinstalls = list(installables)
         print(f"No screens specified — installing all {len(cinstalls)} screen(s).")
 
-    print(f"Installing {title} v{app_version} to {location}")
+    is_update_quiet = os.path.exists(os.path.join(location, "install_log.json"))
+    print(f"{'Updating' if is_update_quiet else 'Installing'} {title} v{app_version} to {location}")
     adjacents(location)
 
+    # Collect files to install
+    adjacent_prefixes = (".VIS/", "Images/", "Icons/", "_internal/")
+    quiet_install_files = list(
+        f for f in archive.namelist() if f.startswith(adjacent_prefixes)
+    )
+    for f in archive.namelist():
+        base = ".".join(f.split(".")[:-1]) if "." in f else f
+        if base in _ALWAYS_INSTALL and f not in quiet_install_files:
+            quiet_install_files.append(f)
     for i in cinstalls:
         matched = False
         for file in archive.namelist():
-            if file == i or file.startswith(i + ".") or file.startswith(i + "/"):
-                print(f"  Extracting {file}")
-                extal(file, location)
+            if (file == i or file.startswith(i + ".") or file.startswith(i + "/")) \
+                    and file not in quiet_install_files:
+                quiet_install_files.append(file)
                 matched = True
         if not matched:
             print(f"  Warning: no archive entry matches '{i}'")
+
+    # Update-in-place: skip unchanged files
+    quiet_files_to_extract = [f for f in quiet_install_files if _should_extract(f, location)]
+    quiet_skipped = len(quiet_install_files) - len(quiet_files_to_extract)
+    if quiet_skipped:
+        print(f"  Skipping {quiet_skipped} unchanged file(s).")
+
+    # Backup for rollback
+    quiet_backup_dir = None
+    if is_update_quiet and quiet_files_to_extract:
+        quiet_backup_dir = tempfile.mkdtemp(prefix="vis_backup_")
+        for file in quiet_files_to_extract:
+            dest = Path(location) / file
+            if dest.exists():
+                bk = Path(quiet_backup_dir) / file
+                bk.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(dest, bk)
+
+    try:
+        for file in quiet_files_to_extract:
+            print(f"  Extracting {file}")
+            if file.startswith(adjacent_prefixes):
+                archive.extract(file, location)
+            else:
+                extal(file, location)
+    except Exception as exc:
+        if quiet_backup_dir and os.path.exists(quiet_backup_dir):
+            print("  Extraction failed — restoring backup...")
+            for file in quiet_files_to_extract:
+                bk = Path(quiet_backup_dir) / file
+                if bk.exists():
+                    dest = Path(location) / file
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(bk, dest)
+            shutil.rmtree(quiet_backup_dir, ignore_errors=True)
+        print(f"  Error: {exc}")
+        print("Installation failed." + (" Previous installation restored." if is_update_quiet else ""))
+        archive.close()
+        sys.exit(1)
+
+    if quiet_backup_dir:
+        shutil.rmtree(quiet_backup_dir, ignore_errors=True)
 
     for i in dinstalls:
         print(f"  Creating shortcut: {i}")
@@ -281,7 +428,7 @@ if QUIET is True:
     sys.exit()
 
 #%Configure Root
-root = Root()
+root = Root(project=False)
 
 #Root Title
 root.title(title + " Installer")
@@ -300,13 +447,13 @@ i_file.close()
 root.iconphoto(False, icon)
 
 #Root Geometry
-root.WindowGeometry.setGeometry(width=720,height=360,align="center")
-root.minsize(width=720,height=360)
+root.WindowGeometry.setGeometry(width=720,height=400,align="center")
+root.minsize(width=720,height=400)
 
 #Root Layout
 root.rowconfigure(0,weight=1,minsize=30)
 root.rowconfigure(1,weight=1,minsize=250)
-root.rowconfigure(2,weight=1,minsize=30)
+root.rowconfigure(2,weight=0,minsize=46)
 root.rowconfigure(3,weight=1,minsize=30)
 
 root.columnconfigure(1,weight=1,minsize=360)
@@ -439,8 +586,8 @@ fframe = ttk.Frame(root)
 fframe.grid(row=2,column=1,columnspan=2,sticky=(tk.N,tk.S,tk.E,tk.W))
 
 fframe.rowconfigure(1, weight=1)
-fframe.columnconfigure(1,weight=1,minsize=250)
-fframe.columnconfigure(2,weight=1,minsize=110)
+fframe.columnconfigure(1,weight=1,minsize=300)
+fframe.columnconfigure(2,weight=0,minsize=130)
 
 file = ttk.Label(fframe,textvariable=file_location,relief="sunken")
 file.grid(row=1,column=1,padx=2,pady=8,sticky=(tk.N,tk.S,tk.E,tk.W))
@@ -501,18 +648,30 @@ def binstall(desktop:list[str], selected_screens:list[str]):
 
     adjacents(location)#Install adjacent files
 
+    # Detect existing installation for update-in-place
+    existing_log_path = os.path.join(location, "install_log.json")
+    is_update = os.path.exists(existing_log_path)
+
     # Build the full list of files to install and compute total size
     adjacent_prefixes = (".VIS/", "Images/", "Icons/", "_internal/")
     install_files = []
     for file in archive.namelist():
         if file.startswith(adjacent_prefixes):
             install_files.append(file)
+        else:
+            base = ".".join(file.split(".")[:-1]) if "." in file else file
+            if base in _ALWAYS_INSTALL and file not in install_files:
+                install_files.append(file)
     for i in selected_screens:
         for file in archive.namelist():
             if (file == i or file.startswith(i + ".") or file.startswith(i + "/")) and file not in install_files:
                 install_files.append(file)
 
-    total_size = sum(archive.getinfo(f).file_size for f in install_files)
+    # For update-in-place, only extract files that differ or are new
+    files_to_extract = [f for f in install_files if _should_extract(f, location)]
+    skipped = len(install_files) - len(files_to_extract)
+
+    total_size = sum(archive.getinfo(f).file_size for f in files_to_extract)
     installed_size = 0
 
     def fmt_size(b):
@@ -529,34 +688,87 @@ def binstall(desktop:list[str], selected_screens:list[str]):
     canvas.create_window((0, 0), window=progress_frame, anchor="nw",
                          width=canvas.winfo_width() or 360)
 
-    file_label = ttk.Label(progress_frame, text="Preparing...", anchor="w")
+    nothing_to_do = not files_to_extract
+
+    if nothing_to_do:
+        status_text = "Already up to date."
+        init_pct = 100
+    elif is_update:
+        status_text = "Updating..."
+        init_pct = 0
+    else:
+        status_text = "Preparing..."
+        init_pct = 0
+
+    file_label = ttk.Label(progress_frame, text=status_text, anchor="w")
     file_label.pack(fill="x", padx=8, pady=(12, 2))
 
-    progress_bar = ttk.Progressbar(progress_frame, maximum=100, value=0)
+    progress_bar = ttk.Progressbar(progress_frame, maximum=100, value=init_pct)
     progress_bar.pack(fill="x", padx=8, pady=2)
 
     stats_frame = ttk.Frame(progress_frame)
     stats_frame.pack(fill="x", padx=8, pady=(2, 8))
-    size_label = ttk.Label(stats_frame, text=f"0 B / {fmt_size(total_size)}", anchor="w")
+    if nothing_to_do:
+        size_label = ttk.Label(stats_frame, text=f"All {skipped} file(s) unchanged", anchor="w")
+    else:
+        size_label = ttk.Label(stats_frame,
+                               text=f"0 B / {fmt_size(total_size)}" + (f" ({skipped} unchanged)" if skipped else ""),
+                               anchor="w")
     size_label.pack(side="left")
-    pct_label = ttk.Label(stats_frame, text="0%", anchor="e")
+    pct_label = ttk.Label(stats_frame, text=f"{init_pct}%", anchor="e")
     pct_label.pack(side="right")
 
     root.update()
 
-    # Extract adjacent and binary files in a single pass
-    for file in install_files:
-        file_label.config(text=file)
-        if file.startswith(adjacent_prefixes):
-            archive.extract(file, location)
-        else:
-            extal(file, location)
-        installed_size += archive.getinfo(file).file_size
-        pct = int(installed_size * 100 / total_size) if total_size > 0 else 100
-        progress_bar.config(value=pct)
-        size_label.config(text=f"{fmt_size(installed_size)} / {fmt_size(total_size)}")
-        pct_label.config(text=f"{pct}%")
+    # Back up files that will be overwritten (for rollback on failure)
+    backup_dir = None
+    if is_update and files_to_extract:
+        backup_dir = tempfile.mkdtemp(prefix="vis_backup_")
+        for file in files_to_extract:
+            dest = Path(location) / file
+            if dest.exists():
+                backup_path = Path(backup_dir) / file
+                backup_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(dest, backup_path)
+
+    # Extract changed/new files in a single pass; rollback on failure
+    try:
+        for file in files_to_extract:
+            file_label.config(text=file)
+            if file.startswith(adjacent_prefixes):
+                archive.extract(file, location)
+            else:
+                extal(file, location)
+            installed_size += archive.getinfo(file).file_size
+            pct = int(installed_size * 100 / total_size) if total_size > 0 else 100
+            progress_bar.config(value=pct)
+            size_label.config(text=f"{fmt_size(installed_size)} / {fmt_size(total_size)}"
+                              + (f" ({skipped} unchanged)" if skipped else ""))
+            pct_label.config(text=f"{pct}%")
+            root.update()
+    except Exception as exc:
+        # Restore backed-up files and abort
+        if backup_dir and os.path.exists(backup_dir):
+            file_label.config(text="Extraction failed — restoring backup...")
+            root.update()
+            for file in files_to_extract:
+                backup_path = Path(backup_dir) / file
+                if backup_path.exists():
+                    dest = Path(location) / file
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(backup_path, dest)
+            shutil.rmtree(backup_dir, ignore_errors=True)
+        from tkinter import messagebox
+        messagebox.showerror("Installation failed",
+                             f"An error occurred during extraction:\n{exc}\n\n"
+                             + ("Previous installation restored." if is_update else ""))
+        close.state(["!disabled"])
         root.update()
+        return
+
+    # Clean up backup on success
+    if backup_dir:
+        shutil.rmtree(backup_dir, ignore_errors=True)
 
     # Create desktop shortcuts
     actual_shortcuts = []
@@ -631,5 +843,56 @@ def nextpage():
 
 next_btn = ttk.Button(control,text="Next",command=nextpage)
 next_btn.grid(row=1,column=2,padx=2,pady=4,sticky=(tk.N,tk.S,tk.E,tk.W))
+
+# ── Installer menubar ──────────────────────────────────────────────────────
+
+def _run_uninstaller():
+    """Launch the uninstaller from the current install location, if present."""
+    loc = file_location.get()
+    if loc.endswith(f"/{title}") or loc.endswith(f"\\{title}"):
+        inst_dir = Path(loc)
+    else:
+        inst_dir = Path(loc, title)
+    log_path = inst_dir / "install_log.json"
+    if log_path.exists():
+        try:
+            with open(log_path) as f:
+                log = json.load(f)
+            inst_dir = Path(log.get("install_location", str(inst_dir)))
+        except Exception:
+            pass
+    uninstaller = inst_dir / ("Uninstaller.exe" if sys.platform == "win32" else "Uninstaller")
+    if uninstaller.exists():
+        subprocess.Popen([str(uninstaller)], cwd=str(inst_dir))
+    else:
+        from tkinter import messagebox
+        messagebox.showwarning("Uninstaller not found",
+                               f"Could not find Uninstaller at:\n{uninstaller}")
+
+
+def _verify_menu():
+    """Run verify_installation against the current install location and show results."""
+    from tkinter import messagebox
+    loc = file_location.get()
+    if loc.endswith(f"/{title}") or loc.endswith(f"\\{title}"):
+        inst_dir = Path(loc)
+    else:
+        inst_dir = Path(loc, title)
+    issues = verify_installation(inst_dir)
+    if issues:
+        messagebox.showwarning(
+            "Integrity check failed",
+            "\n".join(issues[:20]) + ("\n…and more." if len(issues) > 20 else ""),
+        )
+    else:
+        messagebox.showinfo("Integrity check passed", f"All files verified OK.\n{inst_dir}")
+
+
+menu_bar = tk.Menu(root)
+options_menu = tk.Menu(menu_bar, tearoff=0)
+options_menu.add_command(label="Run Uninstaller", command=_run_uninstaller)
+options_menu.add_command(label="Verify File Integrity", command=_verify_menu)
+menu_bar.add_cascade(label="Options", menu=options_menu)
+root.config(menu=menu_bar)
 
 root.mainloop()

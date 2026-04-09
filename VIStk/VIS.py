@@ -37,6 +37,13 @@ def unzip_without_overwrite(src_path, dst_dir):
                 zf.extract(member, dst_dir)
 
 def __main__():
+    if any(a in ("--help", "-h") for a in inp[1:]):
+        from VIStk.Structures._Help import contextual_help
+        contextual_help([a for a in inp if a not in ("--help", "-h")])
+        return
+    if len(inp) < 2:
+        print("Usage: VIS <command> [options]. Run 'VIS --help' for details.")
+        return
     match inp[1]:
         case "-v"|"-V"|"-Version"|"-version":
             print(f"VIS Version {metadata.version('VIStk')}")
@@ -48,21 +55,32 @@ def __main__():
                 Project().newScreen(scr_name)
 
         case "add" | "Add" | "a" | "A":
+            if len(inp) < 3:
+                print("Usage: VIS add <screen|...> [options]")
+                return
             project = Project()
             match inp[2]:
                 case "screen" | "Screen" | "s" | "S":
-                    if not inp[3] == None:
-                        screen = project.verScreen(inp[3])
-                        if len(inp) >= 5:
-                            match inp[4]:
-                                case "menu" | "Menu" | "m" | "M":
+                    if len(inp) < 4:
+                        print("Usage: VIS add screen <name> [elements|menu <arg>]")
+                        return
+                    screen = project.verScreen(inp[3])
+                    if len(inp) >= 5:
+                        match inp[4]:
+                            case "menu" | "Menu" | "m" | "M":
+                                if len(inp) >= 6:
                                     screen.addMenu(inp[5])
-                                case "elements" | "Elements" | "e" | "E":
+                                else:
+                                    print("Usage: VIS add screen <name> menu <menuname>")
+                            case "elements" | "Elements" | "e" | "E":
+                                if len(inp) >= 6:
                                     for i in inp[5].split("-"):
                                         screen.addElement(i)
                                     screen.stitch()
-                        else:
-                            project.newScreen(inp[3])
+                                else:
+                                    print("Usage: VIS add screen <name> elements <elem1-elem2-...>")
+                    else:
+                        project.newScreen(inp[3])
 
         case "stop" | "Stop":
             info = VINFO()
@@ -72,9 +90,12 @@ def __main__():
                 print(f"No Host is running for project '{info.title}'.")
 
         case "stitch" | "Stitch" | "s" | "S":
+            if len(inp) < 3:
+                print("Usage: VIS stitch <screenname>")
+                return
             project = Project()
             screen = project.getScreen(inp[2])
-            if not screen == None:
+            if screen is not None:
                 screen.stitch()
             else:
                 print("Screen does not exist")
@@ -100,9 +121,12 @@ def __main__():
 
             if len(inp) >= 3:
                 if inp[2] in ["Screen", "screen","S","s"]:
+                    if len(inp) < 4:
+                        print("Usage: VIS release screen <screenname> [options]")
+                        return
                     argstart = 4
                     screen = project.getScreen(inp[3])
-                    if not screen is None:
+                    if screen is not None:
                         screen.isolate()
 
                     else:

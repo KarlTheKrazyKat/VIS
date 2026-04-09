@@ -13,6 +13,8 @@ from VIStk.Objects import Root
 from VIStk.Objects._ArgHandler import ArgHandler
 import tkinter as tk
 from tkinter import ttk
+from PIL import Image
+import PIL.ImageTk
 import sys
 import json
 import os
@@ -218,117 +220,190 @@ if QUIET:
 
 # ── GUI mode ─────────────────────────────────────────────────────────────────
 
-root = Root()
-root.title("Uninstaller")
-root.WindowGeometry.setGeometry(width=480, height=320, align="center")
-root.minsize(width=480, height=320)
+root = Root(project=False)
+root.WindowGeometry.setGeometry(width=720, height=360, align="center")
+root.minsize(width=720, height=360)
 
-root.rowconfigure(0, weight=0, minsize=30)
-root.rowconfigure(1, weight=1, minsize=200)
-root.rowconfigure(2, weight=0, minsize=30)
-root.columnconfigure(0, weight=1)
+root.rowconfigure(0, weight=1, minsize=30)
+root.rowconfigure(1, weight=1, minsize=250)
+root.rowconfigure(2, weight=0, minsize=46)
+root.rowconfigure(3, weight=1, minsize=30)
+root.columnconfigure(1, weight=1, minsize=360)
+root.columnconfigure(2, weight=1, minsize=360)
 
-# Header
-header = ttk.Label(root, text="Uninstaller", anchor="w")
-header.grid(row=0, column=0, sticky=(tk.W, tk.E), padx=8, pady=(8, 0))
+# ── Load app icon ─────────────────────────────────────────────────────────────
+d_icon = None
+_icon_photo = None
+if log is not None:
+    try:
+        _install_dir = log.get("install_location", location)
+        _vis_json = os.path.join(_install_dir, ".VIS", "project.json")
+        with open(_vis_json) as _f:
+            _pinfo = json.load(_f)
+        _ptitle = list(_pinfo.keys())[0]
+        # prefer uninstaller_icon, fall back to default icon
+        _icon_name = (_pinfo[_ptitle].get("defaults", {}).get("uninstaller_icon")
+                      or _pinfo[_ptitle].get("defaults", {}).get("icon", "VIS"))
+        _icon_ext = ".ico" if sys.platform == "win32" else ".xbm"
+        _icon_path = os.path.join(_install_dir, "Icons", _icon_name + _icon_ext)
+        if os.path.exists(_icon_path):
+            d_icon = Image.open(_icon_path)
+            _icon_photo = PIL.ImageTk.PhotoImage(d_icon)
+            root.iconphoto(False, _icon_photo)
+    except Exception:
+        pass
 
-# Content area
-content = ttk.Frame(root)
-content.grid(row=1, column=0, sticky=(tk.N, tk.S, tk.E, tk.W), padx=8, pady=4)
-content.columnconfigure(0, weight=1)
+app_name = log.get("app_name", "Application") if log else "Application"
+app_ver  = log.get("app_version", "")          if log else ""
+root.title(f"{app_name} Uninstaller")
 
+# ── Header ────────────────────────────────────────────────────────────────────
+header_frame = ttk.Frame(root)
+header_frame.grid(row=0, column=1, columnspan=2, sticky=(tk.N, tk.S, tk.E, tk.W))
+header_frame.columnconfigure(0, weight=1)
+header_frame.columnconfigure(1, weight=0)
+header = ttk.Label(header_frame, text=f"Uninstall {app_name}" if log else "Uninstaller")
+header.grid(row=0, column=0, sticky=(tk.W,), padx=(4, 0))
+if app_ver:
+    ttk.Label(header_frame, text=f"v{app_ver}").grid(row=0, column=1, sticky=(tk.E,), padx=(0, 8))
+
+# ── No log fallback ───────────────────────────────────────────────────────────
 if log is None:
-    ttk.Label(content, text="No install_log.json found.\n\n"
-              "Cannot determine what to uninstall.",
-              justify="center").pack(expand=True)
+    no_log_frame = ttk.Frame(root)
+    no_log_frame.grid(row=1, column=1, columnspan=2, sticky=(tk.N, tk.S, tk.E, tk.W))
+    ttk.Label(no_log_frame, text="No install_log.json found.\nCannot determine what to uninstall.",
+              justify="center").place(relx=0.5, rely=0.5, anchor="center")
+
+    loc_frame = ttk.Frame(root)
+    loc_frame.grid(row=2, column=1, columnspan=2, sticky=(tk.N, tk.S, tk.E, tk.W))
+
     control = ttk.Frame(root)
-    control.grid(row=2, column=0, sticky=(tk.E, tk.W), padx=8, pady=(0, 8))
-    ttk.Button(control, text="Close", command=root.destroy).pack(side="right")
+    control.grid(row=3, column=1, columnspan=2, sticky=(tk.N, tk.S, tk.E, tk.W))
+    control.rowconfigure(1, weight=1)
+    control.columnconfigure(0, weight=1)
+    ttk.Button(control, text="Close", command=root.destroy).grid(
+        row=1, column=0, padx=2, pady=4, sticky=(tk.N, tk.S, tk.E, tk.W))
     root.mainloop()
     sys.exit(0)
 
-# Show what will be removed
-app_name = log.get("app_name", "Application")
-app_ver  = log.get("app_version", "")
-header.config(text=f"Uninstall {app_name} {app_ver}")
+# ── Screen checklist ──────────────────────────────────────────────────────────
+install_frame = ttk.Frame(root)
+install_frame.grid(row=1, column=1, columnspan=2, sticky=(tk.N, tk.S, tk.E, tk.W))
 
-details_frame = ttk.Frame(content)
-details_frame.pack(fill="both", expand=True)
+canvas = tk.Canvas(install_frame)
+scrollbar = ttk.Scrollbar(install_frame, orient="vertical", command=canvas.yview)
+screen_options = ttk.Frame(canvas)
 
-info_text = tk.Text(details_frame, wrap="word", height=10, state="disabled",
-                    relief="sunken", borderwidth=1)
-info_text.pack(fill="both", expand=True)
+canvas.create_window((0, 0), window=screen_options, anchor="nw")
+screen_options.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+canvas.configure(yscrollcommand=scrollbar.set)
+canvas.pack(side="left", fill="both", expand=True)
+scrollbar.pack(side="right", fill="y")
 
-# Build summary
-lines = []
-lines.append(f"Application: {app_name}")
-lines.append(f"Version: {app_ver}")
-lines.append(f"Location: {log.get('install_location', location)}")
-lines.append("")
-screens = log.get("screens", [])
-if screens:
-    lines.append(f"Screens ({len(screens)}):")
-    for s in screens:
-        lines.append(f"  {s['name']} ({s.get('executable', '')})")
-shortcuts = log.get("desktop_shortcuts", [])
-if shortcuts:
-    lines.append("")
-    lines.append(f"Desktop shortcuts: {', '.join(shortcuts)}")
-dirs = log.get("directories", [])
-if dirs:
-    lines.append("")
-    lines.append(f"Directories ({len(dirs)}):")
-    for d in dirs:
-        lines.append(f"  {d}/")
-if log.get("registry_key"):
-    lines.append("")
-    lines.append(f"Registry: {log['registry_key']}")
+screen_options.columnconfigure(1, minsize=15, weight=0)
+screen_options.columnconfigure(2, weight=1)
+screen_options.columnconfigure(3, weight=0, minsize=60)
 
-info_text.config(state="normal")
-info_text.insert("1.0", "\n".join(lines))
-info_text.config(state="disabled")
+installed_screens = log.get("screens", [])
+var_all   = tk.IntVar()
+var_items = []
+img_items = []
 
-# Controls
+def _all_state():
+    for v in var_items:
+        v.set(var_all.get())
+
+def _is_all():
+    for v in var_items:
+        if v.get() == 0:
+            var_all.set(0)
+            return
+    var_all.set(1)
+
+select_all = ttk.Checkbutton(screen_options, text="All", variable=var_all, command=_all_state)
+select_all.grid(row=0, column=1, columnspan=2, sticky=(tk.N, tk.S, tk.E, tk.W))
+select_all.state(["!alternate"])
+
+for idx, scr in enumerate(installed_screens):
+    row = idx + 1
+    screen_options.rowconfigure(row, weight=1)
+    name = scr["name"]
+
+    if d_icon is not None:
+        img_items.append(PIL.ImageTk.PhotoImage(d_icon.resize((16, 16))))
+    else:
+        img_items.append(None)
+
+    var_items.append(tk.IntVar(value=1))
+    cb = ttk.Checkbutton(screen_options, text=name, variable=var_items[-1], command=_is_all,
+                         image=img_items[-1] if img_items[-1] else "", compound=tk.LEFT)
+    cb.grid(row=row, column=2, sticky=(tk.N, tk.S, tk.E, tk.W))
+    cb.state(["!alternate"])
+
+    scr_ver = scr.get("version", "")
+    if scr_ver:
+        ttk.Label(screen_options, text=f"v{scr_ver}", foreground="gray40").grid(
+            row=row, column=3, sticky=(tk.E,), padx=(0, 8))
+
+var_all.set(1)
+
+# ── Install location display ──────────────────────────────────────────────────
+loc_frame = ttk.Frame(root)
+loc_frame.grid(row=2, column=1, columnspan=2, sticky=(tk.N, tk.S, tk.E, tk.W))
+loc_frame.rowconfigure(1, weight=1)
+loc_frame.columnconfigure(1, weight=1)
+
+ttk.Label(loc_frame, textvariable=tk.StringVar(value=log.get("install_location", location)),
+          relief="sunken").grid(row=1, column=1, padx=2, pady=8, sticky=(tk.N, tk.S, tk.E, tk.W))
+
+# ── Controls ──────────────────────────────────────────────────────────────────
 control = ttk.Frame(root)
-control.grid(row=2, column=0, sticky=(tk.E, tk.W), padx=8, pady=(0, 8))
+control.grid(row=3, column=1, columnspan=2, sticky=(tk.N, tk.S, tk.E, tk.W))
+control.rowconfigure(1, weight=1)
 control.columnconfigure(0, weight=1)
 control.columnconfigure(1, weight=1)
+control.columnconfigure(2, weight=1)
 
 close_btn = ttk.Button(control, text="Close", command=root.destroy)
-close_btn.grid(row=0, column=0, padx=2, sticky=(tk.W,))
+close_btn.grid(row=1, column=0, padx=2, pady=4, sticky=(tk.N, tk.S, tk.E, tk.W))
 
+progress_frame = ttk.Frame(install_frame)  # shown during uninstall
 
 def _do_uninstall():
-    """Run the uninstall process with progress UI."""
+    selected = [installed_screens[i]["name"] for i, v in enumerate(var_items) if v.get() == 1]
+    if not selected:
+        return
+
     uninstall_btn.state(["disabled"])
     close_btn.state(["disabled"])
 
-    # Replace details with progress
-    for w in details_frame.winfo_children():
-        w.destroy()
+    # Build a filtered log for the selected screens only
+    filtered_log = dict(log)
+    filtered_log["screens"] = [s for s in installed_screens if s["name"] in selected]
 
-    progress_label = ttk.Label(details_frame, text="Preparing...", anchor="w")
-    progress_label.pack(fill="x", padx=4, pady=(8, 2))
+    # Switch to progress UI
+    canvas.pack_forget()
+    scrollbar.pack_forget()
+    progress_frame.pack(fill="both", expand=True)
 
-    progress_bar = ttk.Progressbar(details_frame, maximum=100, value=0)
-    progress_bar.pack(fill="x", padx=4, pady=2)
-
-    status_label = ttk.Label(details_frame, text="", anchor="w")
-    status_label.pack(fill="x", padx=4, pady=(2, 8))
-
+    progress_label = ttk.Label(progress_frame, text="Preparing...", anchor="w")
+    progress_label.pack(fill="x", padx=8, pady=(12, 2))
+    progress_bar = ttk.Progressbar(progress_frame, maximum=100, value=0)
+    progress_bar.pack(fill="x", padx=8, pady=2)
+    status_label = ttk.Label(progress_frame, text="", anchor="w")
+    status_label.pack(fill="x", padx=8, pady=(2, 8))
     root.update()
 
-    # Remove shortcuts
     progress_label.config(text="Removing desktop shortcuts...")
     root.update()
-    remove_desktop_shortcuts(log)
+    remove_desktop_shortcuts(filtered_log)
 
-    # Remove registry
-    progress_label.config(text="Removing registry entry...")
-    root.update()
-    remove_registry_entry(log)
+    all_selected = len(selected) == len(installed_screens)
+    if all_selected:
+        progress_label.config(text="Removing registry entry...")
+        root.update()
+        remove_registry_entry(filtered_log)
 
-    # Remove files and directories
     def _gui_progress(step, total, label):
         progress_label.config(text=label)
         pct = int(step * 100 / total) if total > 0 else 100
@@ -336,21 +411,17 @@ def _do_uninstall():
         status_label.config(text=f"{step}/{total}")
         root.update()
 
-    remove_installed_files(log, location, progress_fn=_gui_progress)
+    remove_installed_files(filtered_log, location, progress_fn=_gui_progress)
 
     progress_label.config(text="Uninstallation complete.")
     progress_bar.config(value=100)
     close_btn.state(["!disabled"])
-
-    def _close_and_cleanup():
-        schedule_self_delete()
-        root.destroy()
-
-    close_btn.config(command=_close_and_cleanup)
+    close_btn.config(command=lambda: (schedule_self_delete() if all_selected else None, root.destroy())
+                     if all_selected else root.destroy)
     root.update()
 
 
 uninstall_btn = ttk.Button(control, text="Uninstall", command=_do_uninstall)
-uninstall_btn.grid(row=0, column=1, padx=2, sticky=(tk.E,))
+uninstall_btn.grid(row=1, column=2, padx=2, pady=4, sticky=(tk.N, tk.S, tk.E, tk.W))
 
 root.mainloop()

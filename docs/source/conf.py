@@ -9,8 +9,8 @@ project = 'VIStk'
 copyright = '2025, bmi CAD Services'
 author = 'Elijah Love'
 master_doc = 'index'
-version = '0.4.3'
-release = '0.4.3'
+version = '0.4.4'
+release = '0.4.4'
 
 # -- General configuration ---------------------------------------------------
 

@@ -394,8 +394,6 @@ A screen that needs more than one cascade on the menu bar calls `set_screen_item
 
 ---
 
-## Upcoming
-
 ### 0.4.3 Split Layouts, Installer Uninstaller & Install Log
 
 Allow the Host window's content area to be divided into multiple panes, each with its own `TabBar` and `TabManager`, with a draggable sash between panes.  Two screens can then run side by side (or stacked) in a single window without spawning a `DetachedWindow`.
@@ -501,6 +499,12 @@ The existing "Open in new window" entry is unchanged; it still creates a `Detach
 - Right-click menu gains "Split right" and "Split down" entries that fire `on_tab_split`
 - Drag motion checks all registered SplitViews for drop zones when cursor is not over any TabBar
 - Focus-aware `_tab_bg()` returns different colours based on pane focus state
+
+---
+
+### 0.4.3.1 Patch — Screen Splitting Fixes
+
+- Fixed broken aspects of screen splitting introduced in 0.4.3
 
 ---
 

@@ -1,4 +1,4 @@
-from tkinter import Frame, Button, Label, Menu, Toplevel
+from tkinter import Frame, Button, Label, Menu, Toplevel, TclError
 
 # ── Palette ───────────────────────────────────────────────────────────────────
 _BG_BAR          = "grey62"    # tab strip background
@@ -15,7 +15,8 @@ _BG_UNFOCUSED    = "grey52"    # tab strip when pane is NOT focused (darker)
 _BG_ACTIVE_UNFOC = "grey65"    # active tab in an unfocused pane (dimmed but visible)
 
 _DRAG_THRESHOLD  = 8           # pixels of motion (any direction) to activate drag ghost
-_EMPTY_BAR_H     = 28          # height of the bar when no tabs are open
+_EMPTY_BAR_H     = 28          # height of the bar when no tabs are open (horizontal)
+_EMPTY_BAR_W     = 28          # width of the bar when no tabs are open (vertical)
 
 # ── Global registry ───────────────────────────────────────────────────────────
 # All live TabBar instances register here so cross-bar detection works.
@@ -50,13 +51,14 @@ class TabBar(Frame):
     code (e.g. Host) may read these to position a new DetachedWindow.
     """
 
-    def __init__(self, parent, **kwargs):
+    def __init__(self, parent, position: str = "top", **kwargs):
         kwargs.setdefault("bg", _BG_BAR)
         super().__init__(parent, **kwargs)
         self._tabs: dict[str, dict] = {}
         """name → {"button": Button, "close": Button, "sep": Frame|None, "icon": image|None}"""
         self.active: str | None = None
         self.owner = None               # set by TabManager
+        self._position: str = position  # "top" | "bottom" | "left" | "right"
 
         # Callbacks
         self.on_focus_change = None
@@ -94,6 +96,19 @@ class TabBar(Frame):
         _TABBAR_REGISTRY.append(self)
         self._update_empty_state()
 
+    # ── Position helpers ───────────────────────────────────────────────────────
+
+    def _is_vertical(self) -> bool:
+        """Return True when the bar is oriented for left/right placement."""
+        return self._position in ("left", "right")
+
+    def set_position(self, position: str):
+        """Change tab bar orientation and rebuild tab packing."""
+        self._position = position
+        if self._tabs:
+            self._rebuild_packing(list(self._tabs.keys()))
+        self._update_empty_state()
+
     # ── Public API ─────────────────────────────────────────────────────────────
 
     def open_tab(self, name: str, icon=None, insert_idx: int = -1) -> bool:
@@ -112,8 +127,12 @@ class TabBar(Frame):
 
         sep = None
         if self._tabs:
-            sep = Frame(self, width=1, bg=_SEP_BG)
-            sep.pack(side="left", fill="y", pady=3)
+            if self._is_vertical():
+                sep = Frame(self, height=1, bg=_SEP_BG)
+                sep.pack(side="top", fill="x", padx=3)
+            else:
+                sep = Frame(self, width=1, bg=_SEP_BG)
+                sep.pack(side="left", fill="y", pady=3)
 
         btn = Button(
             self,
@@ -126,7 +145,10 @@ class TabBar(Frame):
             activebackground=_BG_HOVER_TAB,
             command=lambda n=name: self._btn_click(n),
         )
-        btn.pack(side="left", padx=(4, 0), pady=2)
+        if self._is_vertical():
+            btn.pack(side="top", fill="x", padx=2, pady=(4, 0))
+        else:
+            btn.pack(side="left", padx=(4, 0), pady=2)
 
         btn.bind("<ButtonPress-1>",   lambda e, n=name: self._on_drag_start(e, n))
         btn.bind("<B1-Motion>",       lambda e, n=name: self._on_drag_motion(e, n))
@@ -143,7 +165,10 @@ class TabBar(Frame):
             activebackground=_BG_HOVER_CLOSE,
             command=lambda n=name: self._close(n),
         )
-        close_btn.pack(side="left", padx=(0, 4), pady=2)
+        if self._is_vertical():
+            close_btn.pack(side="top", fill="x", padx=2, pady=(0, 4))
+        else:
+            close_btn.pack(side="left", padx=(0, 4), pady=2)
 
         btn.bind("<Enter>",       lambda e, n=name: self._on_tab_enter(n))
         btn.bind("<Leave>",       lambda e, n=name: self._on_tab_leave(n))
@@ -285,7 +310,10 @@ class TabBar(Frame):
             self.configure(bg=_BG_BAR)
         else:
             self.pack_propagate(False)
-            self.configure(height=_EMPTY_BAR_H, bg=_BG_EMPTY)
+            if self._is_vertical():
+                self.configure(width=_EMPTY_BAR_W, bg=_BG_EMPTY)
+            else:
+                self.configure(height=_EMPTY_BAR_H, bg=_BG_EMPTY)
 
     # ── Right-click context menu ───────────────────────────────────────────────
 
@@ -358,14 +386,14 @@ class TabBar(Frame):
             self._ghost.geometry(
                 f"+{x - self._drag_btn_offset_x}+{y - self._drag_btn_offset_y}"
             )
-        except Exception:
+        except TclError:
             pass
 
     def _destroy_ghost(self, name: str | None = None):
         if self._ghost is not None:
             try:
                 self._ghost.destroy()
-            except Exception:
+            except TclError:
                 pass
             self._ghost = None
         n = name or self._drag_name
@@ -383,7 +411,7 @@ class TabBar(Frame):
             try:
                 bx = self._tabs[name]["button"].winfo_rootx()
                 bw = self._tabs[name]["button"].winfo_width()
-            except Exception:
+            except TclError:
                 continue
             if x_root < bx + bw // 2:
                 return i
@@ -397,13 +425,13 @@ class TabBar(Frame):
         if idx <= 0:
             try:
                 return self._tabs[names[0]]["button"].winfo_x()
-            except Exception:
+            except TclError:
                 return 0
         if idx >= len(names):
             try:
                 c = self._tabs[names[-1]]["close"]
                 return c.winfo_x() + c.winfo_width() + 2
-            except Exception:
+            except TclError:
                 return max(0, self.winfo_width() - 4)
         try:
             prev_c = self._tabs[names[idx - 1]]["close"]
@@ -411,7 +439,7 @@ class TabBar(Frame):
             px = prev_c.winfo_x() + prev_c.winfo_width()
             cx = cur_b.winfo_x()
             return (px + cx) // 2
-        except Exception:
+        except TclError:
             return 0
 
     # ── Drag-to-reorder / detach / merge ──────────────────────────────────────
@@ -426,7 +454,7 @@ class TabBar(Frame):
             btn = self._tabs[name]["button"]
             self._drag_btn_offset_x = event.x_root - btn.winfo_rootx()
             self._drag_btn_offset_y = event.y_root - btn.winfo_rooty()
-        except Exception:
+        except TclError:
             self._drag_btn_offset_x = 0
             self._drag_btn_offset_y = 0
         self._last_drag_btn_offset_x = self._drag_btn_offset_x
@@ -464,7 +492,7 @@ class TabBar(Frame):
                 by = bar.winfo_rooty()
                 bw = bar.winfo_width()
                 bh = bar.winfo_height()
-            except Exception:
+            except TclError:
                 continue
             if bx <= x < bx + bw and by <= y < by + bh:
                 target_bar = bar
@@ -535,7 +563,7 @@ class TabBar(Frame):
                 if ghost is not None:
                     try:
                         ghost.destroy()
-                    except Exception:
+                    except TclError:
                         pass
         # _drag_active intentionally NOT cleared here; _btn_click reads and clears it
 
@@ -566,10 +594,20 @@ class TabBar(Frame):
                     w["sep"] = None
             else:
                 if not w["sep"]:
-                    w["sep"] = Frame(self, width=1, bg=_SEP_BG)
-                w["sep"].pack(side="left", fill="y", pady=3)
-            w["button"].pack(side="left", padx=(4, 0), pady=2)
-            w["close"].pack(side="left", padx=(0, 4), pady=2)
+                    if self._is_vertical():
+                        w["sep"] = Frame(self, height=1, bg=_SEP_BG)
+                    else:
+                        w["sep"] = Frame(self, width=1, bg=_SEP_BG)
+                if self._is_vertical():
+                    w["sep"].pack(side="top", fill="x", padx=3)
+                else:
+                    w["sep"].pack(side="left", fill="y", pady=3)
+            if self._is_vertical():
+                w["button"].pack(side="top", fill="x", padx=2, pady=(4, 0))
+                w["close"].pack(side="top", fill="x", padx=2, pady=(0, 4))
+            else:
+                w["button"].pack(side="left", padx=(4, 0), pady=2)
+                w["close"].pack(side="left", padx=(0, 4), pady=2)
             new_tabs[name] = w
         self._tabs = new_tabs
 

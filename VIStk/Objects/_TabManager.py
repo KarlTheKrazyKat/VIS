@@ -62,13 +62,14 @@ class TabManager(Frame):
         on_tab_split       (callable | None) ``(name, direction)``
     """
 
-    def __init__(self, parent, **kwargs):
+    def __init__(self, parent, position: str = "top", **kwargs):
         kwargs.setdefault("bg", _BG_BAR)
         super().__init__(parent, **kwargs)
 
         self._tabs: dict[str, dict] = {}
         """name → {frame, module, hooks, icon, base_name, info, _info_trace}"""
         self._active: str | None = None
+        self._position: str = position
 
         self.on_tab_activate   = None
         self.on_tab_deactivate = None
@@ -78,12 +79,11 @@ class TabManager(Frame):
         self.on_tab_info_change = None
         self.on_tab_split      = None
 
-        self.tab_bar = TabBar(self)
-        self.tab_bar.pack(side="top", fill="x")
+        self.tab_bar = TabBar(self, position=position)
         self.tab_bar.owner = self
 
         self._content = Frame(self)
-        self._content.pack(side="top", fill="both", expand=True)
+        self._repack_layout()
 
         self.tab_bar.on_focus_change = self._on_focus_change
         self.tab_bar.on_tab_close    = self._on_close_request
@@ -92,6 +92,25 @@ class TabManager(Frame):
         self.tab_bar.on_drag_detach  = self._on_detach_request
         self.tab_bar.on_drag_merge   = self._on_merge_request
         self.tab_bar.on_tab_split    = self._on_split_request
+
+    # ── Layout ─────────────────────────────────────────────────────────────────
+
+    def _repack_layout(self):
+        """Pack tab_bar and _content based on the current position setting."""
+        self.tab_bar.pack_forget()
+        self._content.pack_forget()
+        if self._position in ("top", "bottom"):
+            self.tab_bar.pack(side=self._position, fill="x")
+            self._content.pack(side="top", fill="both", expand=True)
+        else:  # left or right
+            self.tab_bar.pack(side=self._position, fill="y")
+            self._content.pack(side="left", fill="both", expand=True)
+
+    def set_position(self, position: str):
+        """Change the tab bar position and update the layout."""
+        self._position = position
+        self.tab_bar.set_position(position)
+        self._repack_layout()
 
     # ── Public API ─────────────────────────────────────────────────────────────
 
@@ -272,6 +291,18 @@ class TabManager(Frame):
             self.on_tab_deactivate(None)
 
     def _on_close_request(self, name: str):
+        fn = self._get_hook(name, "has_unsaved")
+        if fn:
+            try:
+                if fn():
+                    from tkinter import messagebox
+                    if not messagebox.askyesno(
+                        "Close tab",
+                        f'"{name}" has unsaved changes.\nClose anyway?',
+                    ):
+                        return
+            except Exception:
+                pass
         self.close_tab(name)
 
     def _on_popout_request(self, name: str):

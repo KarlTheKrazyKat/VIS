@@ -1,4 +1,4 @@
-from tkinter import Menu, Tk, Toplevel
+from tkinter import Menu, Tk, Toplevel, TclError
 
 
 class HostMenu:
@@ -97,7 +97,7 @@ class HostMenu:
         for label in self._project_labels:
             try:
                 self.menubar.delete(label)
-            except Exception:
+            except TclError:
                 pass
         self._project_labels.clear()
 
@@ -128,7 +128,7 @@ class HostMenu:
                 self._replaced_shared.add(idx)
                 self._screen_indices.append(idx)
                 return
-            except Exception:
+            except TclError:
                 pass
 
         self.menubar.add_cascade(label=label, menu=cascade)
@@ -141,7 +141,7 @@ class HostMenu:
                 continue
             try:
                 self.menubar.delete(idx)
-            except Exception:
+            except TclError:
                 pass
         self._screen_indices.clear()
         self._replaced_shared.clear()
@@ -149,7 +149,7 @@ class HostMenu:
         for label, idx, old_menu in self._hidden_shared:
             try:
                 self.menubar.entryconfigure(idx, menu=old_menu)
-            except Exception:
+            except TclError:
                 pass
         self._hidden_shared.clear()
 
@@ -236,7 +236,7 @@ class HostMenu:
             for item_label, opts in items.items():
                 try:
                     cascade.entryconfig(item_label, **opts)
-                except Exception:
+                except TclError:
                     pass
 
     def reset_overrides(self):
@@ -251,7 +251,7 @@ class HostMenu:
             for item_label, opts in defaults.items():
                 try:
                     cascade.entryconfig(item_label, **opts)
-                except Exception:
+                except TclError:
                     pass
 
     # ── Internal ───────────────────────────────────────────────────────────────

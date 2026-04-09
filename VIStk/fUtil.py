@@ -15,15 +15,19 @@ class fUtil():
         else: #Liberation Sans is the Linux Available version of Arial
             self.defont = "LiberationSans"
 
+    @staticmethod
     def mkfont(size:int,bold:bool=False,font:str="default"):
         """Creates a font string with wom fonts"""
 
         if font == "default":
             return f"{fUtil().defont} {size}{' bold' if bold is True else ''}"
-        
+
+    @staticmethod
     def autosize(e:Event=None, relations:list[Widget]=None, offset:int=None,shrink:int=0):
         """Automatically sizes text given a widget with text."""
-        if not e is None: #Always need an event
+        if relations is not None:
+            relations = list(relations)
+        if e is not None: #Always need an event
             #Get info from widget
             widget:Widget = e.widget
             w = widget.winfo_width() - 1 - shrink
@@ -36,7 +40,7 @@ class fUtil():
             fh = ffont.metrics('linespace')
 
             #Check widget with tightest relation
-            if not relations is None:
+            if relations is not None:
                 tempwi = widget
                 for wi in relations:
                     if isinstance(wi["text"],str):
@@ -80,10 +84,10 @@ class fUtil():
                 fh = ffont.metrics('linespace')
                 fw = ffont.measure(widget["text"])
 
-            if not offset is None: #Apply offset
+            if offset is not None: #Apply offset
                 _size = _size - offset
 
-            if not relations is None: #Correct relations
+            if relations is not None: #Correct relations
                 for wi in relations:
                     wi.configure(font = f"{_family} {_size} {_weight}")
             else:

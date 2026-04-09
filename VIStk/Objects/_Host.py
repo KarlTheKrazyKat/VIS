@@ -68,7 +68,8 @@ class Host(Root):
 
         self.protocol("WM_DELETE_WINDOW", self._hide_to_tray)
 
-        self._split_view = SplitView(self, host=self)
+        self._split_view = SplitView(self, host=self,
+                                     tab_position=getattr(self.Project, "tab_bar_position", "top"))
         self._split_view.pack(fill="both", expand=True)
         self._split_view.set_callbacks({
             "on_tab_activate":    self._on_tab_activate,
@@ -220,6 +221,22 @@ class Host(Root):
                             pass
                         break
                 return
+
+        # Enforce max_tabs limit
+        max_t = getattr(self.Project, "max_tabs", None)
+        if max_t is not None:
+            from tkinter import messagebox
+            total = sum(len(p._tabs) for p in self._split_view.all_tab_managers())
+            for dw in self._detached:
+                total += len(dw.tab_manager._tabs)
+            if total >= max_t:
+                messagebox.showinfo(
+                    "Tab limit reached",
+                    f"Maximum {max_t} tab{'s' if max_t != 1 else ''} are already open.\n"
+                    "Close a tab to open another."
+                )
+                return
+
         display = self._unique_display_name(scr.name)
         module  = self._import_screen(scr)
         hooks   = self._import_hooks(scr)

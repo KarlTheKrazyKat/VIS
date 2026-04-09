@@ -1,7 +1,7 @@
 0.4.2 --- Menus
 ===============
 
-*Released* --- current version
+*Released*
 
 The 0.4.2 release introduced the three-layer menubar model, menu module scaffolding, and
 a large batch of installer and release pipeline fixes.

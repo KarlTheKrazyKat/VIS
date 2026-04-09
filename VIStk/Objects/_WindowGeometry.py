@@ -2,15 +2,17 @@ from tkinter import *
 from typing import Literal
 
 query = Tk()
-try: #On Linux
-    query.wm_attributes("-zoomed", True)
-except TclError: #On Windows
-    query.state('zoomed')
-query.update()
-global hs, ws
-ws = query.winfo_width()-2#Unclear about this offset
-hs = query.winfo_height()-9#Might be operating system specific
-query.destroy()
+try:
+    try: #On Linux
+        query.wm_attributes("-zoomed", True)
+    except TclError: #On Windows
+        query.state('zoomed')
+    query.update()
+    global hs, ws
+    ws = query.winfo_width()-2#Unclear about this offset
+    hs = query.winfo_height()-9#Might be operating system specific
+finally:
+    query.destroy()
 #print(f"Screen has usable size of {ws}x{hs}")
 
 class WindowGeometry():
@@ -77,17 +79,20 @@ class WindowGeometry():
         #No adjustment needs to be made if pixels are given
 
         if size_style == "window_relative":
-            if not window_ref is None:
+            if window_ref is not None:
                 _ws = window_ref.winfo_width()
                 _hs = window_ref.winfo_height()
 
-                if not _ws is None: ws = _ws
-                if not _hs is None: hs = _hs
+                if _ws is not None: ws = _ws
+                if _hs is not None: hs = _hs
 
-                geo_ref = WindowGeometry(window_ref).stripGeometry(("x","y"))
-                
-                ox = geo_ref[0]
-                oy = geo_ref[1]
+                if isinstance(window_ref, (Tk, Toplevel)):
+                    geo_ref = WindowGeometry(window_ref).stripGeometry(("x","y"))
+                    ox = geo_ref[0]
+                    oy = geo_ref[1]
+                else:
+                    ox = window_ref.winfo_rootx()
+                    oy = window_ref.winfo_rooty()
 
             #Will always hand over relative sizing to screen relative
             size_style = "screen_relative"

@@ -18,7 +18,10 @@
       "Bash(echo \"Host launched, PID: $!\")",
       "Bash(grep -r \"SplitView\\\\|HostMenu\\\\|DetachedWindow\\\\|TabBar\\\\|Host\" /c/Users/elija/Documents/VIStk/docs/source/*.rst)",
       "Bash(ls -1 /c/Users/elija/Documents/VIStk/docs/source/changelog/*.rst)",
-      "Bash(make html:*)"
+      "Bash(make html:*)",
+      "Bash(find C:\\\\Users\\\\elija\\\\documents\\\\VIStk:*)",
+      "Read(//l/WOM/PYWOM/**)",
+      "Bash(vis PYWOM)"
     ]
   }
 }

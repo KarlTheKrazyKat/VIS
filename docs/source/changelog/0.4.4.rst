@@ -1,7 +1,7 @@
 0.4.4 --- Tab Bar Enhancements, Installer Update & Integrity
 =============================================================
 
-*Upcoming*
+*Released* --- current version
 
 Tab Bar Enhancements
 --------------------

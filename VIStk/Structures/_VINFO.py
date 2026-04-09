@@ -99,7 +99,7 @@ class VINFO():
         #Begin Project Creation If Project Is Not Found
         if getPath() == None:
             wd = os.getcwd()
-            os.mkdir(wd+"\\.VIS")
+            os.mkdir(wd+"/.VIS")
 
             unzip_without_overwrite(VISROOT+"Form.zip",wd)
             print(f"Copied structure to {wd}")
@@ -204,6 +204,12 @@ class VINFO():
                 info[self.title].get("default_screen"),  # backwards-compat
             )
             """Name of the screen opened when the Host restores from the tray."""
+            self.tab_bar_position: str = info[self.title]["defaults"].get(
+                "tab_bar_position", "top"
+            )
+            """Tab bar position: 'top', 'bottom', 'left', or 'right'."""
+            self.max_tabs: int | None = info[self.title]["defaults"].get("max_tabs", None)
+            """Maximum simultaneous open tabs across all panes, or None for unlimited."""
             
         self.p_screens = self.p_project +"/Screens"
         """The Path to the `/Screens` Folder"""

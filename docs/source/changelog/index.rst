@@ -13,6 +13,12 @@ Released
    * - Version
      - Title
      - Highlights
+   * - :doc:`0.4.4`
+     - Tab Bar & Installer Update
+     - Tab bar position, update-in-place installer, rollback, integrity check
+   * - :doc:`0.4.3`
+     - Split Layouts & Uninstaller
+     - SplitView widget, install log, uninstaller
    * - :doc:`0.4.2`
      - Menus
      - Three-layer menubar model, menu modules, installer/release fixes
@@ -36,12 +42,6 @@ Upcoming
    * - Version
      - Title
      - Planned
-   * - :doc:`0.4.3`
-     - Split Layouts & Uninstaller
-     - SplitView widget, install log, uninstaller
-   * - :doc:`0.4.4`
-     - Tab Bar & Installer Update
-     - Tab bar position, update-in-place installer, rollback, integrity check
    * - :doc:`0.4.5`
      - Installer Polish
      - License/EULA page, silent progress, custom installer icon
@@ -68,12 +68,12 @@ Upcoming
    :maxdepth: 1
    :hidden:
 
+   0.4.4
+   0.4.3
    0.4.2
    0.4.1
    0.4.0
    0.3
-   0.4.3
-   0.4.4
    0.4.5
    0.5
    0.6

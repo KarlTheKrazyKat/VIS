@@ -6,7 +6,7 @@ from VIStk.Objects._Layout import Layout
 
 class Root(Tk, Window):
     """A wrapper for the Tk class with VIS attributes"""
-    def __init__(self,*args,**kwargs):
+    def __init__(self,*args,project:bool=True,**kwargs):
         super().__init__(*args,**kwargs)
         self.WindowGeometry = WindowGeometry(self)
         self.Active:bool = True
@@ -14,7 +14,7 @@ class Root(Tk, Window):
         self.exitAction = None
         self.exitArgs = None
         self.exitKwargs = None
-        self.Project = Project()
+        self.Project = Project() if project else None
         """The VIStk `Project`"""
         self.Layout=Layout(self)
         """The VIStk `Layout` of the Window"""
@@ -24,7 +24,7 @@ class Root(Tk, Window):
         for element in self.winfo_children():
             try:
                 element.destroy()
-            except: pass
+            except Exception: pass
         
         self.Active = False
         self.destroy()
@@ -32,22 +32,15 @@ class Root(Tk, Window):
     def exitQueue(self, action, *args, **kwargs):
         """Sets a function to call in the exit loop. Use for redirects."""
         self.exitAction = action
-        self.exitArgs = tuple(*args)
-        self.exitKwargs = {**kwargs}
+        self.exitArgs = args
+        self.exitKwargs = kwargs
 
     def exitAct(self):
         """Executes the exitAction"""
-        if not self.exitAction is None:
-            if not self.exitArgs is None:
-                if not self.exitKwargs is None:
-                    self.exitAction(tuple(self.exitArgs),self.exitKwargs)
-                else:
-                    self.exitAction(tuple(self.exitArgs))
-            else:
-                if not self.exitKwargs is None:
-                    self.exitAction(self.exitKwargs)
-                else:
-                    self.exitAction()
+        if self.exitAction is not None:
+            args = self.exitArgs or ()
+            kwargs = self.exitKwargs or {}
+            self.exitAction(*args, **kwargs)
 
     def screenTitle(self, screen:str, title:str=None):
         """Sets the title and the screen that is currently active"""

@@ -35,6 +35,7 @@ class Project(VINFO):
 
             self.dist_location:str = info[self.title]["release_info"]["location"]
             self.hidden_imports:list[str] = info[self.title]["release_info"]["hidden_imports"]
+            self.collect_packages:list[str] = info[self.title]["release_info"].get("collect_packages", [])
             self.host_script: str = info[self.title].get("host", {}).get("script", ".VIS/Host.py")
             """Filename of the Host entry-point script"""
         self.Screen: Screen = None
@@ -56,7 +57,7 @@ class Project(VINFO):
             info = json.load(f) #Load info
 
         name = self.title
-        if info[name]["Screens"].get(screen) == None: #If Screen does not exist in VINFO
+        if info[name]["Screens"].get(screen) is None: #If Screen does not exist in VINFO
             while True: #ensures a valid name is used for script
                 match input(f"Should python script use name {screen}.py? "):
                     case "Yes" | "yes" | "Y" | "y":
