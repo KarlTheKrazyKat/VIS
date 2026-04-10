@@ -124,6 +124,10 @@ class Host(Root):
         if _open_arg:
             start_hidden = False
             self.after(0, lambda: self.open(_open_arg))
+        elif getattr(sys, 'frozen', False) and self.Project.default_screen:
+            # Compiled exe — auto-open default screen and show window
+            start_hidden = False
+            self.after(0, lambda: self.open(self.Project.default_screen))
 
         if start_hidden:
             self.withdraw()
@@ -576,6 +580,11 @@ class Host(Root):
     # ── IPC server ─────────────────────────────────────────────────────────────
 
     def _start_ipc(self):
+        # Remove any stale port file left by a previous crash
+        try:
+            os.remove(_ipc_port_file(self.Project.title))
+        except FileNotFoundError:
+            pass
         try:
             srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -583,29 +592,40 @@ class Host(Root):
             srv.listen(8)
             self._ipc_server = srv
             port = srv.getsockname()[1]
-            with open(_ipc_port_file(self.Project.title), "w") as f:
-                f.write(str(port))
             t = threading.Thread(target=self._ipc_listen, args=(srv,), daemon=True)
             t.start()
+            # Write port file only after the listener thread is running
+            with open(_ipc_port_file(self.Project.title), "w") as f:
+                f.write(str(port))
         except Exception:
+            try:
+                self._ipc_server.close()
+            except Exception:
+                pass
             self._ipc_server = None
 
     def _ipc_listen(self, srv: socket.socket):
-        while True:
-            try:
-                conn, _ = srv.accept()
-                with conn:
-                    data = conn.recv(1024).decode("utf-8", errors="ignore").strip()
-                if data == "__VIS_QUIT__":
-                    self._call_queue.put(self._do_quit)
+        try:
+            while True:
+                try:
+                    conn, _ = srv.accept()
+                    with conn:
+                        data = conn.recv(1024).decode("utf-8", errors="ignore").strip()
+                    if data == "__VIS_QUIT__":
+                        self._call_queue.put(self._do_quit)
+                        break
+                    elif data.startswith("__VIS_CLOSE__:"):
+                        n = data[len("__VIS_CLOSE__:"):]
+                        self._call_queue.put(lambda name=n: self._close_screen(name))
+                    elif data:
+                        self._call_queue.put(lambda name=data: self.open(name))
+                except Exception:
                     break
-                elif data.startswith("__VIS_CLOSE__:"):
-                    n = data[len("__VIS_CLOSE__:"):]
-                    self._call_queue.put(lambda name=n: self._close_screen(name))
-                elif data:
-                    self._call_queue.put(lambda name=data: self.open(name))
+        finally:
+            try:
+                srv.close()
             except Exception:
-                break
+                pass
 
     def _stop_ipc(self):
         if self._ipc_server:
@@ -679,9 +699,12 @@ class Host(Root):
             import winreg
             key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
             app_name = self.Project.title + "Host"
-            exe = sys.executable
-            script = self.Project.p_project + "/" + self.Project.host_script
-            cmd = f'"{exe}" "{script}"'
+            if getattr(sys, 'frozen', False):
+                cmd = f'"{sys.executable}"'
+            else:
+                exe = sys.executable
+                script = self.Project.p_project + "/" + self.Project.host_script
+                cmd = f'"{exe}" "{script}"'
             with winreg.OpenKey(
                 winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_READ
             ) as key:
@@ -723,7 +746,11 @@ class Host(Root):
         for name in list(self._toplevels.keys()):
             self._close_toplevel(name)
         for dw in list(self._detached):
-            dw._on_close()
+            try:
+                dw._on_close()
+            except Exception:
+                pass
+        self._detached.clear()
         for pane in self._split_view.all_tab_managers():
             for name in list(pane._tabs.keys()):
                 pane.close_tab(name)

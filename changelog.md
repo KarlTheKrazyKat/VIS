@@ -562,6 +562,17 @@ The existing "Open in new window" entry is unchanged; it still creates a `Detach
 
 ---
 
+### 0.4.6 Tab Identity Refactor
+
+**Per-instance tab IDs**
+
+- Every tab opened by `TabManager.open_tab` is assigned a unique ID (UUID or integer) at creation time
+- All internal operations (close, focus restore, merge, popout, IPC `__VIS_CLOSE__`) reference the ID rather than the display name
+- Display names remain mutable and non-unique; IDs are stable for the lifetime of the tab
+- Fixes focus restoration after `SplitView.remove_pane` in multi-split layouts with duplicate screen names
+
+---
+
 ### 0.5.X VIS Widgets
 
 Widgets that Tkinter does not provide natively. General-purpose and usable in any VIStk app.

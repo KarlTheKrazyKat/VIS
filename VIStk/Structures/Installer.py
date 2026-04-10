@@ -18,6 +18,7 @@ if sys.platform == "win32": import winshell
 from pathlib import Path
 
 QUIET = False
+FORCE_KILL = False
 cinstalls = []
 dinstalls = []
 custom_path = None
@@ -37,13 +38,18 @@ def _on_path(args):
     if args:
         custom_path = " ".join(args)
 
+def _on_force(args):
+    global FORCE_KILL
+    FORCE_KILL = True
+
 def _on_help(args):
-    print("Usage: Installer.exe [--Quiet [screens...]] [--Desktop <screens...>] [--Path <dir>] [--Verify] [--Help]")
+    print("Usage: Installer.exe [--Quiet [screens...]] [--Desktop <screens...>] [--Path <dir>] [--Force] [--Verify] [--Help]")
     print()
     print("Flags:")
     print("  --Quiet   [s1] [s2] ...  Install silently (no GUI); installs all screens if none listed")
     print("  --Desktop <s1> <s2> ...  Create desktop shortcuts for listed screens (requires --Quiet)")
     print("  --Path    <directory>    Override the install location (requires --Quiet)")
+    print("  --Force                  Force-stop running app processes during update (requires --Quiet)")
     print("  --Verify                 Verify an existing installation's file integrity and exit")
     print("  --Help                   Show this message and exit")
     print()
@@ -68,6 +74,7 @@ handler.newFlag("Desktop", _on_desktop)
 handler.newFlag("Path", _on_path)
 handler.newFlag("Help", _on_help)
 handler.newFlag("Verify", _on_verify)
+handler.newFlag("Force", _on_force)
 handler.handle(sys.argv)
 
 # Enforce --Quiet requirement for --Desktop and --Path
@@ -171,6 +178,55 @@ def adjacents(location):
     os.makedirs(os.path.join(location, "_internal"), exist_ok=True)
 
 
+def _find_running_processes(location):
+    """Return a list of (pid, name) for app processes running from *location*.
+
+    Checks all screen executables listed in the archive's project.json,
+    plus the Uninstaller, against running processes whose exe path is
+    inside the install directory.
+    """
+    results = []
+    try:
+        import psutil
+    except ImportError:
+        return results
+    install_dir = str(Path(location)).lower()
+    for proc in psutil.process_iter(["pid", "name", "exe"]):
+        try:
+            exe = proc.info.get("exe") or ""
+            if exe and exe.lower().startswith(install_dir):
+                results.append((proc.info["pid"], proc.info["name"]))
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    return results
+
+
+def _kill_app_processes(location):
+    """Terminate all app processes running from *location*.
+
+    Returns the number of processes terminated.
+    """
+    killed = 0
+    try:
+        import psutil
+    except ImportError:
+        return killed
+    install_dir = str(Path(location)).lower()
+    for proc in psutil.process_iter(["pid", "exe"]):
+        try:
+            exe = proc.info.get("exe") or ""
+            if exe and exe.lower().startswith(install_dir):
+                proc.terminate()
+                killed += 1
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    # Give processes a moment to exit
+    if killed:
+        import time
+        time.sleep(1)
+    return killed
+
+
 def write_install_log(location, selected_screens, desktop_shortcuts):
     """Write install_log.json recording what was installed."""
     # Collect _internal/ subdirectories (immediate children only)
@@ -258,11 +314,13 @@ def register_uninstall(location):
         pass
 
 
-def verify_installation(location) -> list[str]:
+def verify_installation(location, arc) -> list[str]:
     """Check all installed files exist and match archive sizes.
 
     Returns a list of issue strings; empty list means everything is OK.
     """
+    if arc is None:
+        return ["Archive not available — cannot verify."]
     log_path = os.path.join(location, "install_log.json")
     if not os.path.exists(log_path):
         return ["install_log.json not found — cannot verify."]
@@ -276,7 +334,10 @@ def verify_installation(location) -> list[str]:
     issues = []
 
     # Check screen executables and adjacent files against archive
-    archive_sizes = {f: archive.getinfo(f).file_size for f in archive.namelist()}
+    try:
+        archive_sizes = {f: arc.getinfo(f).file_size for f in arc.namelist()}
+    except Exception as e:
+        return [f"Could not read archive: {e}"]
     for scr in log.get("screens", []):
         exe = scr["executable"]
         exe_path = install_dir / exe
@@ -305,12 +366,15 @@ def verify_installation(location) -> list[str]:
 
 
 def _should_extract(file: str, location) -> bool:
-    """Return True if *file* should be extracted (missing or size differs from archive)."""
+    """Return True if the file is missing or its content differs from the archive entry."""
+    import hashlib
     dest = Path(location) / file
     if not dest.exists():
         return True
     try:
-        return dest.stat().st_size != archive.getinfo(file).file_size
+        if dest.stat().st_size != archive.getinfo(file).file_size:
+            return True
+        return hashlib.sha256(dest.read_bytes()).hexdigest() != hashlib.sha256(archive.read(file)).hexdigest()
     except Exception:
         return True
 
@@ -327,7 +391,7 @@ if _VERIFY_MODE[0]:
             ),
             title,
         )
-    issues = verify_installation(v_loc)
+    issues = verify_installation(v_loc, archive)
     if issues:
         print(f"Integrity check FAILED for {v_loc}:")
         for issue in issues:
@@ -353,6 +417,23 @@ if QUIET is True:
         print(f"No screens specified — installing all {len(cinstalls)} screen(s).")
 
     is_update_quiet = os.path.exists(os.path.join(location, "install_log.json"))
+
+    # Check for running processes in quiet mode
+    if is_update_quiet:
+        running = _find_running_processes(location)
+        if running:
+            proc_names = sorted(set(name for _, name in running))
+            print(f"  Warning: {len(running)} {title} process(es) still running:")
+            for name in proc_names:
+                print(f"    - {name}")
+            if FORCE_KILL:
+                killed = _kill_app_processes(location)
+                print(f"  Terminated {killed} process(es).")
+            else:
+                print(f"  Please close them first, or re-run with --Force to stop them.")
+                archive.close()
+                sys.exit(1)
+
     print(f"{'Updating' if is_update_quiet else 'Installing'} {title} v{app_version} to {location}")
     adjacents(location)
 
@@ -554,7 +635,9 @@ def makechecks(source:list[str], show_versions:bool=True):
             else:
                 scr_icon = scr_icon + ".XBM"
 
-            img_options.append(PIL.ImageTk.PhotoImage(Image.open(archive.open("Icons/"+scr_icon)).resize((16,16))))
+            scr_icon_file = archive.open("Icons/"+scr_icon)
+            img_options.append(PIL.ImageTk.PhotoImage(Image.open(scr_icon_file).resize((16,16))))
+            scr_icon_file.close()
         #Create Checkbox in List
         var_options.append(tk.IntVar())
         all_options.append(ttk.Checkbutton(install_options,
@@ -652,6 +735,29 @@ def binstall(desktop:list[str], selected_screens:list[str]):
     existing_log_path = os.path.join(location, "install_log.json")
     is_update = os.path.exists(existing_log_path)
 
+    # Check for running application processes before proceeding
+    if is_update:
+        running = _find_running_processes(location)
+        if running:
+            from tkinter import messagebox
+            proc_names = sorted(set(name for _, name in running))
+            proc_list = "\n".join(f"  - {name}" for name in proc_names)
+            msg = (f"The following {title} processes are still running:\n\n"
+                   f"{proc_list}\n\n"
+                   f"Please close them before updating.\n\n"
+                   f"Click Yes to force-stop all {title} processes,\n"
+                   f"or No to go back and close them manually.")
+            force = messagebox.askyesnocancel(
+                f"{title} is running", msg, icon="warning", default="no")
+            if force is True:
+                killed = _kill_app_processes(location)
+                messagebox.showinfo("Processes stopped",
+                                    f"Terminated {killed} process(es).")
+            elif force is False or force is None:
+                close.state(["!disabled"])
+                root.update()
+                return
+
     # Build the full list of files to install and compute total size
     adjacent_prefixes = (".VIS/", "Images/", "Icons/", "_internal/")
     install_files = []
@@ -667,13 +773,6 @@ def binstall(desktop:list[str], selected_screens:list[str]):
             if (file == i or file.startswith(i + ".") or file.startswith(i + "/")) and file not in install_files:
                 install_files.append(file)
 
-    # For update-in-place, only extract files that differ or are new
-    files_to_extract = [f for f in install_files if _should_extract(f, location)]
-    skipped = len(install_files) - len(files_to_extract)
-
-    total_size = sum(archive.getinfo(f).file_size for f in files_to_extract)
-    installed_size = 0
-
     def fmt_size(b):
         if b < 1024:
             return f"{b} B"
@@ -688,51 +787,89 @@ def binstall(desktop:list[str], selected_screens:list[str]):
     canvas.create_window((0, 0), window=progress_frame, anchor="nw",
                          width=canvas.winfo_width() or 360)
 
-    nothing_to_do = not files_to_extract
+    n_files = max(len(install_files), 1)
 
-    if nothing_to_do:
-        status_text = "Already up to date."
-        init_pct = 100
-    elif is_update:
-        status_text = "Updating..."
-        init_pct = 0
-    else:
-        status_text = "Preparing..."
-        init_pct = 0
-
-    file_label = ttk.Label(progress_frame, text=status_text, anchor="w")
+    file_label = ttk.Label(progress_frame,
+                           text="Checking files..." if is_update else "Preparing...",
+                           anchor="w")
     file_label.pack(fill="x", padx=8, pady=(12, 2))
 
-    progress_bar = ttk.Progressbar(progress_frame, maximum=100, value=init_pct)
+    progress_bar = ttk.Progressbar(progress_frame, maximum=100, value=0)
     progress_bar.pack(fill="x", padx=8, pady=2)
 
     stats_frame = ttk.Frame(progress_frame)
     stats_frame.pack(fill="x", padx=8, pady=(2, 8))
-    if nothing_to_do:
-        size_label = ttk.Label(stats_frame, text=f"All {skipped} file(s) unchanged", anchor="w")
-    else:
-        size_label = ttk.Label(stats_frame,
-                               text=f"0 B / {fmt_size(total_size)}" + (f" ({skipped} unchanged)" if skipped else ""),
-                               anchor="w")
+    size_label = ttk.Label(stats_frame, text=f"0 / {len(install_files)} checked", anchor="w")
     size_label.pack(side="left")
-    pct_label = ttk.Label(stats_frame, text=f"{init_pct}%", anchor="e")
+    pct_label = ttk.Label(stats_frame, text="0%", anchor="e")
     pct_label.pack(side="right")
 
     root.update()
 
-    # Back up files that will be overwritten (for rollback on failure)
+    # Phase 1: Scan — fills the bar based on files checked so far.
+    # We don't know how many will need extracting yet, so scan runs
+    # 0→100 on its own; after scan we recalculate proportions and the
+    # bar snaps to the true scan_end before backup/extract begin.
+    files_to_extract = []
+    for idx, f in enumerate(install_files):
+        file_label.config(text=f"Checking: {os.path.basename(f)}")
+        pct = int((idx + 1) / n_files * 100)
+        size_label.config(text=f"{idx + 1} / {len(install_files)} checked")
+        progress_bar.config(value=pct)
+        pct_label.config(text=f"{pct}%")
+        root.update()
+        if _should_extract(f, location):
+            files_to_extract.append(f)
+
+    skipped = len(install_files) - len(files_to_extract)
+    total_size = sum(archive.getinfo(f).file_size for f in files_to_extract)
+    installed_size = 0
+
+    # Compute proportional phase ranges based on operation counts
+    n_scan = len(install_files)
+    n_backup = len(files_to_extract) if (is_update and files_to_extract) else 0
+    n_extract = len(files_to_extract)
+    n_total = n_scan + n_backup + n_extract
+    if n_total > 0:
+        scan_end = int(n_scan / n_total * 100)
+        backup_end = int((n_scan + n_backup) / n_total * 100)
+    else:
+        scan_end = 100
+        backup_end = 100
+
+    if not files_to_extract:
+        file_label.config(text="Already up to date.")
+        progress_bar.config(value=100)
+        size_label.config(text=f"All {skipped} file(s) unchanged")
+        pct_label.config(text="100%")
+    else:
+        # Reset bar to scan_end so backup/extract fill the remaining range
+        progress_bar.config(value=scan_end)
+        pct_label.config(text=f"{scan_end}%")
+        file_label.config(text="Updating..." if is_update else "Installing...")
+        size_label.config(text=f"0 B / {fmt_size(total_size)}" + (f" ({skipped} unchanged)" if skipped else ""))
+
+    root.update()
+
+    # Phase 2: Back up files that will be overwritten (for rollback on failure)
     backup_dir = None
-    if is_update and files_to_extract:
+    if n_backup > 0:
         backup_dir = tempfile.mkdtemp(prefix="vis_backup_")
-        for file in files_to_extract:
+        for idx, file in enumerate(files_to_extract):
             dest = Path(location) / file
             if dest.exists():
                 backup_path = Path(backup_dir) / file
                 backup_path.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(dest, backup_path)
+            pct = scan_end + int((idx + 1) / n_backup * (backup_end - scan_end))
+            file_label.config(text=f"Backing up: {os.path.basename(file)}")
+            progress_bar.config(value=pct)
+            pct_label.config(text=f"{pct}%")
+            root.update()
 
-    # Extract changed/new files in a single pass; rollback on failure
+    # Phase 3: Extract changed/new files; rollback on failure
     try:
+        extract_range = 100 - backup_end
         for file in files_to_extract:
             file_label.config(text=file)
             if file.startswith(adjacent_prefixes):
@@ -740,7 +877,7 @@ def binstall(desktop:list[str], selected_screens:list[str]):
             else:
                 extal(file, location)
             installed_size += archive.getinfo(file).file_size
-            pct = int(installed_size * 100 / total_size) if total_size > 0 else 100
+            pct = backup_end + (int(installed_size / total_size * extract_range) if total_size > 0 else extract_range)
             progress_bar.config(value=pct)
             size_label.config(text=f"{fmt_size(installed_size)} / {fmt_size(total_size)}"
                               + (f" ({skipped} unchanged)" if skipped else ""))
@@ -772,8 +909,8 @@ def binstall(desktop:list[str], selected_screens:list[str]):
 
     # Create desktop shortcuts
     actual_shortcuts = []
-    for idx, name in enumerate(desktop):
-        if var_options[idx].get() == 1:
+    for name, var in zip(desktop, var_options):
+        if var.get() == 1:
             file_label.config(text=f"Creating shortcut: {name}")
             root.update()
             shortcut(name, location)
@@ -794,9 +931,14 @@ def binstall(desktop:list[str], selected_screens:list[str]):
     launch_var = tk.IntVar(value=1)
     default_screen = info[title].get("defaults", {}).get("default_screen")
     launch_target = None
-    if default_screen and default_screen in selected_screens:
-        launch_target = default_screen
-    elif selected_screens:
+    if default_screen:
+        scr_cfg = info[title]["Screens"].get(default_screen, {})
+        if scr_cfg.get("tabbed", False):
+            # Tabbed screens run inside the Host — launch the Host exe
+            launch_target = title
+        elif default_screen in selected_screens:
+            launch_target = default_screen
+    if not launch_target and selected_screens:
         launch_target = selected_screens[0]
 
     if launch_target:
@@ -878,7 +1020,7 @@ def _verify_menu():
         inst_dir = Path(loc)
     else:
         inst_dir = Path(loc, title)
-    issues = verify_installation(inst_dir)
+    issues = verify_installation(inst_dir, archive)
     if issues:
         messagebox.showwarning(
             "Integrity check failed",

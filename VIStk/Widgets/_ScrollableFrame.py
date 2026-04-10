@@ -4,6 +4,7 @@ import sys
 
 class ScrollableFrame(ttk.Frame):
     _active = None  # class-level: which instance currently owns the scroll
+    _is_linux = sys.platform == "linux"
 
     def __init__(self, root, *args, **kwargs):
         super().__init__(root, *args, **kwargs)
@@ -33,14 +34,28 @@ class ScrollableFrame(ttk.Frame):
         self.canvas.bind("<Enter>", self._on_enter)
         self.canvas.bind("<Leave>", self._on_leave)
 
+    def _bind_scroll(self):
+        if ScrollableFrame._is_linux:
+            self.canvas.bind_all("<Button-4>", ScrollableFrame._dispatch_scroll)
+            self.canvas.bind_all("<Button-5>", ScrollableFrame._dispatch_scroll)
+        else:
+            self.canvas.bind_all("<MouseWheel>", ScrollableFrame._dispatch_scroll)
+
+    def _unbind_scroll(self):
+        if ScrollableFrame._is_linux:
+            self.canvas.unbind_all("<Button-4>")
+            self.canvas.unbind_all("<Button-5>")
+        else:
+            self.canvas.unbind_all("<MouseWheel>")
+
     def _on_enter(self, event):
         ScrollableFrame._active = self
-        self.canvas.bind_all("<MouseWheel>", ScrollableFrame._dispatch_scroll)
+        self._bind_scroll()
 
     def _on_leave(self, event):
         if ScrollableFrame._active is self:
             ScrollableFrame._active = None
-            self.canvas.unbind_all("<MouseWheel>")
+            self._unbind_scroll()
 
     @staticmethod
     def _dispatch_scroll(event):
@@ -58,4 +73,8 @@ class ScrollableFrame(ttk.Frame):
 
     def scroll(self, e:Event):
         """Scrolls the Window"""
-        self.canvas.yview_scroll(int(-1*e.delta/120), "units")
+        if ScrollableFrame._is_linux:
+            direction = -1 if e.num == 4 else 1
+            self.canvas.yview_scroll(direction, "units")
+        else:
+            self.canvas.yview_scroll(int(-1*e.delta/120), "units")

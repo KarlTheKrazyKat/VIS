@@ -242,10 +242,14 @@ class Screen(VINFO):
 
         If a Host is running (port file present), sends the screen name via IPC
         so the Host handles routing (tab or subprocess).  Falls back to
-        ``os.execl`` when no Host is detected.
+        spawning a Host subprocess when running from source.  In a compiled
+        (frozen) app, subprocess spawning is skipped — the compiled exe is
+        already the Host.
         """
         if send_to_host(self.title, self.name):
             return
+        if getattr(sys, 'frozen', False):
+            return  # compiled exe is the Host; can't spawn another
         import time, tempfile
         host_path = str(Path(getPath()) / ".VIS" / "Host.py")
         subprocess.Popen([sys.executable, host_path])

@@ -417,7 +417,7 @@ def _do_uninstall():
     progress_bar.config(value=100)
     close_btn.state(["!disabled"])
     close_btn.config(command=lambda: (schedule_self_delete() if all_selected else None, root.destroy())
-                     if all_selected else root.destroy)
+                     if all_selected else root.destroy())
     root.update()
 
 

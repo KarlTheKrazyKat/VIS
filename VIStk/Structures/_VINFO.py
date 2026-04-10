@@ -1,6 +1,7 @@
 import os
 import json
 import socket
+import sys
 import tempfile
 import zipfile
 import shutil
@@ -49,9 +50,14 @@ def unzip_without_overwrite(src_path, dst_dir):
                 zf.extract(member, dst_dir)
 
 def getPath()->str:
-    """Searches for .VIS folder
+    """Searches for .VIS folder, starting from the executable directory
+    when running as a compiled (frozen) app, or from CWD otherwise.
     """
-    wd = os.getcwd().replace("\\","/").split("/")
+    if getattr(sys, 'frozen', False):
+        start = os.path.dirname(sys.executable)
+    else:
+        start = os.getcwd()
+    wd = start.replace("\\","/").split("/")
     for i in range(len(wd),0,-1):
         if os.path.exists("/".join(wd[:i])+"/.VIS/"):
             return "/".join(wd[:i])

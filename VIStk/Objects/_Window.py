@@ -35,6 +35,9 @@ class Window:
         """
         project = Project()
         ficon = glob.glob(pathname=icon+".*",root_dir=project.p_project+"/Icons/")
+        if not ficon:
+            print(f"Warning: No icon found matching '{icon}.*' in {project.p_project}/Icons/")
+            return
         img = PIL.Image.open(project.p_project+"/Icons/"+ficon[0])
         imgtk = PIL.ImageTk.PhotoImage(img)
         self.iconphoto(False, imgtk)

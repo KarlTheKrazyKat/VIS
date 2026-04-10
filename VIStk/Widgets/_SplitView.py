@@ -552,23 +552,11 @@ class SplitView(Frame):
                 self._update_parent_tracking(rebuilt, grandparent_node)
 
         # Restore focus
-        if focused_was_removed:
-            panes = self.all_tab_managers()
-            self._focused_pane = panes[0] if panes else None
-        else:
-            # Try to find the rebuilt version of the previously focused pane
-            # by matching the active tab name
-            panes = self.all_tab_managers()
-            if old_focused is not None and hasattr(old_focused, '_active'):
-                active_name = old_focused._active
-                for p in panes:
-                    if active_name and active_name in p._tabs:
-                        self._focused_pane = p
-                        break
-                else:
-                    self._focused_pane = panes[0] if panes else None
-            else:
-                self._focused_pane = panes[0] if panes else None
+        # The rebuilt subtree contains all surviving panes; pick the first one.
+        # Name-based matching is avoided here — that is deferred to the tab-ID
+        # refactor planned for 0.4.6.
+        panes = self.all_tab_managers()
+        self._focused_pane = panes[0] if panes else None
 
         # Update visual focus indicators (single pane = always focused)
         self._update_focused_styles()

@@ -1,3 +1,9 @@
+import sys
+from VIStk.Structures._VINFO import getPath
+_proj = getPath()
+if _proj and _proj not in sys.path:
+    sys.path.insert(0, _proj)
+
 from VIStk.Objects import Host
 
 host = Host()

@@ -46,9 +46,8 @@ class MenuItem(Button):
             self.root.destroy()
             return
         if ".exe" in self.path:
-            #os.execl(self.path,*(self.path))
             os.startfile(self.path)
         else:
-            os.execl(sys.executable, *(sys.executable,self.path))
-            #subprocess.call("pythonw.exe "+self.path)
+            import subprocess
+            subprocess.Popen([sys.executable, self.path])
         self.root.destroy()

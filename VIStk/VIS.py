@@ -12,8 +12,11 @@ def _start_host_and_wait(project, timeout: float = 5.0) -> bool:
     """Spawn the project Host as a subprocess and wait for IPC to become ready.
 
     Returns True if the Host's port file appears within *timeout* seconds,
-    False otherwise.
+    False otherwise.  Returns False immediately in compiled (frozen) apps
+    where subprocess spawning is not possible.
     """
+    if getattr(sys, 'frozen', False):
+        return False
     host_path = project.p_project + "/" + project.host_script
     subprocess.Popen([sys.executable, host_path])
     safe = project.title.replace(" ", "_")
@@ -139,12 +142,21 @@ def __main__():
                     if "-" == args[i][0]:
                         match args[i][1:]:
                             case "Flag" | "flag" | "F" | "f":
+                                if i + 1 >= len(args):
+                                    print(f"Missing value for {args[i]}")
+                                    return None
                                 flag = args[i+1]
                                 i += 2
                             case "Type" | "type" | "T" | "t":
+                                if i + 1 >= len(args):
+                                    print(f"Missing value for {args[i]}")
+                                    return None
                                 type = args[i+1]
                                 i += 2
                             case "Note" | "note" | "N" | "n":
+                                if i + 1 >= len(args):
+                                    print(f"Missing value for {args[i]}")
+                                    return None
                                 note = args[i+1]
                                 i += 2
                             case _:

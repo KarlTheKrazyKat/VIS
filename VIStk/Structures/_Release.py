@@ -3,6 +3,7 @@ from VIStk.Structures._VINFO import *
 from VIStk.Structures._Screen import *
 import subprocess
 import shutil
+import glob
 from os.path import exists
 from zipfile import *
 import datetime
@@ -68,7 +69,8 @@ class Release(Project):
                 icon = icon + ixt
                 spec_list.append(spec.replace("$name$",exe_name))
                 spec_list[-1] = spec_list[-1].replace("$icon$",icon)
-                spec_list[-1] = spec_list[-1].replace("$file$",i.script)
+                entry_script = self.host_script if is_default else i.script
+                spec_list[-1] = spec_list[-1].replace("$file$", entry_script)
 
                 #Load metadata template
                 with open(self.p_templates+"/version.txt","r") as f:
@@ -342,6 +344,7 @@ class Release(Project):
                 f"{'--uac-admin ' if sys.platform == 'win32' else ''}"
                 f"--windowed --name installer_base --log-level FATAL "
                 f"--icon {icon_file} --hidden-import PIL._tkinter_finder "
+                f"--hidden-import psutil "
                 f"{installer_src}",
                 shell=True, cwd=self.location
             )
