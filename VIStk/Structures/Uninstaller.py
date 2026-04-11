@@ -172,6 +172,72 @@ def remove_installed_files(log, location, progress_fn=None):
         pass
 
 
+def _own_pids() -> set[int]:
+    """Return PIDs belonging to this uninstaller process.
+
+    PyInstaller --onefile builds use a bootloader parent that spawns a child
+    for the actual Python code.  We must exclude both.
+    """
+    pids = {os.getpid()}
+    try:
+        import psutil
+        pids.add(psutil.Process(os.getpid()).ppid())
+    except Exception:
+        pass
+    return pids
+
+
+def _find_running_processes(location):
+    """Return a list of (pid, name) for app processes running from *location*,
+    excluding the uninstaller itself."""
+    results = []
+    try:
+        import psutil
+    except ImportError:
+        return results
+    exclude = _own_pids()
+    install_dir = str(Path(location)).lower()
+    for proc in psutil.process_iter(["pid", "name", "exe"]):
+        try:
+            if proc.info["pid"] in exclude:
+                continue
+            exe = proc.info.get("exe") or ""
+            if exe and exe.lower().startswith(install_dir):
+                results.append((proc.info["pid"], proc.info["name"]))
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    return results
+
+
+def _kill_app_processes(location):
+    """Terminate all app processes running from *location*,
+    excluding the uninstaller itself.
+
+    Returns the number of processes terminated.
+    """
+    killed = 0
+    try:
+        import psutil
+    except ImportError:
+        return killed
+    exclude = _own_pids()
+    install_dir = str(Path(location)).lower()
+    for proc in psutil.process_iter(["pid", "exe"]):
+        try:
+            if proc.info["pid"] in exclude:
+                continue
+            exe = proc.info.get("exe") or ""
+            if exe and exe.lower().startswith(install_dir):
+                proc.terminate()
+                killed += 1
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    if killed:
+        import time
+        time.sleep(1)
+    return killed
+
+
 def schedule_self_delete():
     """Schedule deletion of this executable after exit (Windows only)."""
     if sys.platform != "win32" or not getattr(sys, "frozen", False):
@@ -201,6 +267,12 @@ if QUIET:
         sys.exit(1)
     app_name = log.get("app_name", "Application")
     print(f"Uninstalling {app_name}...")
+
+    running = _find_running_processes(location)
+    if running:
+        proc_names = sorted(set(name for _, name in running))
+        print(f"  Terminating {len(running)} running process(es): {', '.join(proc_names)}")
+        _kill_app_processes(location)
 
     remove_desktop_shortcuts(log)
     print("  Removed desktop shortcuts")
@@ -376,6 +448,22 @@ def _do_uninstall():
 
     uninstall_btn.state(["disabled"])
     close_btn.state(["disabled"])
+
+    # Terminate running app processes before removing files
+    running = _find_running_processes(location)
+    if running:
+        from tkinter import messagebox
+        proc_names = sorted(set(name for _, name in running))
+        proc_list = "\n".join(f"  - {name}" for name in proc_names)
+        msg = (f"The following processes are still running:\n\n"
+               f"{proc_list}\n\n"
+               f"They will be terminated before uninstalling.\n"
+               f"Continue?")
+        if not messagebox.askokcancel(f"{app_name} is running", msg, icon="warning"):
+            uninstall_btn.state(["!disabled"])
+            close_btn.state(["!disabled"])
+            return
+        _kill_app_processes(location)
 
     # Build a filtered log for the selected screens only
     filtered_log = dict(log)

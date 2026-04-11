@@ -461,6 +461,12 @@ if QUIET is True:
     quiet_skipped = len(quiet_install_files) - len(quiet_files_to_extract)
     if quiet_skipped:
         print(f"  Skipping {quiet_skipped} unchanged file(s).")
+    if not quiet_files_to_extract:
+        print("No changes needed — already up to date.")
+        write_install_log(location, cinstalls, dinstalls)
+        register_uninstall(location)
+        archive.close()
+        sys.exit()
 
     # Backup for rollback
     quiet_backup_dir = None
@@ -806,14 +812,14 @@ def binstall(desktop:list[str], selected_screens:list[str]):
 
     root.update()
 
-    # Phase 1: Scan — fills the bar based on files checked so far.
-    # We don't know how many will need extracting yet, so scan runs
-    # 0→100 on its own; after scan we recalculate proportions and the
-    # bar snaps to the true scan_end before backup/extract begin.
+    # Phase 1: Scan — check which files need extracting.
+    # The bar fills 0→SCAN_CEILING during scan so it never overshoots
+    # and snaps back when backup/extract phases begin.
+    SCAN_CEILING = 30
     files_to_extract = []
     for idx, f in enumerate(install_files):
         file_label.config(text=f"Checking: {os.path.basename(f)}")
-        pct = int((idx + 1) / n_files * 100)
+        pct = int((idx + 1) / n_files * SCAN_CEILING)
         size_label.config(text=f"{idx + 1} / {len(install_files)} checked")
         progress_bar.config(value=pct)
         pct_label.config(text=f"{pct}%")
@@ -825,25 +831,24 @@ def binstall(desktop:list[str], selected_screens:list[str]):
     total_size = sum(archive.getinfo(f).file_size for f in files_to_extract)
     installed_size = 0
 
-    # Compute proportional phase ranges based on operation counts
-    n_scan = len(install_files)
+    # Compute proportional phase ranges for the remaining bar space
     n_backup = len(files_to_extract) if (is_update and files_to_extract) else 0
     n_extract = len(files_to_extract)
-    n_total = n_scan + n_backup + n_extract
-    if n_total > 0:
-        scan_end = int(n_scan / n_total * 100)
-        backup_end = int((n_scan + n_backup) / n_total * 100)
+    remaining = 100 - SCAN_CEILING
+    n_work = n_backup + n_extract
+    if n_work > 0:
+        scan_end = SCAN_CEILING
+        backup_end = SCAN_CEILING + int(n_backup / n_work * remaining)
     else:
-        scan_end = 100
-        backup_end = 100
+        scan_end = SCAN_CEILING
+        backup_end = SCAN_CEILING
 
     if not files_to_extract:
-        file_label.config(text="Already up to date.")
+        file_label.config(text="No changes needed — already up to date.")
         progress_bar.config(value=100)
         size_label.config(text=f"All {skipped} file(s) unchanged")
         pct_label.config(text="100%")
     else:
-        # Reset bar to scan_end so backup/extract fill the remaining range
         progress_bar.config(value=scan_end)
         pct_label.config(text=f"{scan_end}%")
         file_label.config(text="Updating..." if is_update else "Installing...")

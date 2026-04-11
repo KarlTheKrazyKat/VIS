@@ -173,6 +173,7 @@ class Release(Project):
             screens = pdata[self.title]["Screens"]
             if self.default_screen in screens and self.default_screen != self.title:
                 screens[self.title] = screens.pop(self.default_screen)
+                pdata[self.title]["defaults"]["default_screen"] = self.title
                 with open(dist_json, "w") as f:
                     json.dump(pdata, f, indent=4)
 
