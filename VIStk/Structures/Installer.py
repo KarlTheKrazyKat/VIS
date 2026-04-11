@@ -119,18 +119,33 @@ app_version = info[title].get("metadata", {}).get("version", "unknown")
 
 #%Locate Binaries
 _ALWAYS_INSTALL = {"Uninstaller"}  # binaries extracted on every install, not user-selectable
-# The default screen's exe is named after the project title, not the screen name
-_default_screen = info[title].get("defaults", {}).get("default_screen")
-_ALWAYS_INSTALL.add(title)  # Host exe (default screen) is always installed
-installables = []
+
+# Separate tabbed screens (run inside Host) from standalone screens (own exe)
+_tabbed_screens = set()
+_standalone_screens = set()
+for sname, scfg in info[title]["Screens"].items():
+    if scfg.get("tabbed", False):
+        _tabbed_screens.add(sname)
+    else:
+        _standalone_screens.add(sname)
+
+# Build the installables list:
+# - One entry for the project title (Host + all tabbed screens)
+# - One entry per standalone screen
+installables = [title]  # Host group is always first
+_archive_binaries = set()
 for i in archive.namelist():
-    if not any(breaker in i for breaker in ["Icons/","Images/",".VIS/","_internal/"]):
-        if "." in i: #Remove Extension
+    if not any(breaker in i for breaker in ["Icons/","Images/",".VIS/","_internal/","Screens/","modules/"]):
+        if "." in i:
             name = ".".join(i.split(".")[:-1])
-        else: #Sometimes No Extension
+        else:
             name = i
-        if name and name not in installables and name in info[title]["Screens"]:
-            installables.append(name)
+        if name:
+            _archive_binaries.add(name)
+
+for name in _archive_binaries:
+    if name in _standalone_screens and name not in installables:
+        installables.append(name)
 
 #%Core Install & Shorcut Creation
 def shortcut(name:str, location:Path):
@@ -163,6 +178,9 @@ def shortcut(name:str, location:Path):
             f.writelines(lines)
 
         subprocess.call(f"chmod +x {os.path.join(platformdirs.user_desktop_path(),name+'.desktop')}", shell=True)
+
+# Prefixes for files that keep their directory structure during extraction
+_dir_prefixes = (".VIS/", "Images/", "Icons/", "_internal/", "Screens/", "modules/")
 
 def extal(file, location):
     """Extracts file to the location. Only chmod binaries on Linux."""
@@ -441,14 +459,27 @@ if QUIET is True:
     adjacents(location)
 
     # Collect files to install
-    adjacent_prefixes = (".VIS/", "Images/", "Icons/", "_internal/", "Screens/", "modules/")
-    quiet_install_files = list(
-        f for f in archive.namelist() if f.startswith(adjacent_prefixes)
-    )
+    _base_prefixes_q = (".VIS/", "Images/", "Icons/", "_internal/")
+    _host_prefixes_q = ("Screens/", "modules/")
+    # In quiet mode with no screens specified, install everything
+    host_selected_q = (not cinstalls) or (title in cinstalls)
+    quiet_install_files = []
     for f in archive.namelist():
-        base = ".".join(f.split(".")[:-1]) if "." in f else f
-        if base in _ALWAYS_INSTALL and f not in quiet_install_files:
+        if f.startswith(_base_prefixes_q):
             quiet_install_files.append(f)
+        elif host_selected_q and f.startswith(_host_prefixes_q):
+            quiet_install_files.append(f)
+        elif host_selected_q and f.endswith(".py"):
+            quiet_install_files.append(f)
+        else:
+            base = ".".join(f.split(".")[:-1]) if "." in f else f
+            if base in _ALWAYS_INSTALL and f not in quiet_install_files:
+                quiet_install_files.append(f)
+    # If no screens specified in quiet mode, include the Host exe
+    if host_selected_q:
+        for f in archive.namelist():
+            if (f == title or f.startswith(title + ".")) and f not in quiet_install_files:
+                quiet_install_files.append(f)
     for i in cinstalls:
         matched = False
         for file in archive.namelist():
@@ -485,7 +516,7 @@ if QUIET is True:
     try:
         for file in quiet_files_to_extract:
             print(f"  Extracting {file}")
-            if file.startswith(adjacent_prefixes):
+            if file.startswith(_dir_prefixes) or file.endswith(".py"):
                 archive.extract(file, location)
             else:
                 extal(file, location)
@@ -558,7 +589,7 @@ header_frame.columnconfigure(0, weight=1)
 header_frame.columnconfigure(1, weight=0)
 header = ttk.Label(header_frame, text="Select Installables")
 header.grid(row=0, column=0, sticky=(tk.W,), padx=(4, 0))
-version_label = ttk.Label(header_frame, text=f"v{app_version}")
+version_label = ttk.Label(header_frame, text=f"{title} {app_version}")
 version_label.grid(row=0, column=1, sticky=(tk.E,), padx=(0, 8))
 
 #Scrollable frame for selection
@@ -634,22 +665,27 @@ def makechecks(source:list[str], show_versions:bool=True):
         #Configure Row
         install_options.rowconfigure(row,weight=1)
 
-        #Resolve Installable Icon
-        #Should probably do a search for the appropriate icon or image file.
-        #This will be easier once VIS can turn any image into an .ICO or .XBM
-        if info[title]["Screens"][name].get("icon") is None:
+        #Resolve Installable Icon and version
+        is_host_group = (name == title)
+        if is_host_group:
+            # Host group uses the project default icon and project version
             img_options.append(PIL.ImageTk.PhotoImage(d_icon.resize((16,16))))
-
+            scr_ver = app_version
         else:
-            scr_icon = info[title]["Screens"][name]["icon"]
-            if sys.platform == "win32":
-                scr_icon = scr_icon + ".ico"
+            scr_info = info[title]["Screens"].get(name, {})
+            if scr_info.get("icon") is None:
+                img_options.append(PIL.ImageTk.PhotoImage(d_icon.resize((16,16))))
             else:
-                scr_icon = scr_icon + ".XBM"
+                scr_icon = scr_info["icon"]
+                if sys.platform == "win32":
+                    scr_icon = scr_icon + ".ico"
+                else:
+                    scr_icon = scr_icon + ".XBM"
+                scr_icon_file = archive.open("Icons/"+scr_icon)
+                img_options.append(PIL.ImageTk.PhotoImage(Image.open(scr_icon_file).resize((16,16))))
+                scr_icon_file.close()
+            scr_ver = scr_info.get("version", "")
 
-            scr_icon_file = archive.open("Icons/"+scr_icon)
-            img_options.append(PIL.ImageTk.PhotoImage(Image.open(scr_icon_file).resize((16,16))))
-            scr_icon_file.close()
         #Create Checkbox in List
         var_options.append(tk.IntVar())
         all_options.append(ttk.Checkbutton(install_options,
@@ -662,12 +698,9 @@ def makechecks(source:list[str], show_versions:bool=True):
         all_options[-1].state(['!alternate'])
 
         #Screen version label
-        if show_versions:
-            scr_info = info[title]["Screens"].get(name, {})
-            scr_ver = scr_info.get("version", "")
-            if scr_ver:
-                ver_lbl = ttk.Label(install_options, text=f"v{scr_ver}", foreground="gray40")
-                ver_lbl.grid(row=row, column=3, sticky=(tk.E,), padx=(0, 8))
+        if show_versions and scr_ver:
+            ver_lbl = ttk.Label(install_options, text=f"{scr_ver}", foreground="gray40")
+            ver_lbl.grid(row=row, column=3, sticky=(tk.E,), padx=(0, 8))
 
 makechecks(installables)
 
@@ -771,10 +804,16 @@ def binstall(desktop:list[str], selected_screens:list[str]):
                 return
 
     # Build the full list of files to install and compute total size
-    adjacent_prefixes = (".VIS/", "Images/", "Icons/", "_internal/", "Screens/", "modules/")
+    _base_prefixes = (".VIS/", "Images/", "Icons/", "_internal/")
+    _host_prefixes = ("Screens/", "modules/")
     install_files = []
+    host_selected = title in selected_screens
     for file in archive.namelist():
-        if file.startswith(adjacent_prefixes):
+        if file.startswith(_base_prefixes):
+            install_files.append(file)
+        elif host_selected and file.startswith(_host_prefixes):
+            install_files.append(file)
+        elif host_selected and file.endswith(".py"):
             install_files.append(file)
         else:
             base = ".".join(file.split(".")[:-1]) if "." in file else file
@@ -883,7 +922,7 @@ def binstall(desktop:list[str], selected_screens:list[str]):
         extract_range = 100 - backup_end
         for file in files_to_extract:
             file_label.config(text=file)
-            if file.startswith(adjacent_prefixes):
+            if file.startswith(_dir_prefixes) or file.endswith(".py"):
                 archive.extract(file, location)
             else:
                 extal(file, location)

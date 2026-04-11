@@ -201,7 +201,7 @@ class Project(VINFO):
         if new_scr:
             new_scr.stitch()
 
-        print(f"Renamed screen '{old_name}' → '{new_name}'.")
+        print(f"Renamed screen '{old_name}' -> '{new_name}'.")
         return 1
 
     def edit_screen(self, screen_name: str, attribute: str, value: str) -> int:

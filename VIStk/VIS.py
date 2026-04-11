@@ -171,15 +171,20 @@ def __main__():
             project = Project()
             if inp[1] == project.title:
                 if len(inp) >= 3:
-                    # VIS <ProjectName> <ScreenName> — open a screen via Host,
-                    # starting the Host first if it is not already running.
+                    # VIS <ProjectName> <ScreenName> — open a screen.
+                    # Tabbed screens route through the Host; standalone screens
+                    # launch directly as a subprocess without requiring the Host.
                     screen = project.getScreen(inp[2])
                     if screen is not None:
-                        if not send_to_host(project.title, screen.name):
-                            if _start_host_and_wait(project):
-                                send_to_host(project.title, screen.name)
-                            else:
-                                print(f"Failed to start Host for '{project.title}'.")
+                        if screen.tabbed:
+                            if not send_to_host(project.title, screen.name):
+                                if _start_host_and_wait(project):
+                                    send_to_host(project.title, screen.name)
+                                else:
+                                    print(f"Failed to start Host for '{project.title}'.")
+                        else:
+                            script = project.p_project + "/" + screen.script
+                            subprocess.Popen([sys.executable, script])
                     else:
                         names = ", ".join(s.name for s in project.screenlist)
                         print(f"Unknown screen: \"{inp[2]}\". Available: {names}")
