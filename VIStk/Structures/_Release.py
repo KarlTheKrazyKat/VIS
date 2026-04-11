@@ -161,21 +161,19 @@ class Release(Project):
             if exists(target):
                 shutil.rmtree(target)
 
-        #Copy Project Folder for Icons, Images, & .VIS
-        for folder in ("Icons", "Images", ".VIS"):
-            shutil.copytree(f"{self.p_project}/{folder}/", f"{out_dir}/{folder}/", dirs_exist_ok=True)
+        #Copy Project Folders
+        for folder in ("Icons", "Images", ".VIS", "Screens", "modules"):
+            src = f"{self.p_project}/{folder}/"
+            if exists(src):
+                shutil.copytree(src, f"{out_dir}/{folder}/", dirs_exist_ok=True)
 
-        # Rename the default screen's key in the dist project.json to match the exe name
-        dist_json = f"{out_dir}/.VIS/project.json"
-        if self.default_screen and os.path.exists(dist_json):
-            with open(dist_json, "r") as f:
-                pdata = json.load(f)
-            screens = pdata[self.title]["Screens"]
-            if self.default_screen in screens and self.default_screen != self.title:
-                screens[self.title] = screens.pop(self.default_screen)
-                pdata[self.title]["defaults"]["default_screen"] = self.title
-                with open(dist_json, "w") as f:
-                    json.dump(pdata, f, indent=4)
+        #Copy screen entry scripts so the Host can dynamically import them
+        for i in self.screenlist:
+            if i.tabbed:
+                src_script = f"{self.p_project}/{i.script}"
+                if exists(src_script):
+                    shutil.copy2(src_script, f"{out_dir}/{i.script}")
+
 
         #Announce Completion
         print(f"\n\nReleased a new{' '+self.flag+' ' if not self.flag is None else ''}build of {self.title}!", flush=True)

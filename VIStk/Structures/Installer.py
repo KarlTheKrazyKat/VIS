@@ -119,6 +119,9 @@ app_version = info[title].get("metadata", {}).get("version", "unknown")
 
 #%Locate Binaries
 _ALWAYS_INSTALL = {"Uninstaller"}  # binaries extracted on every install, not user-selectable
+# The default screen's exe is named after the project title, not the screen name
+_default_screen = info[title].get("defaults", {}).get("default_screen")
+_ALWAYS_INSTALL.add(title)  # Host exe (default screen) is always installed
 installables = []
 for i in archive.namelist():
     if not any(breaker in i for breaker in ["Icons/","Images/",".VIS/","_internal/"]):
@@ -438,7 +441,7 @@ if QUIET is True:
     adjacents(location)
 
     # Collect files to install
-    adjacent_prefixes = (".VIS/", "Images/", "Icons/", "_internal/")
+    adjacent_prefixes = (".VIS/", "Images/", "Icons/", "_internal/", "Screens/", "modules/")
     quiet_install_files = list(
         f for f in archive.namelist() if f.startswith(adjacent_prefixes)
     )
@@ -516,6 +519,7 @@ if QUIET is True:
 
 #%Configure Root
 root = Root(project=False)
+root.withdraw()
 
 #Root Title
 root.title(title + " Installer")
@@ -536,6 +540,7 @@ root.iconphoto(False, icon)
 #Root Geometry
 root.WindowGeometry.setGeometry(width=720,height=400,align="center")
 root.minsize(width=720,height=400)
+root.deiconify()
 
 #Root Layout
 root.rowconfigure(0,weight=1,minsize=30)
@@ -574,6 +579,7 @@ canvas.configure(yscrollcommand=scrollbar.set)
 
 canvas.pack(side="left", fill="both", expand=True)
 scrollbar.pack(side="right", fill="y")
+canvas.bind_all("<MouseWheel>", lambda e: canvas.yview_scroll(-int(e.delta / 120), "units"))
 
 install_frame.grid(row=1,column=1,columnspan=2,sticky=(tk.N,tk.S,tk.E,tk.W))
 
@@ -637,7 +643,7 @@ def makechecks(source:list[str], show_versions:bool=True):
         else:
             scr_icon = info[title]["Screens"][name]["icon"]
             if sys.platform == "win32":
-                scr_icon = scr_icon + ".ICO"
+                scr_icon = scr_icon + ".ico"
             else:
                 scr_icon = scr_icon + ".XBM"
 
@@ -765,7 +771,7 @@ def binstall(desktop:list[str], selected_screens:list[str]):
                 return
 
     # Build the full list of files to install and compute total size
-    adjacent_prefixes = (".VIS/", "Images/", "Icons/", "_internal/")
+    adjacent_prefixes = (".VIS/", "Images/", "Icons/", "_internal/", "Screens/", "modules/")
     install_files = []
     for file in archive.namelist():
         if file.startswith(adjacent_prefixes):

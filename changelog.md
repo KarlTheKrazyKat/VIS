@@ -562,7 +562,25 @@ The existing "Open in new window" entry is unchanged; it still creates a `Detach
 
 ---
 
-### 0.4.6 Tab Identity Refactor
+### 0.4.6 Installer Screen Groups & Partial Installs
+
+**Screen groups**
+
+- `project.json` gains an optional `release_info.groups` dictionary mapping a group label to a list of screen names
+- Screens belonging to a group appear under a single checkbox in the installer, with the group label as the display name
+- Selecting/deselecting a group selects/deselects all screens within it
+- Screens not assigned to any group continue to appear as individual checkboxes (current behavior)
+- Groups are respected by `--Quiet` mode — passing a group name installs all screens within it
+
+**Missing screen handling**
+
+- When the Host or `Project().open()` attempts to open a screen that is not installed (exe not present in the install directory), a user-facing message is displayed instead of silently failing
+- The message identifies the missing screen by name and suggests reinstalling with that screen selected
+- Allows developers to distribute a smaller installer with a subset of screens; users who attempt to access an uninstalled screen get a clear explanation rather than a crash or silent no-op
+
+---
+
+### 0.4.7 Tab Identity Refactor
 
 **Per-instance tab IDs**
 
