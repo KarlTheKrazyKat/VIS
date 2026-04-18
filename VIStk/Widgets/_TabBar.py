@@ -565,7 +565,12 @@ class TabBar(Frame):
                         ghost.destroy()
                     except TclError:
                         pass
-        # _drag_active intentionally NOT cleared here; _btn_click reads and clears it
+        # For same-bar reorder, _btn_click fires from the ButtonRelease and clears
+        # _drag_active.  For merge/detach/split the release is on a different widget,
+        # so _btn_click never fires — clear the flag here to prevent the next click
+        # from being silently suppressed.
+        if insert_bar is not self:
+            self._drag_active = False
 
     def _reorder_to_idx(self, dragged: str, idx: int):
         """Move *dragged* to 0-based position *idx* (in the without-dragged space)."""
@@ -628,7 +633,8 @@ class TabBar(Frame):
     def _close(self, name: str):
         if self.on_tab_close:
             self.on_tab_close(name)
-        self.close_tab(name)
+        else:
+            self.close_tab(name)
 
     def _on_tab_enter(self, name: str):
         if name not in self._tabs:

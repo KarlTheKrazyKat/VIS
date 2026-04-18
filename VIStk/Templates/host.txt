@@ -7,8 +7,6 @@ if _proj and _proj not in sys.path:
 from VIStk.Objects import Host
 
 host = Host()
-host.WindowGeometry.setGeometry(width=1200,height=800,align="center")
-host.setIcon("<icon>")
 
 while host.Active:
     host.tick_fps()

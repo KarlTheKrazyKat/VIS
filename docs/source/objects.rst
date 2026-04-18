@@ -81,104 +81,107 @@ management, and unified navigation.
 Host
 ----
 
-``Host(Root)`` — A persistent application host that owns the Tk root window. Pressing the window
-close button hides the window to the system tray instead of destroying it. The Host never exits
-unless the user explicitly selects **Quit** from the tray menu or code calls ``host.quit_host()``.
+``Host`` — The application host. Owns a hidden ``Tk()`` root window and manages one or more
+visible ``DetachedWindow`` instances. The Host is **not** a subclass of ``Root`` — it is a
+standalone class that coordinates window lifecycle, screen loading, and menu configuration.
 
-All screen navigation routes through ``host.open()``. Tabbed screens open as ``Frame``-based tabs
-inside the Host window; standalone screens are spawned as ``subprocess.Popen`` subprocesses.
+The hidden root is never shown to the user. All visible UI lives inside ``DetachedWindow``
+instances, each of which contains its own ``HostMenu``, ``SplitView`` (with ``TabManager``
+panes), and ``InfoRow``.
 
-Requires ``pystray`` for system tray support (installed automatically as a VIStk dependency).
+On the first call to ``update()``, the Host automatically opens the project's default screen
+(from ``project.json``). This deferred open ensures that ``Host.py`` has time to configure
+``default_menu_setup`` before any window is created.
 
 .. code-block:: python
 
     from VIStk.Objects import Host
+    from modules.menu import shared_menu_structure
 
-    host = Host()                # starts hidden in tray by default
-    host.WindowGeometry.setGeometry(width=1200, height=800, align="center")
+    host = Host()
+    host.default_menu_setup = lambda m: m.build_shared_menu(shared_menu_structure())
 
     while host.Active:
         host.tick_fps()
         host.update()
 
-To show the window immediately on launch, pass ``start_hidden=False``:
-
-.. code-block:: python
-
-    host = Host(start_hidden=False)
-    host.open("Dashboard")   # open a tab programmatically
-
-**Constructor:**
+**Attributes:**
 
 .. list-table::
    :header-rows: 1
-   :widths: 25 20 55
-
-   * - Parameter
-     - Default
-     - Description
-   * - ``start_hidden``
-     - ``True``
-     - If True, the window is hidden to the tray immediately on creation.
-
-**Attributes (in addition to Root):**
-
-.. list-table::
-   :header-rows: 1
-   :widths: 25 20 55
+   :widths: 30 20 50
 
    * - Attribute
      - Type
      - Description
-   * - ``host.TabManager``
-     - ``TabManager`` (property)
-     - Returns the focused pane's ``TabManager`` via ``host._split_view.focused_pane``.
-       The Host content area is managed by a ``SplitView`` that may contain multiple panes.
-   * - ``host._split_view``
-     - ``SplitView``
-     - Tree-of-panes container managing all ``TabManager`` panes in the Host window
-   * - ``host.HostMenu``
-     - ``HostMenu``
-     - The persistent menu bar
-   * - ``host.InfoRow``
-     - ``InfoRow``
-     - Status bar at the bottom of the window (screen name, copyright, FPS)
+   * - ``host.Active``
+     - ``bool``
+     - ``True`` while the Host is running. Set to ``False`` by ``quit_host()``.
+   * - ``host.root``
+     - ``Tk``
+     - The hidden Tk root. All ``DetachedWindow`` Toplevels are children of this root.
+       Calling ``host.root.update()`` (via ``host.update()``) processes events for every window.
+   * - ``host.Project``
+     - ``Project``
+     - The loaded VIS project.
+   * - ``host.detached_windows``
+     - ``list[DetachedWindow]``
+     - All live DetachedWindow instances.
+   * - ``host.registered_tab_managers``
+     - ``list[TabManager]``
+     - All active TabManager panes across all windows.
+   * - ``host.active_tab_manager``
+     - ``TabManager / None``
+     - The most recently focused pane.
+   * - ``host.default_menu_setup``
+     - ``callable / None``
+     - Called on every new ``DetachedWindow``'s ``HostMenu`` after creation. Set this in
+       ``Host.py`` to define project-wide menu items (File, Edit, View, Tools).
    * - ``host.fps``
      - ``float``
-     - Frames per second — updated by ``tick_fps()`` each loop iteration
+     - Current frames per second, updated by ``tick_fps()``.
 
-**Methods (in addition to Root):**
+**Methods:**
 
 .. list-table::
    :header-rows: 1
-   :widths: 45 55
+   :widths: 40 60
 
    * - Method
      - Description
-   * - ``host.open(screen_name, stay_open=False)``
-     - Unified navigation. Tabbed screens open as tabs; standalone screens open as managed
-       Toplevel windows.
+   * - ``host.open(screen_name)``
+     - Unified navigation. Tabbed screens open as tabs in the active window; standalone
+       screens open as new ``DetachedWindow`` instances.
+   * - ``host.update()``
+     - Processes all pending Tk events for the root and every ``DetachedWindow``. On the
+       first call, opens the default screen.
    * - ``host.tick_fps()``
-     - Call once per update loop iteration to maintain ``host.fps`` and update the InfoRow counter.
+     - Call once per loop iteration to maintain ``host.fps``.
    * - ``host.quit_host()``
-     - Fully shuts down the Host — closes all detached windows, tabs, and Toplevels, stops the
-       tray icon, stops the IPC server, and destroys the window. Safe to call from any thread.
+     - Closes all ``DetachedWindow`` instances one by one (respecting ``on_quit`` vetoes),
+       sets ``Active = False``, and destroys the root.
    * - ``host.unregister_startup()``
      - Removes the Host from the Windows startup registry.
 
-OS startup registration
-~~~~~~~~~~~~~~~~~~~~~~~
+Shared menus
+~~~~~~~~~~~~
 
-On first run, ``Host.__init__`` registers the project's ``Host.py`` script in the Windows startup
-registry under ``HKCU\Software\Microsoft\Windows\CurrentVersion\Run``. Call
-``host.unregister_startup()`` to remove it. The entry is named ``<ProjectTitle>Host``.
+The Host does not own a menu bar. Each ``DetachedWindow`` creates its own ``HostMenu``. To
+define project-wide menus (File, Edit, View, Tools), set ``host.default_menu_setup`` to a
+callable that receives a ``HostMenu`` instance:
 
-System tray
-~~~~~~~~~~~
+.. code-block:: python
 
-The tray icon is built from the project's default icon (``Icons/<d_icon>.*``). If no icon file is
-found, a small placeholder image is used. The tray menu contains two items: **Show** (restores the
-window) and **Quit** (calls ``quit_host()``). The tray runs in a daemon thread.
+    host.default_menu_setup = lambda m: m.build_shared_menu({
+        "File": [
+            {"label": "New", "items": [...]},
+            {"separator": True},
+            {"label": "Exit", "command": host.quit_host},
+        ],
+        "Edit": [...],
+    })
+
+This callback is invoked on every new window, ensuring consistent menus across all windows.
 
 Singleton
 ~~~~~~~~~

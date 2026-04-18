@@ -53,6 +53,12 @@ class SplitView(Frame):
             SplitView._registry.remove(self)
         except ValueError:
             pass
+        if SplitView._global_focused_pane is not None:
+            try:
+                if not SplitView._global_focused_pane.winfo_exists():
+                    SplitView._global_focused_pane = None
+            except Exception:
+                SplitView._global_focused_pane = None
         super().destroy()
 
     # ── Cross-window helpers ─────────────────────────────────────────────────

@@ -4,203 +4,105 @@ import importlib
 import importlib.util
 import os
 import queue
-import socket
 import sys
-import tempfile
-import threading
 import time
-from tkinter import Toplevel
+from tkinter import Tk
 
-from VIStk.Objects._Root import Root
-from VIStk.Objects._TabManager import TabManager as _TabManager
-from VIStk.Widgets._HostMenu import HostMenu
-from VIStk.Widgets._InfoRow import InfoRow
-from VIStk.Widgets._SplitView import SplitView
+from VIStk.Structures._Project import Project
 
-# Module-level singleton reference — set by Host.__init__, cleared on quit_host.
+# Module-level singleton reference — set by Host.__init__, cleared on quit.
 _HOST_INSTANCE: "Host | None" = None
 
 
-def _ipc_port_file(project_title: str) -> str:
-    safe = project_title.replace(" ", "_")
-    return os.path.join(tempfile.gettempdir(), f"{safe}_vis_host.port")
+class Host:
+    """Application host that owns a hidden Tk root.
 
+    The Host is not a visible window.  It creates a ``Tk()`` root, withdraws
+    it immediately, and manages ``DetachedWindow`` instances (Toplevels) for
+    all visible application windows.
 
-def _parse_open_arg() -> "str | None":
-    """Return the value of ``--open <name>`` from ``sys.argv``, or ``None``."""
-    args = sys.argv[1:]
-    try:
-        idx = args.index("--open")
-        return args[idx + 1]
-    except (ValueError, IndexError):
-        return None
-
-
-class Host(Root):
-    """Persistent application host that owns the Tk root window.
-
-    All screen navigation routes through ``host.open()``.  Tabbed screens
-    open as ``Frame``-based tabs inside the Host window.  Standalone screens
-    spawn as Toplevels.
-
-    Multiple instances of the same screen are supported: if a screen is
-    already open anywhere (main window or any DetachedWindow), the new
-    instance is labelled ``"Name (2)"``, ``"Name (3)"``, etc.
-
-    Window title: ``project.title`` by default; ``"project: screen"`` when a
-    tab is active; ``"project: screen \u2014 info"`` when the tab has a
-    characteristic info string.
+    Navigation routes through ``_HOST_INSTANCE`` in-process.  There is no
+    IPC layer and no system tray.
 
     Attributes:
-        TabManager (TabManager): Property shim — returns the focused pane
-            from the underlying ``SplitView``.
-        HostMenu   (HostMenu)
-        InfoRow    (InfoRow)
-        fps        (float)
+        root                  (Tk):            The hidden Tk root.
+        Project               (Project):       The VIS project.
+        registered_tab_managers (list):         All active TabManager instances.
+        active_tab_manager    (TabManager|None): The most recently focused pane.
+        detached_windows      (list):          All live DetachedWindow instances.
+        default_menu_setup    (callable|None):  Called on every new window's menubar.
+        fps                   (float):         Current frames per second.
     """
 
-    def __init__(self, start_hidden: bool = True, *args, **kwargs):
+    def __init__(self):
         global _HOST_INSTANCE
-        super().__init__(*args, **kwargs)
 
-        # Set baseline window title to the project name
-        self.title(self.Project.title)
+        self.root = Tk()
+        self.root.withdraw()
 
-        self.protocol("WM_DELETE_WINDOW", self._hide_to_tray)
+        self.Project = Project()
 
-        self._split_view = SplitView(self, host=self,
-                                     tab_position=getattr(self.Project, "tab_bar_position", "top"))
-        self._split_view.pack(fill="both", expand=True)
-        self._split_view.set_callbacks({
-            "on_tab_activate":    self._on_tab_activate,
-            "on_tab_deactivate":  self._on_tab_deactivate,
-            "on_tab_popout":      self._on_tab_popout,
-            "on_tab_detach":      self._on_tab_detach,
-            "on_tab_refresh":     self._on_tab_refresh,
-            "on_tab_info_change": self._on_tab_info_change,
-            "on_tab_split":       self._on_tab_split,
-        })
+        # Set the hidden root title (shows in taskbar if accidentally mapped)
+        self.root.title(self.Project.title)
 
-        # Detached window tracking
-        self._detached: list = []
-
-        # FPS broadcast listeners — each DetachedWindow registers its InfoRow
-        self._fps_listeners: list = []
-
-        self.InfoRow = InfoRow(self, self.Project)
-        self.InfoRow.pack(fill="x", side="bottom")
-
-        self.HostMenu = HostMenu(self, quit_command=self.quit_host)
-        self.HostMenu.attach()
+        self.registered_tab_managers: list = []
+        self.active_tab_manager = None
+        self.detached_windows: list = []
+        self.default_menu_setup = None
 
         # FPS tracking
         self.fps: float = 0.0
         self._fps_last: float = time.time()
         self._fps_frames: int = 0
         self._fps_acc: float = 0.0
-
-        self._call_queue: queue.SimpleQueue = queue.SimpleQueue()
-        self._poll_main_queue()
-
-        self._toplevels: dict[str, dict] = {}
-        """name → {"window": Toplevel, "module": module | None, "hooks": module | None}"""
+        self._fps_listeners: list = []
 
         # Multiple-instance tracking: base_name → count of currently open instances
         self._open_counts: dict[str, int] = {}
 
-        self._tray_icon = None
-        self._tray_thread: threading.Thread | None = None
-        self._start_tray()
+        self.Active: bool = True
 
-        self._ipc_server: socket.socket | None = None
-        self._start_ipc()
-
-        self._register_startup()
+        self._opened_default = False
 
         _HOST_INSTANCE = self
 
-        # If launched by Screen.load() on first boot, open the requested screen.
-        _open_arg = _parse_open_arg()
-        if _open_arg:
-            start_hidden = False
-            self.after(0, lambda: self.open(_open_arg))
-        elif getattr(sys, 'frozen', False) and self.Project.default_screen:
-            # Compiled exe — auto-open default screen and show window
-            start_hidden = False
-            self.after(0, lambda: self.open(self.Project.default_screen))
-
-        if start_hidden:
-            self.withdraw()
-
-    # ── Compatibility shim ─────────────────────────────────────────────────────
-
-    @property
-    def TabManager(self) -> "_TabManager":
-        """Return the focused pane from the SplitView.
-
-        Existing code that reads ``host.TabManager`` gets the pane the user
-        last interacted with.  Methods that need *all* panes should use
-        ``self._split_view`` directly.
-        """
-        return self._split_view.focused_pane
-
     # ── Navigation ─────────────────────────────────────────────────────────────
 
-    def open(self, screen_name: str, stay_open: bool = False):
-        """Unified navigation entry point."""
+    def open(self, screen_name: str):
+        """Unified navigation entry point.
+
+        Tabbed screens open as tabs in the active TabManager's window.
+        Standalone (tabbed=False) screens open as new DetachedWindows.
+        """
         scr = self.Project.getScreen(screen_name)
         if scr is None:
             return
         if scr.tabbed:
             self._open_tab(scr)
-            # Only raise Host if the tab was opened there, not in a DetachedWindow
-            from VIStk.Widgets._SplitView import SplitView
-            target = SplitView._global_focused_pane
-            opened_in_host = (target is None or
-                              id(target) in self._split_view._pane_parents)
-            if opened_in_host:
-                self.deiconify()
-            else:
-                # Raise the DetachedWindow that owns the target pane
-                for dw in self._detached:
-                    if id(target) in dw._split_view._pane_parents:
-                        try:
-                            dw.win.deiconify()
-                            dw.win.lift()
-                            dw.win.focus_force()
-                        except Exception:
-                            pass
-                        break
         else:
-            self._open_toplevel(scr)
+            self._open_standalone(scr)
 
     # ── Tabs ───────────────────────────────────────────────────────────────────
 
     def _get_all_tab_names(self) -> set[str]:
         """Return all display names currently open in any window."""
-        names: set[str] = set(self._split_view.all_tabs().keys())
-        for dw in self._detached:
-            names.update(dw.tab_manager._tabs.keys())
+        names: set[str] = set()
+        for dw in self.detached_windows:
+            for tm in dw.tab_managers:
+                names.update(tm._tabs.keys())
         return names
 
-    def _find_tab_by_base(self, base_name: str) -> tuple["_TabManager | None", "str | None"]:
-        """Return (tab_manager, display_name) for the first open tab whose base_name matches.
-
-        Searches all main-window panes first, then detached windows.
-        Returns (None, None) if not found.
-        """
-        for pane in self._split_view.all_tab_managers():
-            for display, entry in pane._tabs.items():
-                if entry.get("base_name", display) == base_name:
-                    return pane, display
-        for dw in self._detached:
-            for display, entry in dw.tab_manager._tabs.items():
-                if entry.get("base_name", display) == base_name:
-                    return dw.tab_manager, display
+    def _find_tab_by_base(self, base_name: str):
+        """Return (tab_manager, display_name) for the first open tab whose base_name matches."""
+        for dw in self.detached_windows:
+            for tm in dw.tab_managers:
+                for display, entry in tm._tabs.items():
+                    if entry.get("base_name", display) == base_name:
+                        return tm, display
         return None, None
 
     def _unique_display_name(self, base: str) -> str:
-        """Return a display name for *base* that doesn't conflict with open tabs."""
+        """Return a display name that doesn't conflict with open tabs."""
         existing = self._get_all_tab_names()
         if base not in existing:
             return base
@@ -214,9 +116,9 @@ class Host(Root):
             tm, display = self._find_tab_by_base(scr.name)
             if tm is not None:
                 tm.focus_tab(display)
-                # If the tab lives in a detached window, bring that window forward
-                for dw in self._detached:
-                    if dw.tab_manager is tm:
+                # Raise the DetachedWindow that owns the target pane
+                for dw in self.detached_windows:
+                    if tm in dw.tab_managers:
                         try:
                             dw.win.deiconify()
                             dw.win.lift()
@@ -230,9 +132,7 @@ class Host(Root):
         max_t = getattr(self.Project, "max_tabs", None)
         if max_t is not None:
             from tkinter import messagebox
-            total = sum(len(p._tabs) for p in self._split_view.all_tab_managers())
-            for dw in self._detached:
-                total += len(dw.tab_manager._tabs)
+            total = sum(len(tm._tabs) for tm in self.registered_tab_managers)
             if total >= max_t:
                 messagebox.showinfo(
                     "Tab limit reached",
@@ -242,14 +142,30 @@ class Host(Root):
                 return
 
         display = self._unique_display_name(scr.name)
-        module  = self._import_screen(scr)
-        hooks   = self._import_hooks(scr)
-        icon    = self._load_tab_icon(scr)
-        # Open in whichever pane was last focused (Host or DetachedWindow)
-        from VIStk.Widgets._SplitView import SplitView
-        target = SplitView._global_focused_pane or self.TabManager
+        module = self._import_screen(scr)
+        hooks = self._import_hooks(scr)
+        icon = self._load_tab_icon(scr)
+
+        # Open in the active TabManager, or the first window's primary pane
+        target = self.active_tab_manager
+        if target is None and self.detached_windows:
+            target = self.detached_windows[0].tab_manager
+        if target is None:
+            # No window exists yet — create one
+            from VIStk.Objects._DetachedWindow import DetachedWindow
+            dw = DetachedWindow(self, module, scr.name)
+            return
+
         target.open_tab(display, module, hooks=hooks, icon=icon,
                         base_name=scr.name)
+
+    def _open_standalone(self, scr):
+        """Open a standalone (tabbed=False) screen as a new DetachedWindow."""
+        module = self._import_screen(scr)
+        if module is None:
+            return
+        from VIStk.Objects._DetachedWindow import DetachedWindow
+        dw = DetachedWindow(self, module, scr.name)
 
     def _load_tab_icon(self, scr) -> "PIL.ImageTk.PhotoImage | None":
         if not scr.icon:
@@ -269,125 +185,6 @@ class Host(Root):
         except Exception:
             return None
 
-    def _on_tab_activate(self, name: str, module):
-        self.HostMenu.clear_screen_items()
-        self.HostMenu.reset_overrides()
-        pane = self._split_view.find_pane_for_tab(name)
-        if pane is None:
-            return
-        hooks = pane._tabs.get(name, {}).get("hooks")
-        cfg = (getattr(hooks, "configure_menu", None)
-               or getattr(module, "configure_menu", None))
-        if cfg:
-            try:
-                cfg(self.HostMenu)
-            except Exception:
-                pass
-        overrides = (getattr(hooks, "MENU_OVERRIDES", None)
-                     or getattr(module, "MENU_OVERRIDES", None))
-        if overrides:
-            try:
-                self.HostMenu.apply_overrides(overrides)
-            except Exception:
-                pass
-        scr = self.Project.getScreen(
-            pane._tabs.get(name, {}).get("base_name", name)
-        )
-        self.InfoRow.set_screen(name, str(scr.s_version) if scr else "")
-        # Update window title (include info if already set)
-        info = pane._tabs.get(name, {}).get("info", "")
-        self._set_title(name, info)
-
-    def _on_tab_deactivate(self, name: str | None):
-        self.HostMenu.clear_screen_items()
-        self.HostMenu.reset_overrides()
-        self.InfoRow.set_screen("")
-        if name is None:
-            # All tabs closed — reset to project title
-            self.title(self.Project.title)
-
-    def _on_tab_info_change(self, name: str, info: str):
-        """Triggered when a tab's characteristic info string changes."""
-        pane = self._split_view.find_pane_for_tab(name)
-        if pane is not None and pane is self._split_view.focused_pane and pane.active == name:
-            self._set_title(name, info)
-
-    def _set_title(self, screen: str, info: str = ""):
-        base = self.Project.title
-        if info:
-            self.title(f"{base}: {screen} \u2014 {info}")
-        else:
-            self.title(f"{base}: {screen}")
-
-    # ── Toplevels ──────────────────────────────────────────────────────────────
-
-    def _open_toplevel(self, scr):
-        if scr.name in self._toplevels:
-            win = self._toplevels[scr.name]["window"]
-            win.deiconify()
-            win.lift()
-            win.focus_force()
-            return
-
-        win = Toplevel(self)
-        win.title(scr.name)
-
-        module = self._import_screen(scr)
-        hooks  = self._import_hooks(scr)
-        if module and hasattr(module, "setup"):
-            try:
-                module.setup(win)
-            except Exception:
-                pass
-            fn = getattr(hooks, "on_focused", None) or getattr(module, "on_focused", None)
-            if fn:
-                try:
-                    fn()
-                except Exception:
-                    pass
-        else:
-            win.destroy()
-            return
-
-        self._toplevels[scr.name] = {"window": win, "module": module, "hooks": hooks}
-
-        def _on_close():
-            entry = self._toplevels.get(scr.name, {})
-            mod  = entry.get("module")
-            hks  = entry.get("hooks")
-            fn = getattr(hks, "on_unfocused", None) or getattr(mod, "on_unfocused", None)
-            if fn:
-                try:
-                    fn()
-                except Exception:
-                    pass
-            win.destroy()
-            self._toplevels.pop(scr.name, None)
-
-        win.protocol("WM_DELETE_WINDOW", _on_close)
-
-    def _close_screen(self, name: str):
-        pane = self._split_view.find_pane_for_tab(name)
-        if pane is not None:
-            pane.close_tab(name)
-        elif name in self._toplevels:
-            self._close_toplevel(name)
-
-    def _close_toplevel(self, name: str):
-        entry = self._toplevels.get(name)
-        if entry:
-            entry["window"].protocol("WM_DELETE_WINDOW", lambda: None)
-            mod = entry.get("module")
-            hks = entry.get("hooks")
-            fn = getattr(hks, "on_unfocused", None) or getattr(mod, "on_unfocused", None)
-            if fn:
-                try:
-                    fn()
-                except Exception:
-                    pass
-            entry["window"].destroy()
-            self._toplevels.pop(name, None)
-
     # ── Screen import ──────────────────────────────────────────────────────────
 
     def _import_screen(self, scr):
@@ -406,7 +203,7 @@ class Host(Root):
             return None
 
     def _import_hooks(self, scr):
-        name       = scr.name
+        name = scr.name
         hooks_path = self.Project.p_project + f"/modules/{name}/m_{name}.py"
         try:
             if not os.path.exists(hooks_path):
@@ -425,120 +222,6 @@ class Host(Root):
         except Exception:
             return None
 
-    # ── Pop-out, detach, refresh ───────────────────────────────────────────────
-
-    def _on_tab_popout(self, name: str):
-        """Pop out via right-click — use current pointer position."""
-        pane = self._split_view.find_pane_for_tab(name)
-        if pane is None:
-            return
-        entry     = pane._tabs[name]
-        module    = entry.get("module")
-        hooks     = entry.get("hooks")
-        icon      = entry.get("icon")
-        base_name = entry.get("base_name", name)
-        pane.close_tab(name)
-        x = self.winfo_pointerx()
-        y = self.winfo_pointery()
-        self._open_detached(name, module, hooks, icon, base_name,
-                            x, y, 0, 0)
-
-    def _on_tab_detach(self, name: str):
-        """Handle drag-to-detach — use pointer position and stored drag offsets."""
-        pane = self._split_view.find_pane_for_tab(name)
-        if pane is None:
-            return
-        entry     = pane._tabs[name]
-        module    = entry.get("module")
-        hooks     = entry.get("hooks")
-        icon      = entry.get("icon")
-        base_name = entry.get("base_name", name)
-        bx = pane.tab_bar._last_drag_btn_offset_x
-        by = pane.tab_bar._last_drag_btn_offset_y
-        pane.close_tab(name)
-        x = self.winfo_pointerx()
-        y = self.winfo_pointery()
-        self._open_detached(name, module, hooks, icon, base_name,
-                            x, y, bx, by)
-
-    def _on_tab_refresh(self, name: str):
-        """Re-import and reopen the named tab at its current position."""
-        pane = self._split_view.find_pane_for_tab(name)
-        if pane is None:
-            return
-        entry     = pane._tabs[name]
-        base_name = entry.get("base_name", name)
-        icon      = entry.get("icon")
-        idx       = pane.tab_bar.get_tab_idx(name)
-        scr = self.Project.getScreen(base_name)
-        if scr is None:
-            pane.force_refresh_tab(name)
-            return
-        pane.close_tab(name)
-        module = self._import_screen(scr)
-        hooks  = self._import_hooks(scr)
-        pane.open_tab(name, module, hooks=hooks, icon=icon,
-                      insert_idx=idx, base_name=base_name)
-
-    def _on_tab_split(self, name: str, direction: str, target_pane=None):
-        """Handle right-click 'Split right' / 'Split down' or drag-to-split.
-
-        *target_pane* overrides the default (pane owning *name*) — used
-        when a tab is dragged onto another pane's split zone.  The target
-        may belong to a different SplitView (cross-window drop).
-        """
-        from VIStk.Widgets._SplitView import SplitView
-
-        source_pane = self._split_view.find_pane_for_tab(name)
-        if source_pane is None:
-            return
-        split_pane = target_pane if target_pane is not None else source_pane
-        entry     = source_pane._tabs[name]
-        module    = entry.get("module")
-        hooks     = entry.get("hooks")
-        icon      = entry.get("icon")
-        base_name = entry.get("base_name", name)
-
-        # Find which SplitView owns the target pane
-        target_sv = SplitView.find_owner(split_pane)
-        if target_sv is None:
-            target_sv = self._split_view
-
-        if direction == "center":
-            # Drop into existing pane — add tab without splitting
-            if split_pane is source_pane:
-                return  # already in this pane
-            source_pane.close_tab(name)
-            split_pane.open_tab(name, module, hooks=hooks, icon=icon,
-                                base_name=base_name)
-        elif split_pane is source_pane:
-            # Only tab in the pane — splitting would just recreate the same state
-            if len(source_pane._tabs) <= 1:
-                return
-            # Exclude the moving tab so it's only created once (in right_pane)
-            left_pane, right_pane = target_sv.split(
-                split_pane, direction, exclude={name})
-            right_pane.open_tab(name, module, hooks=hooks, icon=icon,
-                                base_name=base_name)
-        else:
-            # Drag onto a different pane's zone (same or cross-window):
-            # Close from source, then split the target
-            source_pane.close_tab(name)
-            left_pane, right_pane = target_sv.split(split_pane, direction)
-            right_pane.open_tab(name, module, hooks=hooks, icon=icon,
-                                base_name=base_name)
-
-    def _open_detached(self, name: str, module, hooks, icon, base_name: str,
-                       x_root: int, y_root: int,
-                       btn_offset_x: int, btn_offset_y: int):
-        """Create a DetachedWindow and position it under the cursor."""
-        from VIStk.Objects._DetachedWindow import DetachedWindow
-        dw = DetachedWindow(
-            self, name, module, hooks, icon, base_name,
-            x_root, y_root, btn_offset_x, btn_offset_y,
-        )
-        self._detached.append(dw)
-
     # ── FPS ────────────────────────────────────────────────────────────────────
 
     def tick_fps(self):
@@ -552,147 +235,44 @@ class Host(Root):
             self.fps = self._fps_frames / self._fps_acc
             self._fps_frames = 0
             self._fps_acc = 0.0
-            self.InfoRow.set_fps(self.fps)
             for listener in list(self._fps_listeners):
                 try:
                     listener(self.fps)
                 except Exception:
                     pass
 
-    # ── Main-thread call queue ─────────────────────────────────────────────────
+    def update(self):
+        """Process all pending Tk events for the root and its Toplevels.
 
-    def _poll_main_queue(self):
+        On the first call, opens the default screen so that Host.py has
+        time to configure ``default_menu_setup`` before any window is created.
+        """
+        if not self._opened_default:
+            self._opened_default = True
+            if self.Project.default_screen:
+                self.open(self.Project.default_screen)
+        self.root.update()
+
+    def quit_host(self):
+        """Close all DetachedWindows one by one, then shut down.
+
+        Each window's ``_on_close()`` runs the two-pass veto check.  If any
+        window vetoes (e.g. unsaved changes), the shutdown stops and the
+        Host stays alive.
+        """
+        for dw in list(self.detached_windows):
+            dw._on_close()
+            if dw in self.detached_windows:
+                # Window vetoed — abort shutdown
+                return
+
+        self.Active = False
         try:
-            while True:
-                fn = self._call_queue.get_nowait()
-                try:
-                    fn()
-                except Exception:
-                    pass
-        except queue.Empty:
-            pass
-        try:
-            if self.winfo_exists():
-                self.after(50, self._poll_main_queue)
+            self.root.destroy()
         except Exception:
             pass
 
-    # ── IPC server ─────────────────────────────────────────────────────────────
-
-    def _start_ipc(self):
-        # Remove any stale port file left by a previous crash
-        try:
-            os.remove(_ipc_port_file(self.Project.title))
-        except FileNotFoundError:
-            pass
-        try:
-            srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            srv.bind(("127.0.0.1", 0))
-            srv.listen(8)
-            self._ipc_server = srv
-            port = srv.getsockname()[1]
-            t = threading.Thread(target=self._ipc_listen, args=(srv,), daemon=True)
-            t.start()
-            # Write port file only after the listener thread is running
-            with open(_ipc_port_file(self.Project.title), "w") as f:
-                f.write(str(port))
-        except Exception:
-            try:
-                self._ipc_server.close()
-            except Exception:
-                pass
-            self._ipc_server = None
-
-    def _ipc_listen(self, srv: socket.socket):
-        try:
-            while True:
-                try:
-                    conn, _ = srv.accept()
-                    with conn:
-                        data = conn.recv(1024).decode("utf-8", errors="ignore").strip()
-                    if data == "__VIS_QUIT__":
-                        self._call_queue.put(self._do_quit)
-                        break
-                    elif data.startswith("__VIS_CLOSE__:"):
-                        n = data[len("__VIS_CLOSE__:"):]
-                        self._call_queue.put(lambda name=n: self._close_screen(name))
-                    elif data:
-                        self._call_queue.put(lambda name=data: self.open(name))
-                except Exception:
-                    break
-        finally:
-            try:
-                srv.close()
-            except Exception:
-                pass
-
-    def _stop_ipc(self):
-        if self._ipc_server:
-            try:
-                self._ipc_server.close()
-            except Exception:
-                pass
-            self._ipc_server = None
-        try:
-            os.remove(_ipc_port_file(self.Project.title))
-        except Exception:
-            pass
-
-    # ── Tray ───────────────────────────────────────────────────────────────────
-
-    def _start_tray(self):
-        try:
-            import pystray
-            import PIL.Image
-            import PIL.ImageDraw
-            import glob as _glob
-
-            matches = _glob.glob(
-                self.Project.p_icons + "/" + self.Project.d_icon + ".*"
-            )
-            if matches:
-                img = PIL.Image.open(matches[0])
-            else:
-                img = PIL.Image.new("RGB", (16, 16), color=(80, 80, 200))
-                draw = PIL.ImageDraw.Draw(img)
-                draw.rectangle([4, 4, 12, 12], fill=(255, 255, 255))
-
-            menu = pystray.Menu(
-                pystray.MenuItem("Show", self._restore, default=True),
-                pystray.MenuItem("Quit", self.quit_host),
-            )
-            self._tray_icon = pystray.Icon(
-                self.Project.title, img, self.Project.title, menu
-            )
-            self._tray_thread = threading.Thread(
-                target=self._tray_icon.run, daemon=True
-            )
-            self._tray_thread.start()
-        except Exception:
-            self._tray_icon = None
-
-    def _hide_to_tray(self):
-        self.withdraw()
-
-    def _restore(self, icon=None, item=None):
-        self._call_queue.put(self._do_restore)
-
-    def _do_restore(self):
-        state = self.state()
-        if state == "withdrawn":
-            default = getattr(self.Project, "default_screen", None)
-            if default:
-                scr = self.Project.getScreen(default)
-                if scr and scr.tabbed:
-                    self._open_tab(scr)
-            self.deiconify()
-        elif state == "iconic":
-            self.deiconify()
-        self.lift()
-        self.focus_force()
-
-    # ── Startup registration ───────────────────────────────────────────────────
+    # ── Startup registration (opt-in) ─────────────────────────────────────────
 
     def _register_startup(self):
         try:
@@ -731,38 +311,3 @@ class Host(Root):
                 winreg.DeleteValue(key, app_name)
         except Exception:
             pass
-
-    # ── Lifecycle ──────────────────────────────────────────────────────────────
-
-    def quit_host(self, icon=None, item=None):
-        if threading.current_thread() is not threading.main_thread():
-            self._call_queue.put(self._do_quit)
-            return
-        self._do_quit()
-
-    def _do_quit(self):
-        global _HOST_INSTANCE
-        self._stop_ipc()
-        for name in list(self._toplevels.keys()):
-            self._close_toplevel(name)
-        for dw in list(self._detached):
-            try:
-                dw._on_close()
-            except Exception:
-                pass
-        self._detached.clear()
-        for pane in self._split_view.all_tab_managers():
-            for name in list(pane._tabs.keys()):
-                pane.close_tab(name)
-        if self._tray_icon:
-            try:
-                self._tray_icon.stop()
-            except Exception:
-                pass
-            if self._tray_thread and self._tray_thread.is_alive():
-                self._tray_thread.join(timeout=1.0)
-        _HOST_INSTANCE = None
-        super().unload()
-
-    def unload(self):
-        self._hide_to_tray()

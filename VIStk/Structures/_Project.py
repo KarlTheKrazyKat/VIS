@@ -314,31 +314,29 @@ class Project(VINFO):
         except AttributeError:
             return None
 
-    def open(self, screen:str, stay_open:bool=False) -> None:
-        """Unified navigation: routes through Host if running, else os.execl.
+    def open(self, screen: str, target=None, args=None) -> None:
+        """Unified navigation: routes through Host action queue if running.
 
-        When a Host is active (``VIStk.Objects._Host._HOST_INSTANCE`` is set):
+        When a Host is active, the navigation is deferred via the active
+        TabManager's action queue so it runs safely from the main loop.
 
-        * Tabbed screen  → opens or focuses the tab inside the Host window.
-        * Standalone screen, ``stay_open=False`` → Host spawns a subprocess and
-          the caller closes itself.
-        * Standalone screen, ``stay_open=True`` → Host spawns a subprocess; the
-          caller keeps running.
-
-        When no Host is running the call falls back to ``Screen.load()``
-        (``os.execl``), preserving the existing standalone behaviour.
+        When no Host is running the call falls back to ``Screen.load()``.
 
         Args:
-            screen (str): Name of the target screen.
-            stay_open (bool): Keep the current screen open when launching a
-                standalone target.  Ignored when the target is tabbed.
+            screen: Name of the target screen.
+            target: Optional TabManager to navigate in (defaults to active).
+            args:   Optional dict of args passed to the screen's ArgHandler.
         """
         from VIStk.Objects._Host import _HOST_INSTANCE
         scr = self.getScreen(screen)
         if scr is None:
             return None
         if _HOST_INSTANCE is not None:
-            _HOST_INSTANCE.open(screen, stay_open=stay_open)
+            tm = target or _HOST_INSTANCE.active_tab_manager
+            if tm is not None:
+                tm._action_queue.put(lambda: tm.navigate(screen, args=args))
+            else:
+                _HOST_INSTANCE.open(screen)
         else:
             scr.load()
 

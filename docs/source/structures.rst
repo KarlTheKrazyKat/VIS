@@ -398,22 +398,57 @@ Release
     from VIStk.Structures import Release
 
     rel = Release(flag="beta", type="Minor")
-    rel.release()       # build spec, run PyInstaller, bundle assets, create installer
+    rel.release()       # compile with Nuitka, bundle assets, create installer
     rel.restoreAll()    # undo any screen isolation
+
+The release pipeline uses **Nuitka** for compilation (not PyInstaller). The installer and
+uninstaller are built with PyInstaller and cached between releases.
+
+Compilation order
+~~~~~~~~~~~~~~~~~
+
+Compilations are grouped into three categories and executed in this order:
+
+1. **Required Packages** — Shared libraries (e.g. ``pywomlib``, ``VIStk``) compiled as
+   ``.pyd`` modules into ``shared/``.
+2. **Screens** — Every tabbed screen compiled as a ``.pyd`` module into ``Screens/``.
+   The default screen is included.
+3. **Binaries** — Standalone screens (``tabbed=false, release=true``) compiled as ``.exe``
+   files, plus the Host binary.
+
+The Host is compiled last with ``--standalone --follow-imports`` and bundles the ``modules/``
+and ``Screens/`` packages so that screen ``.pyd`` files can resolve their imports at runtime.
+
+Progress is displayed on a single overwriting line:
+
+.. code-block:: text
+
+    PYWOM Release - 19 Compilations
+      [5/19] Screens 3/14 - WOMServant — C 12/45
+
+If any compilation fails, the release aborts immediately with a clear error message.
+No ``.py`` source files are ever included in the release — if a ``.pyd`` compilation fails,
+the release fails.
 
 **Methods:**
 
 .. list-table::
    :header-rows: 1
-   :widths: 20 80
+   :widths: 25 75
 
    * - Method
      - Description
-   * - ``build()``
-     - Generates the PyInstaller ``.spec`` file in ``.VIS/``
    * - ``release()``
-     - Runs the full pipeline: build → PyInstaller → bundle → installer
+     - Runs the full pipeline: version bump → Nuitka compilation → asset bundling →
+       installer assembly. Warns if no default screen is set.
+   * - ``compile_shared()``
+     - Compiles top-level packages from ``hidden_imports`` as ``.pyd`` modules.
+   * - ``compile_screens(mode)``
+     - Compiles screens. ``mode="pyd"`` for tabbed, ``mode="exe"`` for standalone.
+   * - ``compile_host()``
+     - Compiles the Host as a standalone Nuitka executable.
    * - ``clean()``
-     - Removes build artifacts and copies ``Icons``/``Images``/``.VIS`` into the dist folder
+     - Copies assets (Icons, Images, ``.VIS``) into the dist folder, rewrites
+       ``project.json`` with ``.pyd`` script paths, and removes build artifacts.
    * - ``newVersion()``
-     - Increments the project version number in ``project.json``
+     - Increments the project version number in ``project.json``.

@@ -7,5 +7,4 @@ __all__ = ["Project",
            "Release",
            "Screen",
            "VINFO",
-           "send_to_host",
            ]

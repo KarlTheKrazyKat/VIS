@@ -227,10 +227,11 @@ Build a distributable installer:
 This:
 
 1. Increments the version number (``-t`` controls Major/Minor/Patch)
-2. Generates a PyInstaller spec from ``project.json``
-3. Compiles all screens marked ``release: true`` to native binaries
+2. Compiles shared packages, screen ``.pyd`` modules, and standalone ``.exe`` binaries
+   using Nuitka
+3. Compiles the Host as a standalone executable
 4. Bundles assets (Icons, Images, .VIS)
-5. Creates a standalone installer executable in ``dist/``
+5. Creates a standalone installer executable
 
 Release a single screen instead of the full project:
 
