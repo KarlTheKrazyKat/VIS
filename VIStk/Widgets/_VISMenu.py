@@ -56,8 +56,16 @@ class VISMenu():
             self.ob_dict[0].bind("<Configure>", lambda e: fUtil.autosize(e))
         if len(self.ob_dict) >1:
             self.ob_dict[0].bind("<Configure>", lambda e: fUtil.autosize(e,relations=self.ob_dict[1:]))
-        self.root.bind("<KeyPress>",self.menuNav)        
-    
+        self._kb_id = self.root.bind("<KeyPress>", self.menuNav, add="+")
+        self.parent.bind("<Destroy>", self._on_destroy, add="+")
+
+    def _on_destroy(self, event):
+        if event.widget is self.parent:
+            try:
+                self.root.unbind("<KeyPress>", self._kb_id)
+            except Exception:
+                pass
+
     def menuNav(self,happ:Event):
         k=happ.char
         if self.n_dict.get(k) != None:

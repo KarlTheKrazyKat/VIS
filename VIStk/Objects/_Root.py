@@ -21,12 +21,11 @@ class Root(Tk, Window):
     
     def unload(self):
         """Closes the window neatly for VIStk"""
-        for element in self.winfo_children():
-            try:
-                element.destroy()
-            except Exception: pass
-        
         self.Active = False
+        for after_id in self.tk.call("after", "info"):
+            try:
+                self.after_cancel(after_id)
+            except Exception: pass
         self.destroy()
 
     def exitQueue(self, action, *args, **kwargs):

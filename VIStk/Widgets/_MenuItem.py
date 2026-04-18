@@ -42,8 +42,8 @@ class MenuItem(Button):
         #Should have a more VIStk way to switch screens
 
         if not self.screen is None:
-            self.screen.load()
             self.root.destroy()
+            self.screen.load()
             return
         if ".exe" in self.path:
             os.startfile(self.path)

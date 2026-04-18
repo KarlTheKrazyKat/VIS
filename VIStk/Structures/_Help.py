@@ -75,22 +75,14 @@ def contextual_help(tokens: list[str]) -> None:
         print("  version         major.minor.patch")
         print("  current         version string or none")
 
-    # ── stop ──────────────────────────────────────────────────────────────────
-    elif cmd in ("stop", "Stop"):
-        print("Usage:  VIS stop\n")
-        print("Sends a quit signal to the running Host via IPC.")
-        print("No effect if no Host is running.")
-
     # ── release ───────────────────────────────────────────────────────────────
     elif cmd in ("release", "Release", "r", "R"):
         print("Usage:  VIS release [-Flag <suffix>] [-Type Major|Minor|Patch] [-Note <text>]")
         print("        VIS release Screen <name> [-Flag <suffix>]\n")
         print(
-            "Compiles all screens with release=true via PyInstaller, bundles with\n"
-            "Icons/, Images/, and .VIS/, and produces a self-extracting installer\n"
-            "in your Downloads folder.\n\n"
-            "The default screen compiles as the project name with the project icon.\n"
-            "All other screens use their own names and icons.\n\n"
+            "Compiles the Host with Nuitka (standalone), screens as .pyd modules,\n"
+            "shared packages to Shared/, bundles with Images/ and .VIS/, and\n"
+            "produces a self-extracting installer in your Downloads folder.\n\n"
             "Flags (optional, any order):\n"
             "  -Flag <suffix>           suffix appended to build folder and installer name\n"
             "  -Type Major|Minor|Patch  bump project version before building\n"
@@ -112,7 +104,6 @@ def _top_level():
         ("stitch",  "Rewire imports for a screen"),
         ("rename",  "Rename a screen throughout the project"),
         ("edit",    "Set a screen attribute in project.json"),
-        ("stop",    "Stop the running Host"),
         ("release", "Build and package as compiled executables"),
     ]
     print("VIS - VIStk project CLI\n")
