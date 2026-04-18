@@ -23,12 +23,20 @@ class ArgHandler():
         self.flags.append([key1,key2,key3,key4])
         self.functions.append(method)
         
-    def handle(self, args:list):
+    def handle(self, args):
         """Handles Arguments
-        
+
         Args:
-            args (list): A List of Arguments `sys.argv`
+            args (list | dict): A list of arguments (sys.argv) or a dict
+                of {flag: value} pairs (Host navigation path).
         """
+        if isinstance(args, dict):
+            for key, value in args.items():
+                for i, flag in enumerate(self.flags):
+                    if key.lower() in [f.lower() for f in flag]:
+                        self.functions[i]([value] if not isinstance(value, list) else value)
+            return
+
         if len(args) > 1:
             if args[0] == args[1]:
                 pargs = args[1:]

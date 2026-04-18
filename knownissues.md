@@ -2,19 +2,16 @@
 
 ## Unresolved
 
-### Host / IPC
+## Resolved
+
+### Host / IPC — Resolved
 
 #### Args passed to `Project.load()` are silently dropped over IPC
 
 Found in 0.4.2
+Fixed in 0.4.5
 
-`Screen.load()` sends only the screen name string over the IPC socket — extra args (e.g., `--path`) are not transmitted. The Host listener opens a fresh blank tab with no knowledge of the args. Affects any screen that needs to receive a file path or flag via Host IPC.
-
-Known work-arounds:
-
-- None (architectural limitation until IPC layer is extended)
-
-## Resolved
+Resolved by removing the IPC layer entirely. `Project.open()` now routes through `_HOST_INSTANCE` in-process with `ArgHandler` dict support. Arguments are passed as a dict through `Project.open(name, args={...})`.
 
 ### HostMenu — Resolved
 

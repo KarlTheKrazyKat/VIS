@@ -59,26 +59,22 @@ Each screen is its own Python process. Switching screens replaces the current pr
 Host mode
 ~~~~~~~~~
 
-The ``Host`` is a persistent process that owns the Tk root window. **It starts hidden in
-the system tray by default** --- no window appears on launch. The user clicks the tray icon
-to restore the window, which also opens the project's default screen. The Host never closes
-unless the user selects **Quit** from the tray menu or code calls ``host.quit_host()``.
-Screens marked ``tabbed: true`` in ``project.json`` open as ``Frame``-based tabs inside
-the Host window. Standalone screens are spawned as subprocesses by the Host.
+The ``Host`` is a persistent process that owns a hidden ``Tk()`` root. All visible windows
+are ``DetachedWindow`` instances (Toplevels) that the Host manages. Screens marked
+``tabbed: true`` open as tabs inside the active window; standalone screens open as new
+``DetachedWindow`` instances.
+
+On the first call to ``host.update()``, the Host automatically opens the project's default
+screen (set in ``project.json``). This deferred open ensures that ``Host.py`` has time to
+configure shared menus before any window is created.
 
 .. code-block:: python
 
    from VIStk.Objects import Host
+   from modules.menu import shared_menu_structure
 
    host = Host()
-   host.screenTitle("MyApp")
-   host.WindowGeometry.setGeometry(width=1200, height=800, align="center")
-
-   # Open a tabbed screen (tab appears inside the Host window)
-   host.open("Dashboard")
-
-   # Open a standalone screen (spawned as a subprocess)
-   host.open("Settings")
+   host.default_menu_setup = lambda m: m.build_shared_menu(shared_menu_structure())
 
    while host.Active:
        host.tick_fps()
@@ -89,14 +85,14 @@ Screen navigation from anywhere in the app:
 .. code-block:: python
 
    # Routes through Host if running, otherwise os.execl
-   root.Project.open("WorkOrders")
+   from VIStk.Structures._Project import Project
+   Project().open("WorkOrders")
 
 **Key rules:**
 
 - Do not call ``root.mainloop()`` --- this bypasses the ``while`` loop and prevents process
   switching.
-- Do not call ``root.destroy()`` to quit --- set ``root.Active = False`` or call
-  ``host.quit_host()``.
+- Do not call ``root.destroy()`` to quit --- call ``host.quit_host()`` instead.
 - Screen scripts must include ``if __name__ == "__main__":`` around the startup code so
   they can be imported as modules by the Host without executing the top-level loop.
 - Use ``Project.open()`` instead of ``Project.load()`` when a Host may be running --- it
@@ -171,19 +167,37 @@ The two critical blocks:
 .. code-block:: python
 
    #%Screen Elements
-   from Screens.myscreen.f_header import *
-   from Screens.myscreen.f_body import *
+   from Screens.MyScreen.f_header import f_header
+   f_header.build(parent)
+   from Screens.MyScreen.f_body import f_body
+   f_body.build(parent)
    #%Screen Grid
 
    #%Screen Modules
-   from modules.myscreen.m_header import *
-   from modules.myscreen.m_body import *
+   from modules import MyScreen
    #%Handle Arguments
 
 ``stitch`` replaces everything between ``#%Screen Elements`` and ``#%Screen Grid`` with
-fresh imports from ``Screens/<screen>/f_*.py``, and everything between
-``#%Screen Modules`` and ``#%Handle Arguments`` with fresh imports from
-``modules/<screen>/m_*.py``.
+fresh imports and ``build()`` calls for each ``Screens/<screen>/f_*.py`` file. Everything
+between ``#%Screen Modules`` and ``#%Handle Arguments`` is replaced with a single package
+import: ``from modules import <ScreenName>``.
+
+``stitch`` also generates ``modules/<screen>/__init__.py`` with three sections:
+
+.. code-block:: python
+
+   #%Modules (Auto-generated)
+   from . import m_header
+   from . import m_body
+
+   #%Screen Variables
+   # Hand-edited shared state (e.g. current_wo = None)
+
+   #%Exports
+   # Hand-edited public API (e.g. from .m_header import get_wo_num)
+
+The ``#%Modules`` section is regenerated on every stitch. ``#%Screen Variables`` and
+``#%Exports`` are preserved across stitches.
 
 configure_menu Pattern
 ----------------------
@@ -205,16 +219,23 @@ Items are added when the tab activates and automatically cleared when it deactiv
 
 Call ``set_screen_items`` multiple times to contribute multiple cascades.
 
-Project-wide items are set once in ``Host.py``:
+Project-wide menus are configured in ``Host.py`` via ``default_menu_setup``. This callback
+is called on every new ``DetachedWindow``'s ``HostMenu``, ensuring consistent menus across
+all windows:
 
 .. code-block:: python
 
    host = Host()
-   host.HostMenu.set_project_items([
-       {"label": "New",  "command": new_fn},
-       {"separator": True},
-       {"label": "Exit", "command": host.quit_host},
-   ], label="File")
+   host.default_menu_setup = lambda m: m.build_shared_menu({
+       "File": [
+           {"label": "New", "items": [...]},
+           {"separator": True},
+           {"label": "Exit", "command": host.quit_host},
+       ],
+       "Edit": [...],
+       "View": [...],
+       "Tools": [...],
+   })
 
 project.json
 ------------
@@ -224,28 +245,34 @@ project.json
 .. code-block:: json
 
    {
-       "metadata": {
-           "title": "MyApp",
-           "company": "My Company",
-           "copyright": "My Company",
-           "version": "0.1.0",
-           "d_icon": "app",
-           "dist_location": "dist",
-           "host_script": "Host.py"
-       },
-       "defaults": {
-           "default_screen": "Home"
-       },
-       "Screens": {
-           "Home": {
-               "script": "Home.py",
-               "release": true,
-               "icon": "home",
-               "desc": "Main dashboard",
-               "tabbed": true,
-               "single_instance": false,
-               "version": "0.1.0",
-               "current": null
+       "MyApp": {
+           "Screens": {
+               "Home": {
+                   "script": "Home.py",
+                   "release": true,
+                   "icon": "home",
+                   "desc": "Main dashboard",
+                   "tabbed": true,
+                   "single_instance": false,
+                   "version": "1.0.0",
+                   "current": null
+               }
+           },
+           "defaults": {
+               "icon": "app",
+               "default_screen": "Home"
+           },
+           "metadata": {
+               "company": "My Company",
+               "copyright": "My Company",
+               "version": "0.1.0"
+           },
+           "release_info": {
+               "location": "./dist/",
+               "hidden_imports": []
+           },
+           "host": {
+               "script": ".VIS/Host.py"
            }
        }
    }
