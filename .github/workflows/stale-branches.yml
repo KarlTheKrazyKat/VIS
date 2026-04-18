@@ -1,0 +1,28 @@
+name: Stale Branch Cleanup
+
+on:
+  schedule:
+    - cron: '0 7 * * *'   # daily 07:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Remove stale branches
+        uses: fpicalausa/remove-stale-branches@v2
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          # Delete branches with no activity in 60 days.
+          stale_branch_age_days: 60
+          # Long-lived / production / feature-track branches to keep.
+          exempted_branches_regex: '^(master|main|release/.*|ProcessControl|ProcessModeling|nuitka|bug-audit)$'
+          # Branches with an open PR are exempted automatically.
+          # Start in dry-run so we can review what would be deleted.
+          # Flip to false in a follow-up PR after one week of clean output.
+          dry_run: true
+          operations_per_run: 50
