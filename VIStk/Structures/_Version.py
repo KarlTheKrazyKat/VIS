@@ -3,9 +3,14 @@ class Version():
     def __init__(self, version:str):
         """Creates a Version Number Object from a string"""
         nums = version.split(".")
-        self._major=int(nums[0])
-        self._minor=int(nums[1])
-        self._patch=int(nums[2])
+        if len(nums) < 3:
+            raise ValueError(f"Version string must be 'major.minor.patch', got '{version}'")
+        try:
+            self._major=int(nums[0])
+            self._minor=int(nums[1])
+            self._patch=int(nums[2])
+        except ValueError:
+            raise ValueError(f"Version segments must be integers, got '{version}'")
 
     def __str__(self) -> str:
         return f"{self._major}.{self._minor}.{self._patch}"

@@ -60,13 +60,13 @@ handler.handle(sys.argv)
 def _find_install_log():
     """Return the parsed install_log.json dict and its parent directory."""
     if custom_path:
-        log_path = os.path.join(custom_path, "install_log.json")
+        log_path = os.path.join(custom_path, ".VIS", "install_log.json")
     elif getattr(sys, "frozen", False):
-        # Running as compiled exe — log is in same directory
-        log_path = os.path.join(os.path.dirname(sys.executable), "install_log.json")
+        # Running as compiled exe — log is in same directory as exe
+        log_path = os.path.join(os.path.dirname(sys.executable), ".VIS", "install_log.json")
     else:
         # Development fallback
-        log_path = os.path.join(os.path.dirname(__file__), "install_log.json")
+        log_path = os.path.join(os.path.dirname(__file__), ".VIS", "install_log.json")
 
     if not os.path.exists(log_path):
         return None, None
@@ -139,7 +139,7 @@ def remove_installed_files(log, location, progress_fn=None):
         steps.append(("dir", os.path.join(location, d), d))
 
     # install_log.json itself
-    steps.append(("file", os.path.join(location, "install_log.json"), "install_log.json"))
+    steps.append(("file", os.path.join(location, ".VIS", "install_log.json"), ".VIS/install_log.json"))
 
     total = len(steps)
     for i, (kind, path, label) in enumerate(steps):
@@ -154,22 +154,37 @@ def remove_installed_files(log, location, progress_fn=None):
             pass
 
     if progress_fn:
-        progress_fn(total, total, "Done")
+        progress_fn(total, total, "Cleaning up")
 
-    # Try to remove the install directory if empty
+    # Remove all remaining directories except Settings
+    _keep_dirs = {"Settings"}
     try:
-        remaining = os.listdir(location)
-        # Only self (the uninstaller exe) should remain
-        if len(remaining) <= 1:
-            for f in remaining:
-                fp = os.path.join(location, f)
-                if fp != sys.executable:
-                    try:
-                        os.remove(fp)
-                    except Exception:
-                        pass
+        for item in os.listdir(location):
+            if item in _keep_dirs:
+                continue
+            fp = os.path.join(location, item)
+            if os.path.isdir(fp):
+                try:
+                    shutil.rmtree(fp)
+                except Exception:
+                    pass
     except Exception:
         pass
+
+    # Remove remaining loose files (except the uninstaller exe itself)
+    try:
+        for item in os.listdir(location):
+            fp = os.path.join(location, item)
+            if os.path.isfile(fp) and fp != sys.executable:
+                try:
+                    os.remove(fp)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    if progress_fn:
+        progress_fn(total, total, "Done")
 
 
 def _own_pids() -> set[int]:
@@ -306,6 +321,10 @@ root.columnconfigure(2, weight=1, minsize=360)
 # ── Load app icon ─────────────────────────────────────────────────────────────
 d_icon = None
 _icon_photo = None
+_pinfo = {}
+_ptitle = None
+_install_dir = location
+_icon_ext = ".ico" if sys.platform == "win32" else ".xbm"
 if log is not None:
     try:
         _install_dir = log.get("install_location", location)
@@ -401,7 +420,20 @@ for idx, scr in enumerate(installed_screens):
     screen_options.rowconfigure(row, weight=1)
     name = scr["name"]
 
-    if d_icon is not None:
+    # Look up per-screen icon from project.json, fall back to default
+    _scr_img = None
+    try:
+        _scr_info = _pinfo[_ptitle]["Screens"].get(name, {})
+        _scr_icon_name = _scr_info.get("icon")
+        if _scr_icon_name:
+            _scr_icon_path = os.path.join(_install_dir, "Icons", _scr_icon_name + _icon_ext)
+            if os.path.exists(_scr_icon_path):
+                _scr_img = Image.open(_scr_icon_path)
+    except Exception:
+        pass
+    if _scr_img is not None:
+        img_items.append(PIL.ImageTk.PhotoImage(_scr_img.resize((16, 16))))
+    elif d_icon is not None:
         img_items.append(PIL.ImageTk.PhotoImage(d_icon.resize((16, 16))))
     else:
         img_items.append(None)

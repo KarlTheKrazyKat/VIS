@@ -5,6 +5,7 @@ import sys
 class ScrollableFrame(ttk.Frame):
     _active = None  # class-level: which instance currently owns the scroll
     _is_linux = sys.platform == "linux"
+    _bound = False  # class-level: whether the global scroll binding exists
 
     def __init__(self, root, *args, **kwargs):
         super().__init__(root, *args, **kwargs)
@@ -34,28 +35,24 @@ class ScrollableFrame(ttk.Frame):
         self.canvas.bind("<Enter>", self._on_enter)
         self.canvas.bind("<Leave>", self._on_leave)
 
-    def _bind_scroll(self):
-        if ScrollableFrame._is_linux:
-            self.canvas.bind_all("<Button-4>", ScrollableFrame._dispatch_scroll)
-            self.canvas.bind_all("<Button-5>", ScrollableFrame._dispatch_scroll)
-        else:
-            self.canvas.bind_all("<MouseWheel>", ScrollableFrame._dispatch_scroll)
+        if not ScrollableFrame._bound:
+            ScrollableFrame._bind_scroll_global(self.canvas)
 
-    def _unbind_scroll(self):
-        if ScrollableFrame._is_linux:
-            self.canvas.unbind_all("<Button-4>")
-            self.canvas.unbind_all("<Button-5>")
+    @classmethod
+    def _bind_scroll_global(cls, canvas):
+        if cls._is_linux:
+            canvas.bind_all("<Button-4>", cls._dispatch_scroll)
+            canvas.bind_all("<Button-5>", cls._dispatch_scroll)
         else:
-            self.canvas.unbind_all("<MouseWheel>")
+            canvas.bind_all("<MouseWheel>", cls._dispatch_scroll)
+        cls._bound = True
 
     def _on_enter(self, event):
         ScrollableFrame._active = self
-        self._bind_scroll()
 
     def _on_leave(self, event):
         if ScrollableFrame._active is self:
             ScrollableFrame._active = None
-            self._unbind_scroll()
 
     @staticmethod
     def _dispatch_scroll(event):
@@ -66,8 +63,8 @@ class ScrollableFrame(ttk.Frame):
 
     def sizeFrame(self, event:Event):
         """Sizing the Frame"""
-        canvas_width=self.master.winfo_width()
-        canvas_height=self.master.winfo_height()
+        canvas_width=event.width
+        canvas_height=event.height
         self.canvas.config(width=canvas_width-17, height=canvas_height)
         self.canvas.itemconfig(self.sfid, width=canvas_width-17)
 

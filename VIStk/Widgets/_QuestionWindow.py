@@ -81,9 +81,20 @@ class QuestionWindow(SubRoot):
                                         window_ref=parent)
 
     def ycom(self,command):
+        selection = self.get_dropdown_value()
         self.destroy()
         if not command is None:
-            command()
+            if selection is not None:
+                command(selection)
+            else:
+                command()
+
+    def get_dropdown_value(self):
+        """Return the selected dropdown value, or None if no dropdown exists."""
+        for elem in self.screen_elements:
+            if isinstance(elem, ttk.Combobox):
+                return elem.get() or None
+        return None
 
     def xcom(self):
         self.destroy()

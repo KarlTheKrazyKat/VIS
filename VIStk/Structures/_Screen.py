@@ -7,7 +7,6 @@ from VIStk.Structures._VINFO import *
 from tkinter import *
 from pathlib import Path
 import sys
-import os
 import subprocess
 from notifypy import Notify
 
@@ -71,11 +70,12 @@ class Screen(VINFO):
         with open(self.p_sinfo,"r") as f:
             info = json.load(f)
 
-        self.desc = info[self.title]["Screens"][self.name]["desc"]
+        scr_data = info[self.title]["Screens"][self.name]
+        self.desc = scr_data.get("desc", "")
         """Screen Description"""
-        self.s_version = Version(info[self.title]["Screens"][self.name]["version"])
+        self.s_version = Version(scr_data.get("version", "0.0.0"))
         """Screen `Version`"""
-        self.current = info[self.title]["Screens"][self.name]["current"]#remove later
+        self.current = scr_data.get("current", "0.0.0")#remove later
         self.tabbed: bool = info[self.title]["Screens"][self.name].get("tabbed", False)
         """Whether this screen opens as a tab inside the Host window"""
         self.single_instance: bool = info[self.title]["Screens"][self.name].get("single_instance", False)
@@ -118,7 +118,7 @@ class Screen(VINFO):
         re-indented to match the section header's indentation, so this works
         correctly for sections inside functions as well as at module level.
         """
-        pattern = rf"([ \t]*#%{re.escape(section_name)}\n).*?(?=\n?[ \t]*#%)"
+        pattern = rf"([ \t]*#%{re.escape(section_name)}\n).*?(?=\n?[ \t]*#%|\Z)"
 
         def replacer(m: re.Match) -> str:
             header = m.group(1)
@@ -152,14 +152,47 @@ class Screen(VINFO):
         elements_str = ("\n".join(element_lines) + "\n") if element_lines else ""
         text = self._replace_section(text, "Screen Elements", elements_str)
 
-        #Modules
-        modules = glob.glob(self.m_path+'/m_*')#get all modules
-        for i in range(0,len(modules),1):#iterate into module format
-            modules[i] = modules[i].replace("\\","/")
-            modules[i] = modules[i].replace(self.m_path+"/","modules."+self.name+".")[:-3]
-            stitched.append(modules[i])
-        modules_str = ("from " + " import *\nfrom ".join(modules) + " import *\n") if modules else ""
+        #Modules — package import pattern
+        modules_pkg_init = os.path.join(self.p_project, "modules", "__init__.py")
+        if not os.path.exists(modules_pkg_init):
+            Path(modules_pkg_init).touch()
+
+        modules = glob.glob(self.m_path+'/m_*')
+        for m in modules:
+            stitched.append(m)
+        modules_str = f"from modules import {self.name}\n" if modules else ""
         text = self._replace_section(text, "Screen Modules", modules_str)
+
+        if modules:
+            mod_names = [Path(m).stem for m in sorted(modules)]
+            generated_block = (
+                f"_module_names = {mod_names!r}\n"
+                f"\n"
+                f"def __getattr__(name):\n"
+                f"    if name in _module_names:\n"
+                f"        import importlib\n"
+                f"        mod = importlib.import_module(f'.{{name}}', __name__)\n"
+                f"        globals()[name] = mod\n"
+                f"        return mod\n"
+                f"    raise AttributeError(f\"module {{__name__!r}} has no attribute {{name!r}}\")\n"
+            )
+
+            init_path = self.m_path + "/__init__.py"
+
+            if os.path.exists(init_path):
+                with open(init_path, "r") as f:
+                    existing = f.read()
+                new_init = self._replace_section(existing, "Modules (Auto-generated)", generated_block)
+            else:
+                new_init = (
+                    "#%Modules (Auto-generated)\n"
+                    f"{generated_block}\n"
+                    "#%Screen Variables\n\n"
+                    "#%Exports\n"
+                )
+
+            with open(init_path, "w") as f:
+                f.write(new_init)
 
         #write out
         with open(self.p_project+"/"+self.script,"w") as f:
@@ -191,14 +224,14 @@ class Screen(VINFO):
             f"# Fill in the items list, then set label= to whatever should appear\n"
             f"# in the Host menu bar.\n"
             f"\n"
-            f"def configure_menu(menubar):\n"
-            f"    menubar.set_screen_items([\n"
+            f"def configure_menu(tabmanager):\n"
+            f"    tabmanager.add_cascade(\"{menu}\", [\n"
             f"        # {{\"label\": \"Item\",    \"command\": some_fn}},\n"
             f"        # {{\"separator\": True}},\n"
             f"        # {{\"label\": \"Submenu\", \"items\": [\n"
             f"        #     {{\"label\": \"Sub-item\", \"command\": some_fn}},\n"
             f"        # ]}},\n"
-            f"    ], label=\"{menu}\")\n"
+            f"    ])\n"
         )
         with open(menu_path, "w") as f:
             f.write(content)
@@ -216,8 +249,8 @@ class Screen(VINFO):
                     f"\n# Auto-wired by: VIS add screen {self.name} menu {menu}\n"
                     f"from modules.{self.name}.m_{menu} import configure_menu as _cm_{menu}\n"
                     f"\n"
-                    f"def configure_menu(menubar):\n"
-                    f"    _cm_{menu}(menubar)\n"
+                    f"def configure_menu(tabmanager):\n"
+                    f"    _cm_{menu}(tabmanager)\n"
                 )
                 with open(hooks_path, "a") as f:
                     f.write(delegation)
@@ -240,36 +273,32 @@ class Screen(VINFO):
     def load(self, *args):
         """Loads this screen.
 
-        If a Host is running (port file present), sends the screen name via IPC
-        so the Host handles routing (tab or subprocess).  Falls back to
-        spawning a Host subprocess when running from source.  In a compiled
-        (frozen) app, subprocess spawning is skipped — the compiled exe is
-        already the Host.
+        If a Host is running in-process, routes through it.  Otherwise
+        spawns a Host subprocess with this screen name as the first arg.
+        In a compiled (frozen) app, subprocess spawning is skipped.
         """
-        if send_to_host(self.title, self.name):
+        from VIStk.Objects._Host import _HOST_INSTANCE
+        if _HOST_INSTANCE is not None:
+            _HOST_INSTANCE.open(self.name)
             return
         if getattr(sys, 'frozen', False):
             return  # compiled exe is the Host; can't spawn another
-        import time, tempfile
         host_path = str(Path(getPath()) / ".VIS" / "Host.py")
-        subprocess.Popen([sys.executable, host_path])
-        port_file = os.path.join(tempfile.gettempdir(),
-                                 self.title.replace(" ", "_") + "_vis_host.port")
-        for _ in range(30):
-            time.sleep(0.1)
-            if os.path.exists(port_file):
-                time.sleep(0.1)
-                break
-        send_to_host(self.title, self.name)
-        sys.exit(0)
+        subprocess.Popen([sys.executable, host_path, self.name])
 
     def close(self) -> bool:
-        """Ask the Host to close this screen (tab or Toplevel).
+        """Ask the Host to close this screen's tab.
 
-        Returns ``True`` if the request was delivered, ``False`` if no Host
-        is running (in standalone mode there is nothing to close via IPC).
+        Returns ``True`` if the tab was found and closed, ``False`` otherwise.
         """
-        return send_to_host(self.title, f"__VIS_CLOSE__:{self.name}")
+        from VIStk.Objects._Host import _HOST_INSTANCE
+        if _HOST_INSTANCE is None:
+            return False
+        tm, display = _HOST_INSTANCE._find_tab_by_base(self.name)
+        if tm is not None and display is not None:
+            tm.close_tab(display)
+            return True
+        return False
 
     def getModules(self, script:str=None) -> list[str]:
         """Gets a list of all modules in the screens folder"""

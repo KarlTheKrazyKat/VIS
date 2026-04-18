@@ -58,8 +58,8 @@ class HostMenu:
         self._quit_command = quit_command
         self._close_command = close_command
         self._project_labels: list[str] = []
-        self._screen_indices: list[int] = []
-        self._replaced_shared: set[int] = set()
+        self._screen_labels: list[str] = []
+        self._replaced_shared: set[str] = set()
         self._shared_menus: dict[str, Menu] = {}
         self._shared_defaults: dict[str, dict[str, dict]] = {}
         self._hidden_shared: list[tuple[str, int, Menu]] = []
@@ -125,25 +125,25 @@ class HostMenu:
                 old_menu = self._shared_menus[label]
                 self._hidden_shared.append((label, idx, old_menu))
                 self.menubar.entryconfigure(idx, menu=cascade)
-                self._replaced_shared.add(idx)
-                self._screen_indices.append(idx)
+                self._replaced_shared.add(label)
+                self._screen_labels.append(label)
                 return
             except TclError:
                 pass
 
         self.menubar.add_cascade(label=label, menu=cascade)
-        self._screen_indices.append(self.menubar.index("end"))
+        self._screen_labels.append(label)
 
     def clear_screen_items(self):
         """Remove all accumulated screen cascades and restore shared ones."""
-        for idx in reversed(self._screen_indices):
-            if idx in self._replaced_shared:
+        for label in reversed(self._screen_labels):
+            if label in self._replaced_shared:
                 continue
             try:
-                self.menubar.delete(idx)
+                self.menubar.delete(label)
             except TclError:
                 pass
-        self._screen_indices.clear()
+        self._screen_labels.clear()
         self._replaced_shared.clear()
         # Restore hidden shared cascades
         for label, idx, old_menu in self._hidden_shared:
@@ -251,6 +251,28 @@ class HostMenu:
             for item_label, opts in defaults.items():
                 try:
                     cascade.entryconfig(item_label, **opts)
+                except TclError:
+                    pass
+
+    # ── Default snapshot ──────────────────────────────────────────────────────
+
+    def save_defaults(self):
+        """Snapshot the current menubar state (called once after setup)."""
+        idx = self.menubar.index("end")
+        self._default_end = idx if idx is not None else 0
+
+    def restore_defaults(self):
+        """Reset the menubar to the snapshot taken by save_defaults().
+
+        Removes any cascades added after the snapshot.
+        """
+        if not hasattr(self, "_default_end") or self._default_end is None:
+            return
+        current = self.menubar.index("end")
+        if current is not None and self._default_end is not None:
+            for i in range(current, self._default_end, -1):
+                try:
+                    self.menubar.delete(i)
                 except TclError:
                     pass
 

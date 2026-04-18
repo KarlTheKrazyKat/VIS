@@ -34,7 +34,7 @@ class VIMG():
 
     def resize(self, e=None):
         """Resizes an image to the size of its parent frame"""
-        img = Image.open(self.path)
+        img = self.Image.copy()
         f_w = self.fill.winfo_width()
         f_h = self.fill.winfo_height()
         f_r = f_h/f_w
