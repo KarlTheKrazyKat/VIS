@@ -93,6 +93,11 @@ class TabBar(Frame):
         self._insert_bar: "TabBar | None" = None
         self._insert_idx: int = -1
 
+        # Natural populated size, captured once and reused for the empty state
+        # so 0→1 transitions don't grow the bar by a few pixels.
+        self._natural_height: int = 0
+        self._natural_width: int = 0
+
         _TABBAR_REGISTRY.append(self)
         self._update_empty_state()
 
@@ -141,6 +146,8 @@ class TabBar(Frame):
             compound="left" if icon else "none",
             relief="flat",
             bd=0,
+            highlightthickness=0,
+            takefocus=0,
             bg=_BG_INACTIVE,
             activebackground=_BG_HOVER_TAB,
             command=lambda n=name: self._btn_click(n),
@@ -160,6 +167,8 @@ class TabBar(Frame):
             text="✕",
             relief="flat",
             bd=0,
+            highlightthickness=0,
+            takefocus=0,
             width=2,
             bg=_BG_INACTIVE,
             activebackground=_BG_HOVER_CLOSE,
@@ -254,6 +263,8 @@ class TabBar(Frame):
         When focused the bar uses the normal background; when unfocused
         it dims slightly so the user can see which pane is active.
         """
+        if self._focused == focused:
+            return
         self._focused = focused
         bg = _BG_FOCUSED if focused else _BG_UNFOCUSED
         self.configure(bg=bg)
@@ -308,12 +319,32 @@ class TabBar(Frame):
         if self._tabs:
             self.pack_propagate(True)
             self.configure(bg=_BG_BAR)
+            self.after_idle(self._capture_natural_size)
         else:
             self.pack_propagate(False)
             if self._is_vertical():
-                self.configure(width=_EMPTY_BAR_W, bg=_BG_EMPTY)
+                w = self._natural_width or _EMPTY_BAR_W
+                self.configure(width=w, bg=_BG_EMPTY)
             else:
-                self.configure(height=_EMPTY_BAR_H, bg=_BG_EMPTY)
+                h = self._natural_height or _EMPTY_BAR_H
+                self.configure(height=h, bg=_BG_EMPTY)
+
+    def _capture_natural_size(self):
+        """Remember the populated bar size so the empty state matches it."""
+        try:
+            if not self._tabs:
+                return
+            self.update_idletasks()
+            if self._is_vertical():
+                w = self.winfo_width()
+                if w > 1:
+                    self._natural_width = w
+            else:
+                h = self.winfo_height()
+                if h > 1:
+                    self._natural_height = h
+        except TclError:
+            pass
 
     # ── Right-click context menu ───────────────────────────────────────────────
 
