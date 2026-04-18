@@ -76,6 +76,7 @@ class TabManager(Frame):
         self._position: str = position
 
         self._action_queue: queue.SimpleQueue = queue.SimpleQueue()
+        self._action_pump_id: str | None = None
         self._menubar = menubar
         self._detached_window = None
 
@@ -100,6 +101,41 @@ class TabManager(Frame):
         self.tab_bar.on_drag_detach  = self._on_detach_request
         self.tab_bar.on_drag_merge   = self._on_merge_request
         self.tab_bar.on_tab_split    = self._on_split_request
+
+        # Start the action-queue pump. Project.open() enqueues navigation
+        # lambdas here; without a consumer they'd sit forever.
+        self._action_pump_id = self.after(16, self._pump_actions)
+        self.bind("<Destroy>", self._stop_action_pump, add="+")
+
+    # ── Action queue pump ─────────────────────────────────────────────────────
+
+    def _pump_actions(self):
+        """Drain queued navigation callables on the Tk main loop."""
+        try:
+            while True:
+                fn = self._action_queue.get_nowait()
+                try:
+                    fn()
+                except Exception:
+                    pass
+        except queue.Empty:
+            pass
+        try:
+            self._action_pump_id = self.after(16, self._pump_actions)
+        except Exception:
+            self._action_pump_id = None
+
+    def _stop_action_pump(self, event=None):
+        """Cancel the pending pump on widget destruction."""
+        # <Destroy> bubbles up from descendants; only act for this widget.
+        if event is not None and event.widget is not self:
+            return
+        if self._action_pump_id is not None:
+            try:
+                self.after_cancel(self._action_pump_id)
+            except Exception:
+                pass
+            self._action_pump_id = None
 
     # ── Layout ─────────────────────────────────────────────────────────────────
 

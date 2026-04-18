@@ -315,17 +315,25 @@ class Project(VINFO):
             return None
 
     def open(self, screen: str, target=None, args=None) -> None:
-        """Unified navigation: routes through Host action queue if running.
+        """Unified navigation: opens the target screen as a new tab or window.
 
-        When a Host is active, the navigation is deferred via the active
-        TabManager's action queue so it runs safely from the main loop.
+        When a Host is active the call is deferred via the active TabManager's
+        action queue so it runs safely from the main loop, then routed to
+        ``Host.open`` — which appends a new tab (for tabbed screens) or opens
+        a new DetachedWindow (for standalone screens). Single-instance tabs
+        are focused instead of duplicated.
 
         When no Host is running the call falls back to ``Screen.load()``.
 
+        To *replace* the current pane instead of opening a new tab, call
+        ``tab_manager.navigate(screen)`` directly.
+
         Args:
             screen: Name of the target screen.
-            target: Optional TabManager to navigate in (defaults to active).
-            args:   Optional dict of args passed to the screen's ArgHandler.
+            target: Optional TabManager whose action queue is used to defer
+                the call. Defaults to the active TabManager.
+            args:   Optional dict of args passed to the screen's ArgHandler
+                (currently ignored in the Host path; TODO: thread through).
         """
         from VIStk.Objects._Host import _HOST_INSTANCE
         scr = self.getScreen(screen)
@@ -334,7 +342,7 @@ class Project(VINFO):
         if _HOST_INSTANCE is not None:
             tm = target or _HOST_INSTANCE.active_tab_manager
             if tm is not None:
-                tm._action_queue.put(lambda: tm.navigate(screen, args=args))
+                tm._action_queue.put(lambda: _HOST_INSTANCE.open(screen))
             else:
                 _HOST_INSTANCE.open(screen)
         else:
