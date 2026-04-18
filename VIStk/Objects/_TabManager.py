@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import gc
+import inspect
+import queue
+import sys
 from tkinter import Frame
 
 from VIStk.Widgets._TabBar import TabBar, _BG_BAR
@@ -62,7 +66,7 @@ class TabManager(Frame):
         on_tab_split       (callable | None) ``(name, direction)``
     """
 
-    def __init__(self, parent, position: str = "top", **kwargs):
+    def __init__(self, parent, position: str = "top", menubar=None, **kwargs):
         kwargs.setdefault("bg", _BG_BAR)
         super().__init__(parent, **kwargs)
 
@@ -70,6 +74,10 @@ class TabManager(Frame):
         """name → {frame, module, hooks, icon, base_name, info, _info_trace}"""
         self._active: str | None = None
         self._position: str = position
+
+        self._action_queue: queue.SimpleQueue = queue.SimpleQueue()
+        self._menubar = menubar
+        self._detached_window = None
 
         self.on_tab_activate   = None
         self.on_tab_deactivate = None
@@ -118,6 +126,89 @@ class TabManager(Frame):
     def active(self) -> str | None:
         return self._active
 
+    @property
+    def active_module(self):
+        """Return the module of the currently active tab, or None."""
+        if self._active and self._active in self._tabs:
+            return self._tabs[self._active].get("module")
+        return None
+
+    # ── Menu delegation ───────────────────────────────────────────────────────
+
+    def register_menu_item(self, label: str, command):
+        """Register a single menu item (delegates to the window's menubar)."""
+        if self._menubar:
+            self._menubar.set_screen_items([{"label": label, "command": command}])
+
+    def add_cascade(self, label: str, items: list[dict]):
+        """Add a cascade menu (delegates to the window's menubar)."""
+        if self._menubar:
+            self._menubar.set_screen_items(items, label=label)
+
+    # ── Navigation ────────────────────────────────────────────────────────────
+
+    def navigate(self, name: str, args=None):
+        """Navigate this pane to a new screen.
+
+        Tears down the current screen (calling on_quit), cleans up modules,
+        imports the new screen, runs setup(), and handles args.
+        """
+        from VIStk.Objects._Host import _HOST_INSTANCE
+        if _HOST_INSTANCE is None:
+            return
+
+        # 1. Call on_quit on active screen
+        if self._active and self._active in self._tabs:
+            module = self._tabs[self._active].get("module")
+            hooks = self._tabs[self._active].get("hooks")
+            quit_fn = (getattr(hooks, "on_quit", None)
+                       or getattr(module, "on_quit", None))
+            if quit_fn:
+                try:
+                    if quit_fn() is False:
+                        return  # vetoed
+                except Exception:
+                    pass
+            base_name = self._tabs[self._active].get("base_name", self._active)
+            self.close_tab(self._active)
+            self._cleanup_screen_modules(base_name)
+
+        # 2. Import new screen
+        scr = _HOST_INSTANCE.Project.getScreen(name)
+        if scr is None:
+            return
+        module = _HOST_INSTANCE._import_screen(scr)
+        hooks = _HOST_INSTANCE._import_hooks(scr)
+        icon = _HOST_INSTANCE._load_tab_icon(scr)
+        display = _HOST_INSTANCE._unique_display_name(name)
+
+        # 3. Open new tab
+        self.open_tab(display, module, hooks=hooks, icon=icon, base_name=name)
+
+        # 4. Handle args via ArgHandler
+        if args is not None and module and hasattr(module, "ArgHandler"):
+            try:
+                module.ArgHandler.handle(args)
+            except Exception:
+                pass
+
+    def _cleanup_screen_modules(self, screen_name: str):
+        """Remove screen-specific entries from sys.modules to allow clean re-import."""
+        prefixes = (
+            f"Screens.{screen_name}.",
+            f"modules.{screen_name}.",
+        )
+        to_delete = [k for k in sys.modules if any(k.startswith(p) for p in prefixes)]
+        for key in to_delete:
+            del sys.modules[key]
+        gc.collect()
+
+    def _cleanup_all_modules(self):
+        """Clean up all screen modules owned by this TabManager."""
+        for name, entry in list(self._tabs.items()):
+            base_name = entry.get("base_name", name)
+            self._cleanup_screen_modules(base_name)
+
     def open_tab(self, name: str, module, hooks=None, icon=None,
                  insert_idx: int = -1, base_name: str = None) -> bool:
         """Open a new tab for *name* and build its screen UI.
@@ -144,12 +235,6 @@ class TabManager(Frame):
         frame._vis_tab_name    = name
         frame._vis_tab_manager = self
 
-        if module and hasattr(module, "setup"):
-            try:
-                module.setup(frame)
-            except Exception:
-                pass
-
         self._tabs[name] = {
             "frame":      frame,
             "module":     module,
@@ -159,13 +244,39 @@ class TabManager(Frame):
             "info":       "",
             "_info_trace": None,   # (StringVar, trace_id) | None
         }
+
+        if module and hasattr(module, "setup"):
+            try:
+                module.setup(frame)
+            except Exception:
+                pass
+
         self.tab_bar.open_tab(name, icon=icon, insert_idx=insert_idx)
         return True
 
-    def close_tab(self, name: str) -> bool:
-        """Close the named tab, running ``on_unfocused`` first."""
+    def close_tab(self, name: str, skip_on_quit: bool = False) -> bool:
+        """Close the named tab, running ``on_unfocused`` first.
+
+        Args:
+            name: Display name of the tab.
+            skip_on_quit: If True, skip the on_quit hook (used when
+                DetachedWindow has already checked it).
+        """
         if name not in self._tabs:
             return False
+
+        # Call on_quit unless skipped (e.g. window close already checked)
+        if not skip_on_quit:
+            module = self._tabs[name].get("module")
+            hooks = self._tabs[name].get("hooks")
+            quit_fn = (getattr(hooks, "on_quit", None)
+                       or getattr(module, "on_quit", None))
+            if quit_fn:
+                try:
+                    if quit_fn() is False:
+                        return False  # vetoed
+                except Exception:
+                    pass
 
         # Clean up StringVar trace if present
         trace_info = self._tabs[name].get("_info_trace")
@@ -201,7 +312,8 @@ class TabManager(Frame):
         hooks     = entry.get("hooks")
         icon      = entry.get("icon")
         base_name = entry.get("base_name", name)
-        self.close_tab(name)
+        if not self.close_tab(name):
+            return False
         self.open_tab(name, module, hooks=hooks, icon=icon,
                       insert_idx=idx, base_name=base_name)
         return True
@@ -270,6 +382,27 @@ class TabManager(Frame):
         if self.on_tab_deactivate:
             self.on_tab_deactivate(name)
 
+    def _call_configure_menu(self, name: str):
+        """Call configure_menu on the active tab's hooks or module.
+
+        Supports both new signature (tabmanager) and old signature (menubar)
+        for backwards compatibility.
+        """
+        cfg = self._get_hook(name, "configure_menu")
+        if cfg is None:
+            return
+        try:
+            sig = inspect.signature(cfg)
+            params = list(sig.parameters.keys())
+            if params and params[0] == "menubar":
+                # Old signature — pass menubar directly for compat
+                if self._menubar:
+                    cfg(self._menubar)
+            else:
+                cfg(self)
+        except Exception:
+            pass
+
     def _on_focus_change(self, name: str | None):
         prev = self._active
         if prev and prev != name:
@@ -335,6 +468,7 @@ class TabManager(Frame):
         hooks     = entry.get("hooks")
         icon      = entry.get("icon")
         base_name = entry.get("base_name", name)
-        source_mgr.close_tab(name)
+        if not source_mgr.close_tab(name):
+            return
         self.open_tab(name, module, hooks=hooks, icon=icon,
                       insert_idx=insert_idx, base_name=base_name)

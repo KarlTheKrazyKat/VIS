@@ -135,7 +135,7 @@ for sname, scfg in info[title]["Screens"].items():
 installables = [title]  # Host group is always first
 _archive_binaries = set()
 for i in archive.namelist():
-    if not any(breaker in i for breaker in ["Icons/","Images/",".VIS/","_internal/","Screens/","modules/"]):
+    if not any(breaker in i for breaker in ["Icons/","Images/",".VIS/","Screens/","modules/",".Runtime/","Shared/"]):
         if "." in i:
             name = ".".join(i.split(".")[:-1])
         else:
@@ -146,6 +146,14 @@ for i in archive.namelist():
 for name in _archive_binaries:
     if name in _standalone_screens and name not in installables:
         installables.append(name)
+
+# Detect license/EULA file in archive
+_license_text = None
+for _lname in ("LICENSE", "LICENSE.txt", "EULA.txt", "EULA.md"):
+    if _lname in archive.namelist():
+        with archive.open(_lname) as _lf:
+            _license_text = _lf.read().decode("utf-8", errors="replace")
+        break
 
 #%Core Install & Shorcut Creation
 def shortcut(name:str, location:Path):
@@ -180,7 +188,7 @@ def shortcut(name:str, location:Path):
         subprocess.call(f"chmod +x {os.path.join(platformdirs.user_desktop_path(),name+'.desktop')}", shell=True)
 
 # Prefixes for files that keep their directory structure during extraction
-_dir_prefixes = (".VIS/", "Images/", "Icons/", "_internal/", "Screens/", "modules/")
+_dir_prefixes = (".VIS/", "Images/", "Icons/", "Screens/", "modules/", ".Runtime/", "Shared/")
 
 def extal(file, location):
     """Extracts file to the location. Only chmod binaries on Linux."""
@@ -192,11 +200,18 @@ def extal(file, location):
             subprocess.call(f"chmod +x {os.path.join(location,file)}", shell=True)
 
 def adjacents(location):
-    """Installs adjacent files from .VIS, Images, Icons, _internal"""
-    os.makedirs(os.path.join(location, ".VIS"), exist_ok=True)
+    """Installs adjacent files from .VIS, Images, Icons, .Runtime"""
+    vis_dir = os.path.join(location, ".VIS")
+    runtime_dir = os.path.join(location, ".Runtime")
+    os.makedirs(vis_dir, exist_ok=True)
     os.makedirs(os.path.join(location, "Images"), exist_ok=True)
     os.makedirs(os.path.join(location, "Icons"), exist_ok=True)
-    os.makedirs(os.path.join(location, "_internal"), exist_ok=True)
+    os.makedirs(runtime_dir, exist_ok=True)
+    if sys.platform == "win32":
+        subprocess.call(["attrib", "+h", vis_dir],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.call(["attrib", "+h", runtime_dir],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def _find_running_processes(location):
@@ -250,13 +265,7 @@ def _kill_app_processes(location):
 
 def write_install_log(location, selected_screens, desktop_shortcuts):
     """Write install_log.json recording what was installed."""
-    # Collect _internal/ subdirectories (immediate children only)
-    internal_dir = os.path.join(location, "_internal")
-    directories = [".VIS", "Icons", "Images", "_internal"]
-    if os.path.isdir(internal_dir):
-        for entry in os.listdir(internal_dir):
-            if os.path.isdir(os.path.join(internal_dir, entry)):
-                directories.append(f"_internal/{entry}")
+    directories = [".VIS", "Icons", "Images", ".Runtime"]
 
     # Build screen list with versions
     screens = []
@@ -285,7 +294,7 @@ def write_install_log(location, selected_screens, desktop_shortcuts):
         "registry_key": registry_key,
     }
 
-    log_path = os.path.join(location, "install_log.json")
+    log_path = os.path.join(location, ".VIS", "install_log.json")
     with open(log_path, "w") as f:
         json.dump(log, f, indent=2)
 
@@ -342,7 +351,7 @@ def verify_installation(location, arc) -> list[str]:
     """
     if arc is None:
         return ["Archive not available — cannot verify."]
-    log_path = os.path.join(location, "install_log.json")
+    log_path = os.path.join(location, ".VIS", "install_log.json")
     if not os.path.exists(log_path):
         return ["install_log.json not found — cannot verify."]
     try:
@@ -437,7 +446,7 @@ if QUIET is True:
         cinstalls = list(installables)
         print(f"No screens specified — installing all {len(cinstalls)} screen(s).")
 
-    is_update_quiet = os.path.exists(os.path.join(location, "install_log.json"))
+    is_update_quiet = os.path.exists(os.path.join(location, ".VIS", "install_log.json"))
 
     # Check for running processes in quiet mode
     if is_update_quiet:
@@ -459,8 +468,8 @@ if QUIET is True:
     adjacents(location)
 
     # Collect files to install
-    _base_prefixes_q = (".VIS/", "Images/", "Icons/", "_internal/")
-    _host_prefixes_q = ("Screens/", "modules/")
+    _base_prefixes_q = (".VIS/", "Images/", "Icons/", ".Runtime/")
+    _host_prefixes_q = ("Screens/", "modules/", "Shared/")
     # In quiet mode with no screens specified, install everything
     host_selected_q = (not cinstalls) or (title in cinstalls)
     quiet_install_files = []
@@ -502,25 +511,41 @@ if QUIET is True:
         archive.close()
         sys.exit()
 
+    total_size = sum(archive.getinfo(f).file_size for f in quiet_files_to_extract)
+    _q_line_w = 70
+
+    def _q_status(text):
+        sys.stdout.write(f"\r{text:<{_q_line_w}}")
+        sys.stdout.flush()
+
     # Backup for rollback
     quiet_backup_dir = None
     if is_update_quiet and quiet_files_to_extract:
         quiet_backup_dir = tempfile.mkdtemp(prefix="vis_backup_")
-        for file in quiet_files_to_extract:
+        for idx, file in enumerate(quiet_files_to_extract):
             dest = Path(location) / file
             if dest.exists():
                 bk = Path(quiet_backup_dir) / file
                 bk.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(dest, bk)
+            pct = int((idx + 1) / len(quiet_files_to_extract) * 50)
+            _q_status(f"  Backing up [{pct}%] {file[:45]}")
+        _q_status("")
 
     try:
+        installed_size = 0
         for file in quiet_files_to_extract:
-            print(f"  Extracting {file}")
             if file.startswith(_dir_prefixes) or file.endswith(".py"):
                 archive.extract(file, location)
             else:
                 extal(file, location)
+            installed_size += archive.getinfo(file).file_size
+            pct = int(installed_size / total_size * 100) if total_size > 0 else 100
+            _q_status(f"  Installing [{pct}%] {file[:45]}")
+        _q_status("")
+        print()
     except Exception as exc:
+        print()
         if quiet_backup_dir and os.path.exists(quiet_backup_dir):
             print("  Extraction failed — restoring backup...")
             for file in quiet_files_to_extract:
@@ -702,7 +727,57 @@ def makechecks(source:list[str], show_versions:bool=True):
             ver_lbl = ttk.Label(install_options, text=f"{scr_ver}", foreground="gray40")
             ver_lbl.grid(row=row, column=3, sticky=(tk.E,), padx=(0, 8))
 
-makechecks(installables)
+# ── EULA / License page ───────────────────────────────────────────────────
+_eula_agree_var = tk.IntVar(value=0)
+
+def _show_eula():
+    """Display the license agreement in the scrollable area."""
+    for w in install_options.winfo_children():
+        w.destroy()
+    header["text"] = "License Agreement"
+
+    eula_text = tk.Text(install_options, wrap="word", relief="flat",
+                        padx=8, pady=8, font=("TkDefaultFont", 9))
+    eula_text.insert("1.0", _license_text)
+    eula_text.configure(state="disabled")
+    eula_text.grid(row=0, column=1, columnspan=3, sticky=(tk.N, tk.S, tk.E, tk.W))
+    install_options.rowconfigure(0, weight=1)
+
+    agree_check = ttk.Checkbutton(install_options, text="I agree to the terms above",
+                                   variable=_eula_agree_var,
+                                   command=_toggle_eula_next)
+    agree_check.grid(row=1, column=1, columnspan=3, sticky=(tk.W,), pady=(4, 0))
+    agree_check.state(['!alternate'])
+
+def _toggle_eula_next():
+    """Enable or disable the Next button based on the agree checkbox."""
+    if _eula_agree_var.get() == 1:
+        next_btn.state(["!disabled"])
+    else:
+        next_btn.state(["disabled"])
+
+def _show_installables():
+    """Display the installables selection page."""
+    global next_btn
+    for w in install_options.winfo_children():
+        w.destroy()
+    header["text"] = "Select Installables"
+    makechecks(installables)
+    # Ensure Next button goes to shortcuts page
+    try: next_btn.destroy()
+    except Exception: pass
+    next_btn = ttk.Button(control, text="Next", command=nextpage)
+    next_btn.grid(row=1, column=2, padx=2, pady=4, sticky=(tk.N, tk.S, tk.E, tk.W))
+
+def _eula_next():
+    """Transition from EULA page to installables page."""
+    _show_installables()
+
+# Show initial page
+if _license_text:
+    _show_eula()
+else:
+    makechecks(installables)
 
 #File Location
 file_location = tk.StringVar()
@@ -743,14 +818,15 @@ control.columnconfigure(2,weight=1)
 
 def previous():
     global next_btn
-    next_btn = ttk.Button(control,text="Next",command=nextpage)
-    next_btn.grid(row=1,column=2,padx=2,pady=4,sticky=(tk.N,tk.S,tk.E,tk.W))
-
-    for w in install_options.winfo_children():
-        w.destroy()
-
-    header["text"] = "Select Installables"
-    makechecks(installables)
+    if _license_text:
+        # Go back to EULA page
+        _show_eula()
+        next_btn = ttk.Button(control, text="Next", command=_eula_next)
+        next_btn.grid(row=1, column=2, padx=2, pady=4, sticky=(tk.N, tk.S, tk.E, tk.W))
+        _toggle_eula_next()  # Restore agree-gate state
+    else:
+        # Go back to installables page
+        _show_installables()
 
 #Back Button
 back = ttk.Button(control, text="Back", command=previous)
@@ -762,6 +838,11 @@ close.grid(row=1,column=0,padx=2,pady=4,sticky=(tk.N,tk.S,tk.E,tk.W))
 
 def binstall(desktop:list[str], selected_screens:list[str]):
     """Installs the selected binaries"""
+    # Snapshot shortcut selections before destroying the UI
+    shortcut_selections = [
+        (name, var.get() == 1)
+        for name, var in zip(desktop, var_options)
+    ]
     close.state(["disabled"])
     fs.state(["disabled"])
     install_options.unbind("<Configure>")
@@ -777,7 +858,7 @@ def binstall(desktop:list[str], selected_screens:list[str]):
     adjacents(location)#Install adjacent files
 
     # Detect existing installation for update-in-place
-    existing_log_path = os.path.join(location, "install_log.json")
+    existing_log_path = os.path.join(location, ".VIS", "install_log.json")
     is_update = os.path.exists(existing_log_path)
 
     # Check for running application processes before proceeding
@@ -804,8 +885,8 @@ def binstall(desktop:list[str], selected_screens:list[str]):
                 return
 
     # Build the full list of files to install and compute total size
-    _base_prefixes = (".VIS/", "Images/", "Icons/", "_internal/")
-    _host_prefixes = ("Screens/", "modules/")
+    _base_prefixes = (".VIS/", "Images/", "Icons/", ".Runtime/")
+    _host_prefixes = ("Screens/", "modules/", "Shared/")
     install_files = []
     host_selected = title in selected_screens
     for file in archive.namelist():
@@ -959,8 +1040,8 @@ def binstall(desktop:list[str], selected_screens:list[str]):
 
     # Create desktop shortcuts
     actual_shortcuts = []
-    for name, var in zip(desktop, var_options):
-        if var.get() == 1:
+    for name, checked in shortcut_selections:
+        if checked:
             file_label.config(text=f"Creating shortcut: {name}")
             root.update()
             shortcut(name, location)
@@ -1016,7 +1097,8 @@ def binstall(desktop:list[str], selected_screens:list[str]):
 
 def nextpage():
     """Goes to the next installer page"""
-    next_btn.destroy()
+    try: next_btn.destroy()
+    except Exception: pass
 
     for w in install_options.winfo_children():
         w.destroy()
@@ -1033,8 +1115,13 @@ def nextpage():
     install = ttk.Button(control, text="Install",command=lambda: binstall(selected_screens, selected_screens))
     install.grid(row=1,column=2,padx=2,pady=4,sticky=(tk.N,tk.S,tk.E,tk.W))
 
-next_btn = ttk.Button(control,text="Next",command=nextpage)
-next_btn.grid(row=1,column=2,padx=2,pady=4,sticky=(tk.N,tk.S,tk.E,tk.W))
+if _license_text:
+    next_btn = ttk.Button(control, text="Next", command=_eula_next)
+    next_btn.grid(row=1, column=2, padx=2, pady=4, sticky=(tk.N, tk.S, tk.E, tk.W))
+    next_btn.state(["disabled"])  # Disabled until "I agree" is checked
+else:
+    next_btn = ttk.Button(control, text="Next", command=nextpage)
+    next_btn.grid(row=1, column=2, padx=2, pady=4, sticky=(tk.N, tk.S, tk.E, tk.W))
 
 # ── Installer menubar ──────────────────────────────────────────────────────
 
@@ -1045,7 +1132,7 @@ def _run_uninstaller():
         inst_dir = Path(loc)
     else:
         inst_dir = Path(loc, title)
-    log_path = inst_dir / "install_log.json"
+    log_path = inst_dir / ".VIS" / "install_log.json"
     if log_path.exists():
         try:
             with open(log_path) as f:

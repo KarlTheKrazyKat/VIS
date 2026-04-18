@@ -1,6 +1,7 @@
 from VIStk.Structures._Project import *
 from VIStk.Structures._VINFO import *
 from VIStk.Structures._Screen import *
+import re as _re
 import subprocess
 import shutil
 import glob
@@ -11,172 +12,393 @@ import hashlib
 import json
 from VIStk.Structures._Version import Version
 
+
 class Release(Project):
     """A VIS Release object"""
     def __init__(self, flag:str="",type:str="",note:str=""):
-        """Creates a Release object to release or examine a releaes of a project"""
+        """Creates a Release object to release or examine a release of a project"""
         super().__init__()
         self.type = type
         self.flag = flag
         self.note = note
 
-        self.location = self.dist_location.replace(".",self.p_project)
-        self._internal = f"{self.location}{self.title}-{self.flag}/_internal/"
+        loc = self.dist_location
+        if loc.startswith("./"):
+            loc = self.p_project + "/" + loc[2:]
+        elif not os.path.isabs(loc):
+            loc = self.p_project + "/" + loc
+        self.location = loc.rstrip("/") + "/"
 
-    def build(self):
-        """Build project spec file for release
+    # ── Nuitka runner ─────────────────────────────────────────────────────────
+
+    _LINE_WIDTH = 70
+
+    def _status(self, text: str, newline: bool = False):
+        """Overwrite the single progress line. Pads to _LINE_WIDTH."""
+        end = "\n" if newline else ""
+        sys.stdout.write(f"\r{text:<{self._LINE_WIDTH}}{end}")
+        sys.stdout.flush()
+
+    def _run_nuitka(self, parts: list, name: str, cwd: str) -> bool:
+        """Run a Nuitka command, showing progress on a single overwritten line.
+
+        Returns True on success, False on failure.
         """
+        self._cat_index += 1
+        self._step += 1
+        prefix = f"  [{self._step}/{self._total_steps}] {self._category} {self._cat_index}/{self._cat_count} - {name}"
+        self._status(prefix + " ...")
 
-        #Announce Spec Creation
-        print(f"Creating project.spec for {self.title}", flush=True)
+        proc = subprocess.Popen(
+            parts, cwd=cwd,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, errors="replace",
+        )
 
-        #Load spec template and inject hidden imports in memory
-        with open(self.p_vinfo+"/Templates/spec.txt","r") as f:
-            oldspec = f.readlines()
-        spec=""
-        for line in oldspec:
-            if "hiddenimports" in line:
-                if self.collect_packages:
-                    line = "\thiddenimports=" + str(self.hidden_imports) + " + _collected,\n"
-                else:
-                    line = "\thiddenimports=" + str(self.hidden_imports) + ",\n"
-            spec = spec + line
+        last_error = ""
+        for raw in proc.stdout:
+            for segment in raw.replace('\r', '\n').split('\n'):
+                segment = segment.strip()
+                if not segment:
+                    continue
+                # C file compilation progress
+                m = _re.search(r'Compiled (\d+)[/ ](?:out of )?(\d+)', segment)
+                if m:
+                    self._status(f"{prefix} — C {m.group(1)}/{m.group(2)}")
+                    continue
+                if 'Backend C linking' in segment:
+                    self._status(f"{prefix} — linking")
+                    continue
+                # Capture last FATAL/error line for failure reporting
+                if 'FATAL' in segment or 'error:' in segment.lower():
+                    last_error = segment
 
-        #Load Collect
-        with open(self.p_vinfo+"/Templates/collect.txt","r") as f:
-            collect = f.read()
+        proc.wait()
+        if proc.returncode != 0:
+            # Print failure on its own line so it stays visible
+            msg = f"{prefix} FAILED"
+            if last_error:
+                msg += f" — {last_error[:60]}"
+            self._status(msg, newline=True)
+            return False
+        return True
 
-        #Initialize locations for builds
-        spec_list = []
-        name_list = []
-        if os.path.exists(self.p_vinfo+"/Build"):
-            shutil.rmtree(self.p_vinfo+"/Build")
-        os.mkdir(self.p_vinfo+"/Build")
+    def compile_host(self):
+        """Compile the Host as a standalone Nuitka executable.
 
-        #Loop and Build Screens as .txt
-        for i in self.screenlist:
-            if i.release:
-                # Default screen releases as the project name with the project icon
-                is_default = (i.name == self.default_screen)
-                exe_name = self.title if is_default else i.name
-                icon = self.d_icon if is_default else (i.icon if i.icon is not None else self.d_icon)
+        Nuitka names the output folder after the entry script stem
+        (e.g. ``Host.dist``).  After compilation the contents are merged
+        into the final distribution folder (e.g. ``dist/PYWOM/``).
+        """
+        pendix = self.title if self.flag == "" else f"{self.title}-{self.flag}"
+        final = f"{self.location}{pendix}"
 
-                name_list.append(exe_name)
-                if str.upper(sys.platform)=="WIN32":
-                    ixt = ".ico"
-                else:
-                    ixt = ".xbm"
-                icon = icon + ixt
-                spec_list.append(spec.replace("$name$",exe_name))
-                spec_list[-1] = spec_list[-1].replace("$icon$",icon)
-                entry_script = self.host_script if is_default else i.script
-                spec_list[-1] = spec_list[-1].replace("$file$", entry_script)
+        ixt = ".ico" if sys.platform == "win32" else ".xbm"
+        icon_file = f"{self.p_project}/Icons/{self.d_icon}{ixt}"
 
-                #Load metadata template
-                with open(self.p_templates+"/version.txt","r") as f:
-                    meta = f.read()
+        # Read nuitka config from project.json
+        with open(self.p_sinfo, "r") as f:
+            info = json.load(f)
+        nuitka_cfg = info[self.title].get("release_info", {}).get("nuitka", {})
+        onefile = nuitka_cfg.get("onefile", False)
+        extra_args = nuitka_cfg.get("extra_args", [])
 
-                #Update Overall Project Version
-                meta = meta.replace("$M$",str(i.Version._major))
-                meta = meta.replace("$m$",str(i.Version._minor))
-                meta = meta.replace("$p$",str(i.Version._patch))
+        mode = "--onefile" if onefile else "--standalone"
 
-                #Update Screen Version
-                meta = meta.replace("$sM$",str(i.s_version._major))
-                meta = meta.replace("$sm$",str(i.s_version._minor))
-                meta = meta.replace("$sp$",str(i.s_version._patch))
+        parts = [sys.executable, "-m", "nuitka", mode]
+        parts.append("--follow-imports")
+        parts.append("--enable-plugin=tk-inter")
 
-                #Update Company Info
-                if self.company != None:
-                    meta = meta.replace("$company$",self.company)
-                    meta = meta.replace("$year$",str(datetime.datetime.now().year))
-                else:
-                    meta = meta.replace("            VALUE \"CompanyName\",      VER_COMPANYNAME_STR\n","")
-                    meta = meta.replace("            VALUE \"LegalCopyright\",   VER_LEGALCOPYRIGHT_STR\n","")
-                    meta = meta.replace("#define VER_LEGAL_COPYRIGHT_STR     \"Copyright \u00a9 $year$ $company$\\0\"\n\n","")
+        # Include hidden imports (pywomlib, VIStk, etc.)
+        for imp in self.hidden_imports:
+            parts.append(f"--include-module={imp}")
 
-                #Update Name & Description
-                meta = meta.replace("$name$",exe_name)
-                meta = meta.replace("$desc$",i.desc)
+        # Bundle project packages so screen .pyds can resolve imports at runtime
+        parts.append("--include-package=modules")
+        parts.append("--include-package=Screens")
 
-                #Write Screen Version Metadata to .txt
-                with open(self.p_vinfo+f"/Build/{exe_name}.txt","w") as f:
-                    f.write(meta)
+        # Icon
+        if icon_file and exists(icon_file):
+            parts.append(f"--windows-icon-from-ico={icon_file}")
 
-                #Speclist point to correct path
-                spec_list[-1] = spec_list[-1].replace("$meta$",f"./Build/{exe_name}.txt")
-                spec_list.append("\n\n")
+        # Company and product info
+        if self.company:
+            parts.append(f"--windows-company-name={self.company}")
+            parts.append(f"--windows-product-name={self.title}")
+            year = datetime.datetime.now().year
+            parts.append(f"--windows-file-description={self.title}")
+            parts.append(f"--copyright=Copyright {year} {self.company}")
 
-        #Create _a, _pyz, _exe and insert into Collect
-        if sys.platform == "linux": #No Collects on Linux
-            collect = ""
-            for i in range(0,len(spec_list),1):
-                spec_list[i] = spec_list[i].replace("exclude_binaries=True","exclude_binaries=False")
-        else:
-            insert = ""
-            for i in name_list:
-                insert=insert+"\n\t"+i+"_exe,\n\t"+i+"_a.binaries,\n\t"+i+"_a.zipfiles,\n\t"+i+"_a.datas,"
-            collect = collect.replace("$insert$",insert)
-            collect = collect.replace("$version$",self.title+"-"+self.flag) if self.flag != "" else collect.replace("$version$",self.title)
+        parts.append(f"--windows-product-version={self.Version}")
 
-        #Header for specfile
-        header = "# -*- mode: python ; coding: utf-8 -*-\n\n"
-        if self.collect_packages:
-            header += "from PyInstaller.utils.hooks import collect_submodules\n"
-            header += "_collected = []\n"
-            for pkg in self.collect_packages:
-                header += f"_collected += collect_submodules('{pkg}')\n"
-            header += "\n"
-        else:
-            header += "\n"
+        parts.append(f"--output-dir={self.location}")
+        parts.append(f"--output-filename={self.title}.exe")
 
-        #Write Spec
-        with open(self.p_vinfo+"/project.spec","w") as f:
-            f.write(header)
-            f.writelines(spec_list)
-            f.write(collect)
+        if sys.platform == "win32":
+            parts.append("--windows-console-mode=disable")
 
-        #Announce Completion
-        print(f"Finished creating project.spec for {self.title} {self.flag if not self.flag =='' else 'current'}", flush=True)#advanced version will improve this
+        parts.append("--assume-yes-for-downloads")
+
+        # Extra args from project.json
+        parts.extend(extra_args)
+
+        # Entry script is the Host
+        entry_script = self.host_script
+        parts.append(entry_script)
+
+        ok = self._run_nuitka(parts, self.title, self.p_project)
+
+        if not ok:
+            return False
+
+        # Nuitka names the .dist folder after the entry script stem
+        host_stem = os.path.splitext(os.path.basename(entry_script))[0]
+        nuitka_dist = f"{self.location}{host_stem}.dist"
+
+        _skip = {'.build', '_internal', '__pycache__'}
+        if exists(nuitka_dist):
+            if exists(final):
+                # Merge new build into existing folder (preserves screen exes etc.)
+                for dirpath, dirs, files in os.walk(nuitka_dist):
+                    dirs[:] = [d for d in dirs if d not in _skip and not d.endswith('.build')]
+                    rel = os.path.relpath(dirpath, nuitka_dist)
+                    dest = os.path.join(final, rel)
+                    os.makedirs(dest, exist_ok=True)
+                    for f in files:
+                        src = os.path.join(dirpath, f)
+                        shutil.copy2(src, os.path.join(dest, f))
+                shutil.rmtree(nuitka_dist)
+            else:
+                os.rename(nuitka_dist, final)
+
+        return True
+
+    def compile_screens(self, mode="all"):
+        """Compile each screen.
+
+        Every tabbed screen is compiled as a ``.pyd`` module in ``Screens/``
+        so the Host can load it dynamically at runtime.  The default screen
+        is skipped (it's the Host entry point compiled separately).
+
+        Standalone screens (``tabbed=false``) with ``release=true`` are
+        compiled as their own ``.exe`` and merged into the Host dist folder
+        so they share the runtime.
+
+        ``mode`` filters which screens to compile: ``"pyd"`` for tabbed
+        screens only, ``"exe"`` for standalone release screens only, or
+        ``"all"`` for both (default).
+        """
+        pendix = self.title if self.flag == "" else f"{self.title}-{self.flag}"
+        final = f"{self.location}{pendix}"
+        ixt = ".ico" if sys.platform == "win32" else ".xbm"
+
+        has_tabbed = False
+        for scr in self.screenlist:
+
+            if scr.tabbed and mode in ("all", "pyd"):
+                # Every tabbed screen → .pyd module
+                if not has_tabbed:
+                    os.makedirs(f"{final}/Screens", exist_ok=True)
+                    has_tabbed = True
+
+                stem = os.path.splitext(scr.script)[0]
+                parts = [
+                    sys.executable, "-m", "nuitka", "--module",
+                    f"--output-dir={self.location}",
+                    "--assume-yes-for-downloads",
+                    scr.script,
+                ]
+                ok = self._run_nuitka(parts, scr.name, self.p_project)
+
+                if not ok:
+                    return False
+
+                # Move .pyd to Screens/ with clean name (strip cpython tag)
+                import glob as _glob
+                built_pyds = _glob.glob(f"{self.location}{stem}*.pyd")
+                for bp in built_pyds:
+                    shutil.move(bp, f"{final}/Screens/{stem}.pyd")
+
+            elif not scr.tabbed and scr.release and mode in ("all", "exe"):
+                # Standalone screen with release=true — compile as its own exe
+                icon = (scr.icon if scr.icon else self.d_icon) + ixt
+                icon_file = f"{self.p_project}/Icons/{icon}"
+
+                parts = [
+                    sys.executable, "-m", "nuitka", "--standalone",
+                    "--enable-plugin=tk-inter",
+                    f"--output-dir={self.location}",
+                    f"--output-filename={scr.name}.exe",
+                    "--assume-yes-for-downloads",
+                ]
+                if icon_file and exists(icon_file):
+                    parts.append(f"--windows-icon-from-ico={icon_file}")
+                if self.company:
+                    parts.append(f"--windows-company-name={self.company}")
+                    parts.append(f"--windows-product-name={self.title}")
+                    year = datetime.datetime.now().year
+                    parts.append(f"--windows-file-description={scr.name}")
+                    parts.append(f"--copyright=Copyright {year} {self.company}")
+                parts.append(f"--windows-product-version={self.Version}")
+                if sys.platform == "win32":
+                    parts.append("--windows-console-mode=disable")
+                # Standalone screens share the Host runtime in .Runtime/
+                # Only follow direct imports — shared packages live alongside
+                parts.append("--follow-imports")
+                parts.append(scr.script)
+
+                ok = self._run_nuitka(parts, scr.name, self.p_project)
+
+                if not ok:
+                    return False
+
+                # Merge standalone build into the shared dist folder
+                scr_stem = os.path.splitext(scr.script)[0]
+                scr_dist = f"{self.location}{scr_stem}.dist"
+                if exists(scr_dist):
+                    _skip = {'.build', '_internal', '__pycache__'}
+                    for dirpath, dirs, files in os.walk(scr_dist):
+                        dirs[:] = [d for d in dirs if d not in _skip and not d.endswith('.build')]
+                        rel = os.path.relpath(dirpath, scr_dist)
+                        dest = os.path.join(final, rel)
+                        os.makedirs(dest, exist_ok=True)
+                        for f in files:
+                            dest_file = os.path.join(dest, f)
+                            if not exists(dest_file):
+                                shutil.copy2(os.path.join(dirpath, f), dest_file)
+                    shutil.rmtree(scr_dist)
+
+        return True
+
+    def compile_shared(self):
+        """Compile shared packages as .pyd modules into Shared/.
+
+        Top-level packages from ``hidden_imports`` (names without dots) are
+        compiled here.  Module-level hints like ``PIL._tkinter_finder`` are
+        skipped — those are passed to the Host build instead.
+
+        ``collect_packages`` entries are also compiled if present.
+        """
+        # Top-level packages from hidden_imports (no dots = full package)
+        packages = [imp for imp in self.hidden_imports if "." not in imp]
+        # Plus anything in collect_packages
+        for pkg in self.collect_packages:
+            if pkg not in packages:
+                packages.append(pkg)
+
+        if not packages:
+            return True
+
+        pendix = self.title if self.flag == "" else f"{self.title}-{self.flag}"
+        final = f"{self.location}{pendix}"
+        shared_dir = f"{final}/Shared"
+        os.makedirs(shared_dir, exist_ok=True)
+
+        for pkg in packages:
+            # Resolve the installed package path
+            try:
+                mod = __import__(pkg)
+                pkg_path = os.path.dirname(mod.__file__)
+            except Exception:
+                print(f"  Skipping {pkg} — not importable", flush=True)
+                continue
+
+            parts = [
+                sys.executable, "-m", "nuitka", "--module",
+                f"--output-dir={self.location}",
+                "--assume-yes-for-downloads",
+                pkg_path,
+            ]
+            ok = self._run_nuitka(parts, pkg, self.p_project)
+
+            if not ok:
+                return False
+
+            # Move .pyd to Shared/ directory — strip cpython tag
+            import glob as _glob
+            built_pyds = _glob.glob(f"{self.location}{pkg}*.pyd")
+            for bp in built_pyds:
+                shutil.move(bp, f"{shared_dir}/{pkg}.pyd")
+
+        return True
 
     def clean(self):
-        """Cleans up build environment to save space and appends to _internal"""
-        #Announce Removal
-        print("Cleaning up build environment", flush=True)
+        """Appends project data to dist folder.
 
-        #Remove Build Folder
-        if exists(self.p_vinfo+"/Build"):
-            shutil.rmtree(self.p_vinfo+"/Build")
-
-        #Announce Appending Screen Data
+        Copies Images, .VIS/project.json, and writes an installed
+        project.json with rewritten screen script paths.  Removes any
+        stray Nuitka ``.build`` directories from the output.
+        """
         print("Appending Screen Data To Environment", flush=True)
 
-        #Append Screen Data
         pendix = self.title if self.flag == "" else f"{self.title}-{self.flag}"
         out_dir = f"{self.location}{pendix}"
 
-        #Remove Pre-existing Folders for Icons, Images, & .VIS
-        for folder in ("Icons", "Images", ".VIS"):
-            target = f"{out_dir}/{folder}/"
-            if exists(target):
-                shutil.rmtree(target)
+        # Copy Images
+        src = f"{self.p_project}/Images/"
+        if exists(src):
+            shutil.copytree(src, f"{out_dir}/Images/", dirs_exist_ok=True)
 
-        #Copy Project Folders
-        for folder in ("Icons", "Images", ".VIS", "Screens", "modules"):
-            src = f"{self.p_project}/{folder}/"
+        # Copy Icons
+        src = f"{self.p_project}/Icons/"
+        if exists(src):
+            shutil.copytree(src, f"{out_dir}/Icons/", dirs_exist_ok=True)
+
+        # Copy license file if present
+        for name in ("LICENSE", "LICENSE.txt", "EULA.txt", "EULA.md"):
+            src = f"{self.p_project}/{name}"
             if exists(src):
-                shutil.copytree(src, f"{out_dir}/{folder}/", dirs_exist_ok=True)
+                shutil.copy2(src, f"{out_dir}/{name}")
+                break
 
-        #Copy screen entry scripts so the Host can dynamically import them
-        for i in self.screenlist:
-            if i.tabbed:
-                src_script = f"{self.p_project}/{i.script}"
-                if exists(src_script):
-                    shutil.copy2(src_script, f"{out_dir}/{i.script}")
+        # Copy project.json only (Host.py is compiled into the exe)
+        vis_dest = f"{out_dir}/.VIS"
+        os.makedirs(vis_dest, exist_ok=True)
+        src = f"{self.p_vinfo}/project.json"
+        if exists(src):
+            shutil.copy2(src, f"{vis_dest}/project.json")
 
+        # Rewrite installed project.json with .pyd script paths
+        installed_json = f"{vis_dest}/project.json"
+        if exists(installed_json):
+            with open(installed_json, "r") as f:
+                info = json.load(f)
+            for screen_name, screen_data in info[self.title]["Screens"].items():
+                if screen_data.get("tabbed", False):
+                    stem = os.path.splitext(screen_data["script"])[0]
+                    screen_data["script"] = f"Screens/{stem}.pyd"
+            with open(installed_json, "w") as f:
+                json.dump(info, f, indent=4)
 
-        #Announce Completion
-        print(f"\n\nReleased a new{' '+self.flag+' ' if not self.flag is None else ''}build of {self.title}!", flush=True)
+        # Remove any .build or .dist directories that leaked into the output
+        for item in os.listdir(out_dir):
+            full = os.path.join(out_dir, item)
+            if os.path.isdir(full) and (item.endswith(".build") or item.endswith(".dist") or item == "_internal"):
+                shutil.rmtree(full)
+
+        # Remove Host.py if left over from a previous build
+        stale_host = os.path.join(vis_dest, "Host.py")
+        if os.path.exists(stale_host):
+            os.remove(stale_host)
+
+        # Move runtime into hidden .Runtime/ subfolder
+        # Keep only asset dirs, Screens, and license files at root
+        _keep_at_root = {".VIS", "Icons", "Images", "Screens", "Shared", ".Runtime"}
+        _keep_files = {"LICENSE", "LICENSE.txt", "EULA.txt", "EULA.md"}
+        runtime_dir = os.path.join(out_dir, ".Runtime")
+        os.makedirs(runtime_dir, exist_ok=True)
+
+        for item in os.listdir(out_dir):
+            if item in _keep_at_root or item in _keep_files:
+                continue
+            full = os.path.join(out_dir, item)
+            dest = os.path.join(runtime_dir, item)
+            if os.path.isdir(full):
+                shutil.move(full, dest)
+            else:
+                shutil.move(full, dest)
+
+        print(f"\n\nReleased a new{' '+self.flag+' ' if self.flag else ' '}build of {self.title}!", flush=True)
 
     def newVersion(self):
         """Updates the project version, PERMANENT, cannot be undone"""
@@ -204,52 +426,230 @@ class Release(Project):
 
     def release(self):
         """Releases a version of your project"""
+        #Check default screen
+        if self.default_screen is None:
+            print("Warning: No default screen set in project.json.", flush=True)
+            print("The Host will launch with no visible window.", flush=True)
+            confirm = input("Continue anyway? (y/n): ")
+            if confirm.lower() not in ("y", "yes"):
+                return
+
         #Check Version
         if self.type != "":
             if not self.newVersion():
                 return
 
-        #Build
-        self.build()
-
-        #Announce and Update Required Tools
+        #Update Required Tools
         print("Updating pip...", flush=True)
         subprocess.call(f"python -m pip install --upgrade pip --quiet",shell=True)
 
-        print("Updating setuptools...", flush=True)
-        subprocess.call(f"python -m pip install --upgrade setuptools --quiet",shell=True)
+        print("Updating nuitka...", flush=True)
+        subprocess.call(f"python -m pip install --upgrade nuitka --quiet",shell=True)
 
         print("Updating pyinstaller...", flush=True)
         subprocess.call(f"python -m pip install --upgrade pyinstaller --quiet",shell=True)
 
-        #Determine Binary Destination
-        if sys.platform == "linux":
-            destination = self.location+self.title
-            if self.flag != "": destination = destination + "-" + self.flag
-        else:
-            destination = self.location
+        #Clean previous build output
+        pendix = self.title if self.flag == "" else f"{self.title}-{self.flag}"
+        final = f"{self.location}{pendix}"
+        if exists(final):
+            shutil.rmtree(final)
 
-        #Announce and Run PyInstaller
-        print(f"Running PyInstaller for {self.title}{' ' + self.flag if not self.flag =='' else ''}", flush=True)
-        subprocess.call(f"pyinstaller {self.p_vinfo}/project.spec --noconfirm --distpath {destination} --log-level FATAL",shell=True,cwd=self.p_vinfo)
+        #Compile — count steps per category
+        shared_pkgs = [imp for imp in self.hidden_imports if "." not in imp]
+        for pkg in self.collect_packages:
+            if pkg not in shared_pkgs:
+                shared_pkgs.append(pkg)
+        pkg_count = len(shared_pkgs)
+
+        screen_count = 0
+        binary_count = 1  # Host
+        for scr in self.screenlist:
+            if scr.tabbed:
+                screen_count += 1
+            elif scr.release:
+                binary_count += 1
+
+        total = pkg_count + screen_count + binary_count
+        self._step = 0
+        self._total_steps = total
+        print(f"\n{self.title} Release - {total} Compilations", flush=True)
+
+        # Required Packages (.pyd)
+        self._category = "Required Packages"
+        self._cat_index = 0
+        self._cat_count = pkg_count
+        if not self.compile_shared():
+            self._status("", newline=True)
+            print(f"\nRelease FAILED during Required Packages.", flush=True)
+            return
+
+        # Screens (.pyd)
+        self._category = "Screens"
+        self._cat_index = 0
+        self._cat_count = screen_count
+        if not self.compile_screens(mode="pyd"):
+            self._status("", newline=True)
+            print(f"\nRelease FAILED during Screen compilation.", flush=True)
+            return
+
+        # Binaries (.exe)
+        self._category = "Binaries"
+        self._cat_index = 0
+        self._cat_count = binary_count
+        if not self.compile_screens(mode="exe"):
+            self._status("", newline=True)
+            print(f"\nRelease FAILED during Binary compilation.", flush=True)
+            return
+        if not self.compile_host():
+            self._status("", newline=True)
+            print(f"\nRelease FAILED during Host compilation.", flush=True)
+            return
+
+        self._status("", newline=True)
 
         #Clean Environment
         self.clean()
 
-        #%Installer & Uninstaller Generation
+        #%Launcher Generation (cached per icon)
         pendix = self.title if self.flag == "" else f"{self.title}-{self.flag}"
         final = f"{self.location}{pendix}"
-        binaries_zip = f"{self.location}binaries.zip"
-
-        #Resolve icon for both installer and uninstaller
-        icon_file = self.d_icon
-        if sys.platform == "win32":
-            icon_file = self.p_project + "/Icons/" + icon_file + ".ico"
-        else:
-            icon_file = self.p_project + "/Icons/" + icon_file + ".xbm"
+        runtime_dir = f"{final}/.Runtime"
 
         cache_dir = self.p_vinfo + "/cache"
         os.makedirs(cache_dir, exist_ok=True)
+
+        launcher_src = VISROOT.replace("\\", "/") + "Structures/Launcher.py"
+        ixt = ".ico" if sys.platform == "win32" else ".xbm"
+
+        # Read launcher source hash once
+        launcher_hasher = hashlib.sha256()
+        with open(launcher_src, "rb") as f:
+            launcher_hasher.update(f.read())
+        launcher_src_hash = launcher_hasher.hexdigest()
+
+        # Build a mapping of exe name → icon file for each app exe in .Runtime/
+        _no_launcher = {"Uninstaller.exe"}
+        exe_icon_map = {}
+        if os.path.exists(runtime_dir):
+            for item in os.listdir(runtime_dir):
+                if item.endswith(".exe") and item not in _no_launcher:
+                    # Find the matching screen's icon, or fall back to default
+                    stem = os.path.splitext(item)[0]
+                    scr_icon = self.d_icon
+                    for scr in self.screenlist:
+                        if scr.name == stem and scr.icon:
+                            scr_icon = scr.icon
+                            break
+                    icon_path = f"{self.p_project}/Icons/{scr_icon}{ixt}"
+                    if not exists(icon_path):
+                        icon_path = f"{self.p_project}/Icons/{self.d_icon}{ixt}"
+                    exe_icon_map[item] = icon_path
+
+        # Build one cached launcher per unique icon
+        unique_icons = set(exe_icon_map.values())
+        icon_to_cache = {}
+        for icon_path in unique_icons:
+            # Hash launcher source + icon to detect changes
+            hasher = hashlib.sha256()
+            hasher.update(launcher_src_hash.encode())
+            if exists(icon_path):
+                with open(icon_path, "rb") as f:
+                    hasher.update(f.read())
+            icon_hash = hasher.hexdigest()[:12]
+
+            cache_name = f"launcher_{icon_hash}"
+            cache_path = cache_dir + f"/{cache_name}"
+            if sys.platform == "win32":
+                cache_path += ".exe"
+            hash_file = cache_dir + f"/{cache_name}.hash"
+
+            cached_hash = ""
+            if os.path.exists(hash_file) and os.path.exists(cache_path):
+                with open(hash_file, "r") as f:
+                    cached_hash = f.read().strip()
+
+            if cached_hash == icon_hash:
+                pass  # Cache hit
+            else:
+                icon_name = os.path.splitext(os.path.basename(icon_path))[0]
+                print(f"Compiling launcher ({icon_name})", flush=True)
+                icon_arg = f"--icon {icon_path} " if exists(icon_path) else ""
+                subprocess.call(
+                    f"pyinstaller --noconfirm --onefile "
+                    f"--windowed --name {cache_name} --log-level FATAL "
+                    f"{icon_arg}"
+                    f"{launcher_src}",
+                    shell=True, cwd=self.location
+                )
+                launcher_results = glob.glob(f"{cache_name}*", root_dir=self.location + "dist/")
+                if not launcher_results:
+                    print(f"Build failed: {cache_name} not found in dist/")
+                    return
+                built_launcher = launcher_results[0]
+                shutil.copy2(self.location + f"dist/{built_launcher}", cache_path)
+                with open(hash_file, "w") as f:
+                    f.write(icon_hash)
+                shutil.rmtree(self.location + "dist/", ignore_errors=True)
+                shutil.rmtree(self.location + "build/", ignore_errors=True)
+                spec_file = self.location + f"{cache_name}.spec"
+                if os.path.exists(spec_file):
+                    os.remove(spec_file)
+                print(f"Launcher cached ({icon_name})", flush=True)
+
+            icon_to_cache[icon_path] = cache_path
+
+        # Place launchers with correct per-screen icons
+        count = 0
+        for exe_name, icon_path in exe_icon_map.items():
+            cache_path = icon_to_cache[icon_path]
+            shutil.copy2(cache_path, os.path.join(final, exe_name))
+            count += 1
+        if count:
+            print(f"Launchers placed for {count} executable(s)", flush=True)
+
+        #%Installer & Uninstaller Generation
+        binaries_zip = f"{self.location}binaries.zip"
+
+        #Resolve icon for installer and uninstaller
+        with open(self.p_sinfo, "r") as f:
+            _inst_info = json.load(f)
+        installer_icon_name = _inst_info[self.title].get("metadata", {}).get("installer_icon", self.d_icon)
+        ixt = ".ico" if sys.platform == "win32" else ".xbm"
+        icon_file = self.p_project + "/Icons/" + installer_icon_name + ixt
+        if not exists(icon_file):
+            # Fall back to default app icon
+            icon_file = self.p_project + "/Icons/" + self.d_icon + ixt
+
+        cache_dir = self.p_vinfo + "/cache"
+        os.makedirs(cache_dir, exist_ok=True)
+
+        # Generate version info file for PyInstaller builds
+        ver_parts = str(self.Version).split(".")
+        ver_tuple = ", ".join(ver_parts + ["0"] * (4 - len(ver_parts)))
+        ver_str = str(self.Version)
+        year = datetime.datetime.now().year
+        version_info_path = cache_dir + "/version_info.txt"
+        _esc = lambda s: s.replace("'", "\\'") if s else ""
+        with open(version_info_path, "w") as vf:
+            vf.write(f"""VSVersionInfo(
+  ffi=FixedFileInfo(filevers=({ver_tuple}), prodvers=({ver_tuple})),
+  kids=[
+    StringFileInfo([
+      StringTable('040904B0', [
+        StringStruct('CompanyName', '{_esc(self.company)}'),
+        StringStruct('FileDescription', '{_esc(self.title)} Installer'),
+        StringStruct('FileVersion', '{ver_str}'),
+        StringStruct('LegalCopyright', 'Copyright {year} {_esc(self.company)}'),
+        StringStruct('OriginalFilename', '{_esc(pendix)}_Installer.exe'),
+        StringStruct('ProductName', '{_esc(self.title)}'),
+        StringStruct('ProductVersion', '{ver_str}'),
+      ])
+    ]),
+    VarFileInfo([VarStruct('Translation', [1033, 1200])])
+  ]
+)
+""")
 
         #%Uninstaller compilation (cached)
         uninstaller_src = VISROOT.replace("\\","/")+"Structures/Uninstaller.py"
@@ -258,9 +658,9 @@ class Release(Project):
             cache_uninstaller += ".exe"
         uninst_hash_file = cache_dir + "/uninstaller.hash"
 
-        #Hash uninstaller source + icon to detect changes
+        #Hash uninstaller source + icon + version info to detect changes
         uninst_hasher = hashlib.sha256()
-        for path in (uninstaller_src, icon_file):
+        for path in (uninstaller_src, icon_file, version_info_path):
             with open(path, "rb") as f:
                 uninst_hasher.update(f.read())
         uninst_current_hash = uninst_hasher.hexdigest()
@@ -280,6 +680,7 @@ class Release(Project):
                 f"{'--uac-admin ' if sys.platform == 'win32' else ''}"
                 f"--windowed --name Uninstaller --log-level FATAL "
                 f"--icon {icon_file} --hidden-import PIL._tkinter_finder "
+                f"--version-file {version_info_path} "
                 f"{uninstaller_src}",
                 shell=True, cwd=self.location
             )
@@ -297,8 +698,8 @@ class Release(Project):
                 f.write(uninst_current_hash)
 
             #Clean PyInstaller build artifacts
-            shutil.rmtree(self.location+"dist/")
-            shutil.rmtree(self.location+"build/")
+            shutil.rmtree(self.location+"dist/", ignore_errors=True)
+            shutil.rmtree(self.location+"build/", ignore_errors=True)
             if os.path.exists(self.location+"Uninstaller.spec"):
                 os.remove(self.location+"Uninstaller.spec")
 
@@ -321,9 +722,9 @@ class Release(Project):
             cache_base += ".exe"
         cache_hash_file = cache_dir + "/installer.hash"
 
-        #Hash installer source + icon to detect changes
+        #Hash installer source + icon + version info to detect changes
         hasher = hashlib.sha256()
-        for path in (installer_src, icon_file):
+        for path in (installer_src, icon_file, version_info_path):
             with open(path, "rb") as f:
                 hasher.update(f.read())
         current_hash = hasher.hexdigest()
@@ -344,6 +745,7 @@ class Release(Project):
                 f"--windowed --name installer_base --log-level FATAL "
                 f"--icon {icon_file} --hidden-import PIL._tkinter_finder "
                 f"--hidden-import psutil "
+                f"--version-file {version_info_path} "
                 f"{installer_src}",
                 shell=True, cwd=self.location
             )
@@ -361,8 +763,8 @@ class Release(Project):
                 f.write(current_hash)
 
             #Clean PyInstaller build artifacts
-            shutil.rmtree(self.location+"dist/")
-            shutil.rmtree(self.location+"build/")
+            shutil.rmtree(self.location+"dist/", ignore_errors=True)
+            shutil.rmtree(self.location+"build/", ignore_errors=True)
             if os.path.exists(self.location+"installer_base.spec"):
                 os.remove(self.location+"installer_base.spec")
 

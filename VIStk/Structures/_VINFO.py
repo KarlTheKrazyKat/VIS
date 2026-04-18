@@ -1,42 +1,11 @@
 import os
 import json
-import socket
 import sys
-import tempfile
 import zipfile
 import shutil
 import VIStk
 from VIStk.Structures._Version import Version
 
-
-def send_to_host(project_title: str, screen_name: str) -> bool:
-    """Send a screen-open request to a running Host via IPC.
-
-    Reads the port file written by ``Host._start_ipc()`` and connects to
-    the local TCP server.  Returns ``True`` if the message was delivered,
-    ``False`` if no Host is running or the connection fails.
-
-    Args:
-        project_title: The VIS project title (used to locate the port file).
-        screen_name:   Name of the screen to open.
-    """
-    safe = project_title.replace(" ", "_")
-    port_file = os.path.join(tempfile.gettempdir(), f"{safe}_vis_host.port")
-    if not os.path.exists(port_file):
-        return False
-    try:
-        with open(port_file) as f:
-            port = int(f.read().strip())
-        with socket.create_connection(("127.0.0.1", port), timeout=1) as s:
-            s.sendall(screen_name.encode("utf-8"))
-        return True
-    except Exception:
-        # Host unreachable — port file is stale; remove it so a new Host can start
-        try:
-            os.remove(port_file)
-        except OSError:
-            pass
-        return False
 
 VISROOT = VIStk.__file__.replace("__init__.pyc","").replace("__init__.py","")
 
@@ -59,8 +28,11 @@ def getPath()->str:
         start = os.getcwd()
     wd = start.replace("\\","/").split("/")
     for i in range(len(wd),0,-1):
-        if os.path.exists("/".join(wd[:i])+"/.VIS/"):
-            return "/".join(wd[:i])
+        candidate = "/".join(wd[:i])
+        if not candidate.endswith("/"):
+            candidate += "/"
+        if os.path.exists(candidate + ".VIS/"):
+            return candidate.rstrip("/")
     else:
         return None
 
@@ -68,7 +40,6 @@ _RESERVED_VIS_COMMANDS = {
     "-v", "-V", "-Version", "-version",
     "new", "New", "N", "n",
     "add", "Add", "a", "A",
-    "stop", "Stop",
     "stitch", "Stitch", "s", "S",
     "rename", "Rename",
     "edit", "Edit",
@@ -87,7 +58,7 @@ def validName(name:str):
     if "<" in name or ">" in name or ":" in name or '"' in name or "|" in name or "?" in name or "*" in name:
         print('Invlaid ASCII characters for windows file creation, please remove all <>:"|?* from file name.')
         return False
-    if name.split(".")[0] in ["CON","PRN","AUX","NUL","COM1","COM2","COM3","COM4","COM5","COM6","COM7","COM8","COM9","LPT1","LPT2","LPT3","LPT4","LPT5","LPT6","LPT7","LPT8","LPT9"]:
+    if name.split(".")[0].upper() in {"CON","PRN","AUX","NUL","COM1","COM2","COM3","COM4","COM5","COM6","COM7","COM8","COM9","LPT1","LPT2","LPT3","LPT4","LPT5","LPT6","LPT7","LPT8","LPT9"}:
         print(f"Filename {name} reserved by OS.")
         return False
     if "" == name:

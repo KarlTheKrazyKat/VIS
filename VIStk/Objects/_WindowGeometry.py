@@ -1,20 +1,6 @@
 from tkinter import *
 from typing import Literal
 
-query = Tk()
-try:
-    try: #On Linux
-        query.wm_attributes("-zoomed", True)
-    except TclError: #On Windows
-        query.state('zoomed')
-    query.update()
-    global hs, ws
-    ws = query.winfo_width()-2#Unclear about this offset
-    hs = query.winfo_height()-9#Might be operating system specific
-finally:
-    query.destroy()
-#print(f"Screen has usable size of {ws}x{hs}")
-
 class WindowGeometry():
     """Handles geometry relations and sizing/resizing for windows"""
     def __init__(self,window:Tk|Toplevel):
@@ -62,7 +48,8 @@ class WindowGeometry():
 
     def setGeometry(self,width:int=None,height:int=None,x:int=None,y:int=None,align:Literal["center","n","ne","e","se","s","sw","w","nw"]=None,size_style:Literal["pixels","screen_relative","window_relative"]=None,window_ref:Tk|Toplevel=None):
         """Sets the geometry of the window"""
-        global hs, ws
+        ws = self.window.winfo_screenwidth() - 2
+        hs = self.window.winfo_screenheight() - 9
         ox, oy = 0, 0
 
         if width is None: width = self.geometry[0]

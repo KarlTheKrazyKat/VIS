@@ -1,33 +1,12 @@
 import sys
 import os
 import subprocess
-import tempfile
-import time
 import zipfile
 from importlib import metadata
+from pathlib import Path
 from VIStk.Structures import *
+from VIStk.Structures._VINFO import getPath
 
-
-def _start_host_and_wait(project, timeout: float = 5.0) -> bool:
-    """Spawn the project Host as a subprocess and wait for IPC to become ready.
-
-    Returns True if the Host's port file appears within *timeout* seconds,
-    False otherwise.  Returns False immediately in compiled (frozen) apps
-    where subprocess spawning is not possible.
-    """
-    if getattr(sys, 'frozen', False):
-        return False
-    host_path = project.p_project + "/" + project.host_script
-    subprocess.Popen([sys.executable, host_path])
-    safe = project.title.replace(" ", "_")
-    port_file = os.path.join(tempfile.gettempdir(), f"{safe}_vis_host.port")
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        if os.path.exists(port_file):
-            time.sleep(0.15)  # Give the socket a moment to finish binding
-            return True
-        time.sleep(0.05)
-    return False
 
 inp = sys.argv
 
@@ -50,7 +29,7 @@ def __main__():
     match inp[1]:
         case "-v"|"-V"|"-Version"|"-version":
             print(f"VIS Version {metadata.version('VIStk')}")
-            
+
         case "new"|"New"|"N"|"n":#Create a new VIS project
             VINFO()
             scr_name = input("Enter a name for the default screen (or Enter to skip): ").strip()
@@ -84,13 +63,6 @@ def __main__():
                                     print("Usage: VIS add screen <name> elements <elem1-elem2-...>")
                     else:
                         project.newScreen(inp[3])
-
-        case "stop" | "Stop":
-            info = VINFO()
-            if send_to_host(info.title, "__VIS_QUIT__"):
-                print(f"Stopped Host for project '{info.title}'.")
-            else:
-                print(f"No Host is running for project '{info.title}'.")
 
         case "stitch" | "Stitch" | "s" | "S":
             if len(inp) < 3:
@@ -131,37 +103,36 @@ def __main__():
                     screen = project.getScreen(inp[3])
                     if screen is not None:
                         screen.isolate()
-
                     else:
                         print(f"Cannot Locate Screen: \"{inp[3]}\"")
                         return None
 
-                args = inp[argstart:]
-                i=0
-                while i < len(args):
-                    if "-" == args[i][0]:
-                        match args[i][1:]:
-                            case "Flag" | "flag" | "F" | "f":
-                                if i + 1 >= len(args):
-                                    print(f"Missing value for {args[i]}")
-                                    return None
-                                flag = args[i+1]
-                                i += 2
-                            case "Type" | "type" | "T" | "t":
-                                if i + 1 >= len(args):
-                                    print(f"Missing value for {args[i]}")
-                                    return None
-                                type = args[i+1]
-                                i += 2
-                            case "Note" | "note" | "N" | "n":
-                                if i + 1 >= len(args):
-                                    print(f"Missing value for {args[i]}")
-                                    return None
-                                note = args[i+1]
-                                i += 2
-                            case _:
-                                print(f"Unknown Argument \"{args[i]}\"")
+            args = inp[argstart:]
+            i=0
+            while i < len(args):
+                if "-" == args[i][0]:
+                    match args[i][1:]:
+                        case "Flag" | "flag" | "F" | "f":
+                            if i + 1 >= len(args):
+                                print(f"Missing value for {args[i]}")
                                 return None
+                            flag = args[i+1]
+                            i += 2
+                        case "Type" | "type" | "T" | "t":
+                            if i + 1 >= len(args):
+                                print(f"Missing value for {args[i]}")
+                                return None
+                            type = args[i+1]
+                            i += 2
+                        case "Note" | "note" | "N" | "n":
+                            if i + 1 >= len(args):
+                                print(f"Missing value for {args[i]}")
+                                return None
+                            note = args[i+1]
+                            i += 2
+                        case _:
+                            print(f"Unknown Argument \"{args[i]}\"")
+                            return None
 
             rel = Release(flag,type,note)
             rel.release()
@@ -170,33 +141,9 @@ def __main__():
         case _:
             project = Project()
             if inp[1] == project.title:
-                if len(inp) >= 3:
-                    # VIS <ProjectName> <ScreenName> — open a screen.
-                    # Tabbed screens route through the Host; standalone screens
-                    # launch directly as a subprocess without requiring the Host.
-                    screen = project.getScreen(inp[2])
-                    if screen is not None:
-                        if screen.tabbed:
-                            if not send_to_host(project.title, screen.name):
-                                if _start_host_and_wait(project):
-                                    send_to_host(project.title, screen.name)
-                                else:
-                                    print(f"Failed to start Host for '{project.title}'.")
-                        else:
-                            script = project.p_project + "/" + screen.script
-                            subprocess.Popen([sys.executable, script])
-                    else:
-                        names = ", ".join(s.name for s in project.screenlist)
-                        print(f"Unknown screen: \"{inp[2]}\". Available: {names}")
-                else:
-                    # VIS <ProjectName> — start Host if needed, then open default screen.
-                    safe = project.title.replace(" ", "_")
-                    port_file = os.path.join(tempfile.gettempdir(),
-                                             f"{safe}_vis_host.port")
-                    if not os.path.exists(port_file):
-                        if not _start_host_and_wait(project):
-                            print(f"Failed to start Host for '{project.title}'.")
-                    if project.default_screen:
-                        send_to_host(project.title, project.default_screen)
+                # VIS <ProjectName> [ScreenName] — launch Host subprocess
+                host_path = str(Path(getPath()) / ".VIS" / "Host.py")
+                extra_args = inp[2:]  # screen name if provided
+                subprocess.Popen([sys.executable, host_path] + extra_args)
             else:
                 print(f"Unknown command: \"{inp[1]}\". Run 'VIS -v' for version info.")

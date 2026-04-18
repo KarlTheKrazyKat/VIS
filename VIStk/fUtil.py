@@ -19,8 +19,8 @@ class fUtil():
     def mkfont(size:int,bold:bool=False,font:str="default"):
         """Creates a font string with wom fonts"""
 
-        if font == "default":
-            return f"{fUtil().defont} {size}{' bold' if bold is True else ''}"
+        chosen = fUtil().defont if font == "default" else font
+        return f"{chosen} {size}{' bold' if bold is True else ''}"
 
     @staticmethod
     def autosize(e:Event=None, relations:list[Widget]=None, offset:int=None,shrink:int=0):
