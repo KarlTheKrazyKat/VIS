@@ -147,6 +147,39 @@ for name in _archive_binaries:
     if name in _standalone_screens and name not in installables:
         installables.append(name)
 
+# ── Group-aware install entries (0.4.6) ───────────────────────────────────
+# Build a structured view of the install page from release_info.groups.
+# A group is rendered in the GUI only when it has at least one standalone
+# child actually present in the archive; tabbed screens ship with the Host
+# and cannot be toggled independently. Groups with no eligible children are
+# dropped from the GUI (they may still exist in project.json for release
+# subset purposes).
+_release_groups = info[title].get("release_info", {}).get("groups", {})
+_grouped_screen_names: set[str] = set()
+for _g_data in _release_groups.values():
+    _grouped_screen_names.update(_g_data.get("screens", {}).keys())
+
+_install_entries: list[dict] = [{"kind": "screen", "name": title}]
+for _gname, _gdata in _release_groups.items():
+    _children = []
+    for _sname, _sdata in _gdata.get("screens", {}).items():
+        if _sname in _standalone_screens and _sname in _archive_binaries:
+            _children.append({
+                "name": _sname,
+                "default": bool(_sdata.get("default", True)),
+            })
+    if _children:
+        _install_entries.append({
+            "kind": "group",
+            "name": _gname,
+            "description": _gdata.get("description", ""),
+            "children": _children,
+        })
+for _name in _archive_binaries:
+    if (_name in _standalone_screens and _name not in _grouped_screen_names
+            and _name != title):
+        _install_entries.append({"kind": "screen", "name": _name})
+
 # Detect license/EULA file in archive
 _license_text = None
 for _lname in ("LICENSE", "LICENSE.txt", "EULA.txt", "EULA.md"):
@@ -263,6 +296,14 @@ def _kill_app_processes(location):
     return killed
 
 
+def _group_of(screen_name: str) -> str | None:
+    """Return the release group containing ``screen_name`` from the archive
+    project.json, or None if ungrouped."""
+    for gname, gdata in _release_groups.items():
+        if screen_name in gdata.get("screens", {}):
+            return gname
+    return None
+
 def write_install_log(location, selected_screens, desktop_shortcuts):
     """Write install_log.json recording what was installed."""
     directories = [".VIS", "Icons", "Images", ".Runtime"]
@@ -276,6 +317,7 @@ def write_install_log(location, selected_screens, desktop_shortcuts):
             "name": name,
             "version": scr_info.get("version", ""),
             "executable": name + ext,
+            "group": _group_of(name),
         })
 
     registry_key = ""
@@ -445,6 +487,36 @@ if QUIET is True:
     if not cinstalls:
         cinstalls = list(installables)
         print(f"No screens specified — installing all {len(cinstalls)} screen(s).")
+    else:
+        # Expand any group names to their default-selected member screens.
+        # A group containing tabbed screens implicitly pulls in the Host
+        # (tabbed screens ship inside the Host exe).
+        _expanded: list[str] = []
+        for _tok in cinstalls:
+            if _tok in _release_groups:
+                _members = _release_groups[_tok].get("screens", {})
+                _has_tabbed = False
+                _standalone_members: list[str] = []
+                for _sname, _sdata in _members.items():
+                    if not _sdata.get("default", True):
+                        continue
+                    if _sname in _tabbed_screens:
+                        _has_tabbed = True
+                    elif _sname in _standalone_screens:
+                        _standalone_members.append(_sname)
+                _expand_to: list[str] = []
+                if _has_tabbed and title not in _expand_to:
+                    _expand_to.append(title)
+                _expand_to.extend(_standalone_members)
+                if _expand_to:
+                    _expanded.extend(s for s in _expand_to if s not in _expanded)
+                    print(f"  Group '{_tok}' -> {', '.join(_expand_to)}")
+                else:
+                    print(f"  Warning: group '{_tok}' has no default-selected members.")
+            else:
+                if _tok not in _expanded:
+                    _expanded.append(_tok)
+        cinstalls = _expanded
 
     is_update_quiet = os.path.exists(os.path.join(location, ".VIS", "install_log.json"))
 
@@ -727,6 +799,317 @@ def makechecks(source:list[str], show_versions:bool=True):
             ver_lbl = ttk.Label(install_options, text=f"{scr_ver}", foreground="gray40")
             ver_lbl.grid(row=row, column=3, sticky=(tk.E,), padx=(0, 8))
 
+# ── Grouped installer page (0.4.6) ────────────────────────────────────────
+# The installables page shows groups as collapsible rows with a right-side
+# arrow; expanding a group reveals indented per-screen checkboxes whose
+# initial state honours the per-screen ``default`` flag from
+# ``release_info.groups``. Clicking a group's master checkbox toggles every
+# child on or every child off regardless of default (defaults only apply to
+# initial render).
+_screen_vars: dict[str, tk.IntVar] = {}
+_group_vars: dict[str, tk.IntVar] = {}
+_group_expanded: dict[str, bool] = {}
+_group_child_widgets: dict[str, list[list[tk.Widget]]] = {}
+_group_arrow_vars: dict[str, tk.StringVar] = {}
+_grouped_page_active = False
+
+def _screen_icon(name: str):
+    """Return a 16x16 PhotoImage for ``name``; falls back to project icon."""
+    scr_info = info[title]["Screens"].get(name, {})
+    icon_name = scr_info.get("icon")
+    if icon_name:
+        ext = ".ico" if sys.platform == "win32" else ".XBM"
+        try:
+            with archive.open("Icons/" + icon_name + ext) as f:
+                return PIL.ImageTk.PhotoImage(Image.open(f).resize((16, 16)))
+        except Exception:
+            pass
+    return PIL.ImageTk.PhotoImage(d_icon.resize((16, 16)))
+
+def _refresh_tri_states():
+    """Update every group's tri-state indicator and the master All var."""
+    if not _grouped_page_active:
+        return
+    total_on = 0
+    total_leaves = 0
+    for entry in _install_entries:
+        if entry["kind"] == "group":
+            gname = entry["name"]
+            on = sum(_screen_vars[c["name"]].get() for c in entry["children"])
+            n = len(entry["children"])
+            total_on += on
+            total_leaves += n
+            gvar = _group_vars[gname]
+            widget = _group_checkbox_widgets.get(gname)
+            if on == 0:
+                gvar.set(0)
+                if widget: widget.state(['!alternate'])
+            elif on == n:
+                gvar.set(1)
+                if widget: widget.state(['!alternate'])
+            else:
+                gvar.set(0)
+                if widget: widget.state(['alternate'])
+        else:
+            v = _screen_vars.get(entry["name"])
+            if v is not None:
+                total_on += v.get()
+                total_leaves += 1
+    # Master "All"
+    widget = _master_all_widget[0]
+    if widget is None:
+        return
+    if total_on == 0:
+        var_all.set(0)
+        widget.state(['!alternate'])
+    elif total_on == total_leaves:
+        var_all.set(1)
+        widget.state(['!alternate'])
+    else:
+        var_all.set(0)
+        widget.state(['alternate'])
+
+_group_checkbox_widgets: dict[str, ttk.Checkbutton] = {}
+_master_all_widget: list[ttk.Checkbutton | None] = [None]
+
+def _on_group_clicked(gname: str):
+    """User toggled a group's master checkbox."""
+    gvar = _group_vars[gname]
+    children = [entry for entry in _install_entries
+                if entry["kind"] == "group" and entry["name"] == gname][0]["children"]
+    # Decide direction based on current child states (not on gvar after click).
+    any_off = any(_screen_vars[c["name"]].get() == 0 for c in children)
+    target = 1 if any_off else 0
+    for c in children:
+        _screen_vars[c["name"]].set(target)
+    _refresh_tri_states()
+
+def _on_child_clicked():
+    _refresh_tri_states()
+
+def _on_all_clicked():
+    """Master "All" checkbox: toggles every leaf regardless of group.
+
+    Direction is decided by current leaf state rather than ``var_all.get()``
+    because a tri-state master cycles through combinations of ``alternate``
+    and the underlying IntVar that are not reliable across platforms.
+    """
+    any_off = any(v.get() == 0 for v in _screen_vars.values())
+    target = 1 if any_off else 0
+    for v in _screen_vars.values():
+        v.set(target)
+    _refresh_tri_states()
+
+def _toggle_group_expand(gname: str):
+    _group_expanded[gname] = not _group_expanded[gname]
+    _group_arrow_vars[gname].set("▼" if _group_expanded[gname] else "▶")
+    for widgets in _group_child_widgets.get(gname, []):
+        for w in widgets:
+            if _group_expanded[gname]:
+                w.grid()
+            else:
+                w.grid_remove()
+
+def makechecks_grouped():
+    """Render the group-aware installables page."""
+    global var_all, img_options, _grouped_page_active
+    global _screen_vars, _group_vars, _group_expanded
+    global _group_child_widgets, _group_arrow_vars
+    global _group_checkbox_widgets
+    _screen_vars = {}
+    _group_vars = {}
+    _group_expanded = {}
+    _group_child_widgets = {}
+    _group_arrow_vars = {}
+    _group_checkbox_widgets = {}
+    img_options = []
+    _grouped_page_active = True
+
+    for w in install_options.winfo_children():
+        w.destroy()
+
+    # Layout: col 1 = arrow/indent, col 2 = checkbox+label, col 3 = version
+    var_all = tk.IntVar()
+    select_all = ttk.Checkbutton(install_options, text="All",
+                                 variable=var_all, command=_on_all_clicked)
+    select_all.grid(row=0, column=1, columnspan=2, sticky=(tk.N, tk.S, tk.E, tk.W))
+    select_all.state(['!alternate'])
+    _master_all_widget[0] = select_all
+
+    row = 1
+    for entry in _install_entries:
+        install_options.rowconfigure(row, weight=1)
+        if entry["kind"] == "screen":
+            name = entry["name"]
+            img = (PIL.ImageTk.PhotoImage(d_icon.resize((16, 16)))
+                   if name == title else _screen_icon(name))
+            img_options.append(img)
+            var = tk.IntVar(value=1)  # ungrouped screens default-on
+            _screen_vars[name] = var
+            cb = ttk.Checkbutton(install_options, text=name,
+                                 variable=var, command=_on_child_clicked,
+                                 image=img, compound=tk.LEFT)
+            cb.grid(row=row, column=2, sticky=(tk.N, tk.S, tk.E, tk.W))
+            cb.state(['!alternate'])
+            scr_ver = (app_version if name == title
+                       else info[title]["Screens"].get(name, {}).get("version", ""))
+            if scr_ver:
+                ver_lbl = ttk.Label(install_options, text=scr_ver, foreground="gray40")
+                ver_lbl.grid(row=row, column=3, sticky=(tk.E,), padx=(0, 8))
+            row += 1
+        else:
+            gname = entry["name"]
+            desc = entry["description"]
+            # Group header row
+            arrow_var = tk.StringVar(value="▶")
+            _group_arrow_vars[gname] = arrow_var
+            _group_expanded[gname] = False
+            arrow_btn = ttk.Label(install_options, textvariable=arrow_var,
+                                  foreground="gray30", cursor="hand2")
+            arrow_btn.grid(row=row, column=1, sticky=(tk.W,), padx=(2, 0))
+            arrow_btn.bind("<Button-1>", lambda e, g=gname: _toggle_group_expand(g))
+
+            img = PIL.ImageTk.PhotoImage(d_icon.resize((16, 16)))
+            img_options.append(img)
+            gvar = tk.IntVar(value=0)  # populated by _refresh_tri_states after init
+            _group_vars[gname] = gvar
+            gtext = gname + (f"  —  {desc}" if desc else "")
+            gcheck = ttk.Checkbutton(install_options, text=gtext,
+                                     variable=gvar,
+                                     command=lambda g=gname: _on_group_clicked(g),
+                                     image=img, compound=tk.LEFT)
+            gcheck.grid(row=row, column=2, sticky=(tk.N, tk.S, tk.E, tk.W))
+            gcheck.state(['!alternate'])
+            _group_checkbox_widgets[gname] = gcheck
+            row += 1
+            # Child rows (initially hidden)
+            _group_child_widgets[gname] = []
+            for child in entry["children"]:
+                cname = child["name"]
+                cdefault = bool(child["default"])
+                cvar = tk.IntVar(value=1 if cdefault else 0)
+                _screen_vars[cname] = cvar
+                cimg = _screen_icon(cname)
+                img_options.append(cimg)
+                cb = ttk.Checkbutton(install_options, text="    " + cname,
+                                     variable=cvar, command=_on_child_clicked,
+                                     image=cimg, compound=tk.LEFT)
+                install_options.rowconfigure(row, weight=1)
+                cb.grid(row=row, column=2, sticky=(tk.N, tk.S, tk.E, tk.W))
+                cb.state(['!alternate'])
+                cb.grid_remove()
+                row_widgets = [cb]
+                scr_ver = info[title]["Screens"].get(cname, {}).get("version", "")
+                if scr_ver:
+                    ver_lbl = ttk.Label(install_options, text=scr_ver, foreground="gray40")
+                    ver_lbl.grid(row=row, column=3, sticky=(tk.E,), padx=(0, 8))
+                    ver_lbl.grid_remove()
+                    row_widgets.append(ver_lbl)
+                _group_child_widgets[gname].append(row_widgets)
+                row += 1
+
+    _refresh_tri_states()
+
+def _collect_selected_screens() -> list[str]:
+    """Return the list of screens currently checked on the installables page."""
+    return [name for name, v in _screen_vars.items() if v.get() == 1]
+
+def _prompt_dependencies(selected: list[str]) -> bool:
+    """Warn about unmet ``requires`` / ``suggests`` before leaving the page.
+
+    Returns True to proceed to the next page, False to stay. May mutate
+    ``_screen_vars`` if the user opts to auto-add missing required screens.
+
+    Implemented as a loop rather than recursion so that clicking Cancel at
+    a later prompt aborts navigation cleanly without undoing earlier Yes
+    decisions (the screens added so far stay selected — the user lands
+    back on the installables page with the richer selection).
+    """
+    from tkinter import messagebox
+    # The auto-add loop can iterate at most ``len(_screen_vars)`` times
+    # because each successful pass selects at least one new screen.
+    for _ in range(len(_screen_vars) + 1):
+        selected_set = set(selected)
+        available = set(_screen_vars.keys())
+        missing_req: list[tuple[str, str]] = []
+        excluded_req: list[tuple[str, str]] = []
+        suggested: list[tuple[str, str]] = []
+        custom_msgs: list[str] = []
+        for name in selected:
+            scr = info[title]["Screens"].get(name, {})
+            unmet_any = False
+            for req in (scr.get("requires") or []):
+                if req in selected_set:
+                    continue
+                unmet_any = True
+                if req in available:
+                    missing_req.append((name, req))
+                else:
+                    excluded_req.append((name, req))
+            for sug in (scr.get("suggests") or []):
+                if sug in selected_set or sug not in available:
+                    continue
+                suggested.append((name, sug))
+            wm = scr.get("warn_message")
+            if wm and unmet_any:
+                custom_msgs.append(wm)
+
+        if not missing_req and not excluded_req and not suggested:
+            return True
+
+        lines: list[str] = []
+        if missing_req:
+            lines.append("Missing required screens:")
+            for a, b in missing_req:
+                lines.append(f"  • {a} requires {b}")
+        if excluded_req:
+            if lines: lines.append("")
+            lines.append("Required screens not included in this installer:")
+            for a, b in excluded_req:
+                lines.append(f"  • {a} requires {b} (unavailable)")
+        if suggested:
+            if lines: lines.append("")
+            lines.append("Suggested additions:")
+            for a, b in suggested:
+                lines.append(f"  • {a} suggests {b}")
+        if custom_msgs:
+            lines.append("")
+            for m in dict.fromkeys(custom_msgs):
+                lines.append(m)
+
+        if missing_req:
+            lines.append("")
+            lines.append("Yes: add the missing required screens and continue")
+            lines.append("No: continue anyway (not recommended)")
+            lines.append("Cancel: stay on this page")
+            resp = messagebox.askyesnocancel("Missing Dependencies",
+                                             "\n".join(lines), icon="warning")
+            if resp is None:
+                return False
+            if resp is False:
+                return True  # No → continue without adding
+            # Yes → auto-add missing required screens and re-evaluate.
+            for _requirer, req in missing_req:
+                if req in _screen_vars:
+                    _screen_vars[req].set(1)
+            _refresh_tri_states()
+            selected = _collect_selected_screens()
+            continue  # re-run loop with the new selection
+        if excluded_req:
+            lines.append("")
+            lines.append("Continue without them?")
+            return bool(messagebox.askokcancel("Screens Unavailable",
+                                               "\n".join(lines), icon="warning"))
+        # Only suggestions remain
+        lines.append("")
+        lines.append("Continue without them?")
+        return bool(messagebox.askokcancel("Suggested Additions",
+                                           "\n".join(lines), icon="info"))
+    # Guard against a pathological cycle — should not be reached because
+    # each iteration either terminates via a messagebox return or adds a
+    # screen, but defaulting to "stay" is the safer fall-through.
+    return False
+
 # ── EULA / License page ───────────────────────────────────────────────────
 _eula_agree_var = tk.IntVar(value=0)
 
@@ -762,7 +1145,7 @@ def _show_installables():
     for w in install_options.winfo_children():
         w.destroy()
     header["text"] = "Select Installables"
-    makechecks(installables)
+    makechecks_grouped()
     # Ensure Next button goes to shortcuts page
     try: next_btn.destroy()
     except Exception: pass
@@ -777,7 +1160,7 @@ def _eula_next():
 if _license_text:
     _show_eula()
 else:
-    makechecks(installables)
+    makechecks_grouped()
 
 #File Location
 file_location = tk.StringVar()
@@ -1097,17 +1480,19 @@ def binstall(desktop:list[str], selected_screens:list[str]):
 
 def nextpage():
     """Goes to the next installer page"""
+    global _grouped_page_active
+    selected_screens = _collect_selected_screens()
+    if not _prompt_dependencies(selected_screens):
+        return  # user cancelled; stay on the installables page
+    selected_screens = _collect_selected_screens()  # may have been mutated
+
     try: next_btn.destroy()
     except Exception: pass
 
     for w in install_options.winfo_children():
         w.destroy()
 
-    selected_screens = []
-    for idx in range(len(var_options)):
-        if var_options[idx].get() == 1:
-            selected_screens.append(installables[idx])
-
+    _grouped_page_active = False  # shortcut page uses the flat makechecks
     header["text"] = "Select Desktop Shortcuts"
     makechecks(selected_screens, show_versions=False)
 

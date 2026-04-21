@@ -1,7 +1,9 @@
 0.4.5 --- Installer Polish
 ==========================
 
-*Upcoming*
+*Absorbed into 0.4.6 --- no standalone PyPI release.* See :doc:`0.4.6`
+for the released version that ships these features alongside screen
+groups and the missing-screen banner.
 
 License / EULA Page
 -------------------

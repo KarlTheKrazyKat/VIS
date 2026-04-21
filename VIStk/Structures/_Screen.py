@@ -80,6 +80,12 @@ class Screen(VINFO):
         """Whether this screen opens as a tab inside the Host window"""
         self.single_instance: bool = info[self.title]["Screens"][self.name].get("single_instance", False)
         """When True only one instance of this screen may be open at a time"""
+        self.requires: list[str] = list(scr_data.get("requires", []))
+        """Names of screens that must be installed alongside this one (hard dependency)."""
+        self.suggests: list[str] = list(scr_data.get("suggests", []))
+        """Names of screens recommended alongside this one (soft suggestion)."""
+        self.warn_message: str | None = scr_data.get("warn_message")
+        """Optional custom message shown by the installer when a dependency is unmet."""
       
     def addElement(self,element:str) -> int:
         if validName(element):

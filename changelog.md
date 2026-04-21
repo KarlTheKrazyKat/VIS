@@ -541,7 +541,10 @@ The existing "Open in new window" entry is unchanged; it still creates a `Detach
 
 ---
 
-### 0.4.5 Installer Polish
+### 0.4.5 Installer Polish *(absorbed into 0.4.6)*
+
+Implemented in-tree but not released as its own PyPI version. These
+features ship as part of 0.4.6.
 
 **License / EULA page**
 
@@ -562,21 +565,88 @@ The existing "Open in new window" entry is unchanged; it still creates a `Detach
 
 ---
 
-### 0.4.6 Installer Screen Groups & Partial Installs
+### 0.4.6 Screen Groups, Partial Installs & Missing-Screen Banner
+
+*Released — absorbs every feature from 0.4.5.*
 
 **Screen groups**
 
-- `project.json` gains an optional `release_info.groups` dictionary mapping a group label to a list of screen names
-- Screens belonging to a group appear under a single checkbox in the installer, with the group label as the display name
-- Selecting/deselecting a group selects/deselects all screens within it
-- Screens not assigned to any group continue to appear as individual checkboxes (current behavior)
-- Groups are respected by `--Quiet` mode — passing a group name installs all screens within it
+- `project.json` gains a `release_info.groups` block; each group maps a
+  label to a `{description, screens: {screen_name: {default: bool}}}` entry.
+- A screen belongs to at most one group; ungrouped screens continue to
+  render as individual checkboxes (current behaviour preserved).
+- Group rows in the installer render as a checkbox + label + right-side
+  expand arrow. Expanding a group reveals indented child checkboxes with
+  per-screen version labels.
+- Clicking a group master toggles every child on or every child off
+  (defaults only set the initial state). Tri-state (`alternate`) is shown
+  when a group has a mix of checked/unchecked children; likewise for the
+  top-level "All".
+- Groups with no standalone-screen child actually present in the archive
+  are hidden from the GUI — tabbed screens ship with the Host and cannot
+  be toggled independently at install time.
 
-**Missing screen handling**
+**Per-screen dependencies**
 
-- When the Host or `Project().open()` attempts to open a screen that is not installed (exe not present in the install directory), a user-facing message is displayed instead of silently failing
-- The message identifies the missing screen by name and suggests reinstalling with that screen selected
-- Allows developers to distribute a smaller installer with a subset of screens; users who attempt to access an uninstalled screen get a clear explanation rather than a crash or silent no-op
+- New schema: `Screens.<name>.requires: list[str]`, `suggests: list[str]`,
+  and `warn_message: str|null`.
+- On installer Next click the selected set is cross-checked; unmet
+  `requires` trigger a 3-button dialog (Yes = auto-add + continue,
+  No = continue anyway, Cancel = stay). Unmet `suggests` and required
+  screens that aren't in the archive at all use a simpler OK/Cancel
+  dialog. `warn_message` is folded into the dialog body.
+
+**Partial install — developer-side subset release**
+
+- `vis release -Groups <A,B>` builds an installer containing only the
+  union of screens in the listed groups.
+- `vis release -Screens <X,Y>` builds an installer containing only the
+  listed screens. The two flags may be combined.
+- The Host is always included. Excluded screens are never compiled and
+  their entries are pruned from the archived `project.json`. Empty
+  groups are dropped from the pruned schema.
+
+**Quiet-mode group expansion**
+
+- `installer.exe --Quiet <group_name>` expands the group into its
+  default-selected members before running the existing archive-matching
+  logic.
+- A group containing at least one tabbed screen implicitly pulls in the
+  Host (tabbed screens ride inside the Host exe).
+
+**install_log.json**
+
+- Each screen record in the log now carries a `"group"` field (the
+  group name, or `null` for ungrouped / Host). Consumed by the runtime
+  missing-screen detector.
+
+**Runtime missing-screen handling**
+
+- `Host.open()` now calls `VIStk.Structures.is_screen_installed(name)`
+  before routing. When the binary is not present in the current
+  installation, it shows an inline warning banner in the active
+  `InfoRow` (via the new `InfoRow.show_banner(text, duration_ms, level)`)
+  instead of silently failing.
+- `is_screen_installed()` reads `.VIS/install_log.json` first and falls
+  back to a filesystem probe for `.Runtime/<name>.exe` or
+  `Screens/<name>.pyd`. Always returns `True` in dev mode (non-frozen).
+- The banner uses the screen's `warn_message` when available; otherwise
+  a generic "X is not installed. Reinstall and select it to enable this
+  feature." string.
+
+**CLI additions**
+
+- `vis group add/remove/assign/unassign/default/list` — manage groups in
+  `project.json`.
+- `vis release -Groups A,B -Screens X,Y` — subset release.
+- `vis edit <screen> requires "A,B"` / `suggests "C"` / `warn_message "…"`
+  — list-typed attrs accept a comma-separated value; `warn_message`
+  accepts a plain string or `none`/`null`.
+
+**Absorbed from 0.4.5**
+
+The License/EULA page, `\r` quiet-mode progress bar, and
+`metadata.installer_icon` land as part of this release.
 
 ---
 

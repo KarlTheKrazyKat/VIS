@@ -13,6 +13,9 @@ Released
    * - Version
      - Title
      - Highlights
+   * - :doc:`0.4.6`
+     - Screen Groups & Partial Installs
+     - Installer groups with expand/collapse, per-screen dependencies, ``--Groups``/``--Screens`` release, runtime missing-screen banner
    * - :doc:`0.4.4`
      - Tab Bar & Installer Update
      - Tab bar position, update-in-place installer, rollback, integrity check
@@ -42,9 +45,6 @@ Upcoming
    * - Version
      - Title
      - Planned
-   * - :doc:`0.4.5`
-     - Installer Polish
-     - License/EULA page, silent progress, custom installer icon
    * - :doc:`0.5`
      - VIS Widgets & Upgrade Tool
      - Tooltip, CollapsibleFrame, AutocompleteEntry, DateEntry, ``VIS upgrade``
@@ -68,6 +68,7 @@ Upcoming
    :maxdepth: 1
    :hidden:
 
+   0.4.6
    0.4.4
    0.4.3
    0.4.2
