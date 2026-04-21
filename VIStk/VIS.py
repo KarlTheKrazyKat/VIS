@@ -87,11 +87,63 @@ def __main__():
             else:
                 Project().edit_screen(inp[2], inp[3], inp[4])
 
+        case "group" | "Group":
+            if len(inp) < 3:
+                print("Usage: VIS group <add|remove|assign|unassign|default|list> ...")
+                return
+            project = Project()
+            match inp[2]:
+                case "add":
+                    if len(inp) < 4:
+                        print("Usage: VIS group add <group_name> [description]")
+                        return
+                    desc = " ".join(inp[4:]) if len(inp) > 4 else ""
+                    project.add_group(inp[3], desc)
+                case "remove":
+                    if len(inp) < 4:
+                        print("Usage: VIS group remove <group_name>")
+                        return
+                    project.remove_group(inp[3])
+                case "assign":
+                    if len(inp) < 5:
+                        print("Usage: VIS group assign <screen> <group> [true|false]")
+                        return
+                    default = True
+                    if len(inp) >= 6:
+                        default = inp[5].lower() in ("true", "yes", "1")
+                    project.assign_to_group(inp[3], inp[4], default)
+                case "unassign":
+                    if len(inp) < 4:
+                        print("Usage: VIS group unassign <screen>")
+                        return
+                    project.unassign_from_group(inp[3])
+                case "default":
+                    if len(inp) < 5:
+                        print("Usage: VIS group default <screen> <true|false>")
+                        return
+                    d = inp[4].lower() in ("true", "yes", "1")
+                    project.set_group_default(inp[3], d)
+                case "list":
+                    groups = project.groups()
+                    if not groups:
+                        print("No groups defined.")
+                    else:
+                        for gname, gdata in groups.items():
+                            desc = gdata.get("description", "")
+                            print(f"  {gname}" + (f" — {desc}" if desc else ""))
+                            for sname, sdata in gdata.get("screens", {}).items():
+                                d_mark = "" if sdata.get("default", True) else "  [off by default]"
+                                print(f"      - {sname}{d_mark}")
+                case _:
+                    print(f"Unknown group subcommand: {inp[2]!r}")
+
         case "release" | "Release" | "r" | "R":
             project=Project()
             flag:str=""
             type:str=""
             note:str=""
+            subset_groups:list[str]=[]
+            subset_screens:list[str]=[]
             argstart = 2
 
             if len(inp) >= 3:
@@ -130,11 +182,25 @@ def __main__():
                                 return None
                             note = args[i+1]
                             i += 2
+                        case "Groups" | "groups" | "G" | "g":
+                            if i + 1 >= len(args):
+                                print(f"Missing value for {args[i]}")
+                                return None
+                            subset_groups = [g.strip() for g in args[i+1].split(",") if g.strip()]
+                            i += 2
+                        case "Screens" | "screens":
+                            if i + 1 >= len(args):
+                                print(f"Missing value for {args[i]}")
+                                return None
+                            subset_screens = [s.strip() for s in args[i+1].split(",") if s.strip()]
+                            i += 2
                         case _:
                             print(f"Unknown Argument \"{args[i]}\"")
                             return None
 
-            rel = Release(flag,type,note)
+            rel = Release(flag, type, note,
+                          subset_groups=subset_groups or None,
+                          subset_screens=subset_screens or None)
             rel.release()
             rel.restoreAll()
 

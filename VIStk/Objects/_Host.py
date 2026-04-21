@@ -73,14 +73,45 @@ class Host:
 
         Tabbed screens open as tabs in the active TabManager's window.
         Standalone (tabbed=False) screens open as new DetachedWindows.
+        When running from a compiled installation, refuses to open a
+        screen whose binary is not present on disk and shows an inline
+        banner in the active window's InfoRow instead.
         """
         scr = self.Project.getScreen(screen_name)
         if scr is None:
+            return
+        if not self._check_installed(scr):
             return
         if scr.tabbed:
             self._open_tab(scr)
         else:
             self._open_standalone(scr)
+
+    def _check_installed(self, scr) -> bool:
+        """Return True if ``scr`` can be opened; show a banner and return
+        False when running from a frozen build that's missing the binary."""
+        from VIStk.Structures._Install import is_screen_installed
+        if is_screen_installed(scr.name):
+            return True
+        msg = getattr(scr, "warn_message", None) or (
+            f"'{scr.name}' is not installed. "
+            "Reinstall and select it to enable this feature."
+        )
+        dw = self._active_detached_window()
+        if dw is not None:
+            try:
+                dw.InfoRow.show_banner(msg, level="warn")
+            except Exception:
+                pass
+        return False
+
+    def _active_detached_window(self):
+        """Return the DetachedWindow that owns ``active_tab_manager``, or
+        the first open window as fallback."""
+        for dw in self.detached_windows:
+            if self.active_tab_manager in dw.tab_managers:
+                return dw
+        return self.detached_windows[0] if self.detached_windows else None
 
     # ── Tabs ───────────────────────────────────────────────────────────────────
 

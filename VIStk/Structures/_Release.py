@@ -15,8 +15,17 @@ from VIStk.Structures._Version import Version
 
 class Release(Project):
     """A VIS Release object"""
-    def __init__(self, flag:str="",type:str="",note:str=""):
-        """Creates a Release object to release or examine a release of a project"""
+    def __init__(self, flag:str="",type:str="",note:str="",
+                 subset_groups: list[str] | None = None,
+                 subset_screens: list[str] | None = None):
+        """Creates a Release object to release or examine a release of a project
+
+        ``subset_groups`` and ``subset_screens`` scope the build to a subset of
+        screens. When both are ``None`` every screen is built (existing
+        behaviour). When either is provided, only screens in that union are
+        compiled; the Host is always included. The resulting installer's
+        embedded ``project.json`` is pruned to the same subset.
+        """
         super().__init__()
         self.type = type
         self.flag = flag
@@ -28,6 +37,37 @@ class Release(Project):
         elif not os.path.isabs(loc):
             loc = self.p_project + "/" + loc
         self.location = loc.rstrip("/") + "/"
+
+        self._subset_screens: set[str] | None = self._resolve_subset(
+            subset_groups, subset_screens
+        )
+        """Set of screen names included in this build, or None for all."""
+
+    def _resolve_subset(self, subset_groups, subset_screens) -> set[str] | None:
+        if not subset_groups and not subset_screens:
+            return None
+        names: set[str] = set()
+        if subset_groups:
+            groups = self.groups()
+            for g in subset_groups:
+                if g not in groups:
+                    print(f"Warning: group '{g}' not found; skipping.", flush=True)
+                    continue
+                for s in groups[g].get("screens", {}).keys():
+                    names.add(s)
+        if subset_screens:
+            for s in subset_screens:
+                if not self.hasScreen(s):
+                    print(f"Warning: screen '{s}' not found; skipping.", flush=True)
+                    continue
+                names.add(s)
+        if not names:
+            print("Warning: subset resolved to zero screens; aborting.", flush=True)
+        return names
+
+    def _screen_in_subset(self, scr) -> bool:
+        """True if ``scr`` should be compiled in this build."""
+        return self._subset_screens is None or scr.name in self._subset_screens
 
     # ── Nuitka runner ─────────────────────────────────────────────────────────
 
@@ -194,6 +234,8 @@ class Release(Project):
 
         has_tabbed = False
         for scr in self.screenlist:
+            if not self._screen_in_subset(scr):
+                continue
 
             if scr.tabbed and mode in ("all", "pyd"):
                 # Every tabbed screen → .pyd module
@@ -363,6 +405,21 @@ class Release(Project):
         if exists(installed_json):
             with open(installed_json, "r") as f:
                 info = json.load(f)
+            # Prune screens not in the subset (0.4.6)
+            if self._subset_screens is not None:
+                keep = self._subset_screens
+                for sname in list(info[self.title]["Screens"].keys()):
+                    if sname not in keep:
+                        info[self.title]["Screens"].pop(sname)
+                groups = (info[self.title].get("release_info", {})
+                          .get("groups", {}))
+                for gname in list(groups.keys()):
+                    screens = groups[gname].get("screens", {})
+                    for sn in list(screens.keys()):
+                        if sn not in keep:
+                            screens.pop(sn)
+                    if not screens:
+                        groups.pop(gname)
             for screen_name, screen_data in info[self.title]["Screens"].items():
                 if screen_data.get("tabbed", False):
                     stem = os.path.splitext(screen_data["script"])[0]
@@ -465,10 +522,19 @@ class Release(Project):
         screen_count = 0
         binary_count = 1  # Host
         for scr in self.screenlist:
+            if not self._screen_in_subset(scr):
+                continue
             if scr.tabbed:
                 screen_count += 1
             elif scr.release:
                 binary_count += 1
+
+        if self._subset_screens is not None:
+            if not self._subset_screens:
+                print("Subset release aborted: no screens selected.", flush=True)
+                return
+            print(f"Subset release: {len(self._subset_screens)} screen(s) included.",
+                  flush=True)
 
         total = pkg_count + screen_count + binary_count
         self._step = 0
