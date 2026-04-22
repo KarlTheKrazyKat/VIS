@@ -37,7 +37,7 @@ class SplitView(Frame):
 
         # Map each TabManager to its parent _SplitNode (None for root leaf)
         self._pane_parents: dict[int, _SplitNode | None] = {
-            id(self._root_widget): None
+            self._root_widget.id: None
         }
 
         self._wire_pane(self._root_widget)
@@ -67,7 +67,7 @@ class SplitView(Frame):
     def find_owner(cls, pane) -> "SplitView | None":
         """Return the SplitView that owns *pane*, or ``None``."""
         for sv in cls._registry:
-            if id(pane) in sv._pane_parents:
+            if pane.id in sv._pane_parents:
                 return sv
         return None
 
@@ -195,7 +195,7 @@ class SplitView(Frame):
     def focused_pane(self):
         """The :class:`TabManager` the user last interacted with."""
         # Ensure the focused pane is still alive
-        if self._focused_pane is not None and id(self._focused_pane) in self._pane_parents:
+        if self._focused_pane is not None and self._focused_pane.id in self._pane_parents:
             return self._focused_pane
         # Fallback to first available pane
         panes = self.all_tab_managers()
@@ -229,10 +229,10 @@ class SplitView(Frame):
             merged.update(pane._tabs)
         return merged
 
-    def find_pane_for_tab(self, name: str):
-        """Return the :class:`TabManager` that owns *name*, or ``None``."""
+    def find_pane_for_tab(self, tab_id: int):
+        """Return the :class:`TabManager` that owns *tab_id*, or ``None``."""
         for pane in self.all_tab_managers():
-            if name in pane._tabs:
+            if tab_id in pane._tabs:
                 return pane
         return None
 
@@ -308,7 +308,7 @@ class SplitView(Frame):
             ox, oy, ow, oh = cx, cy, cw, ch
         else:
             return
-        info = (id(pane), direction)
+        info = (pane.id, direction)
         if self._drop_zone_info == info and self._drop_overlay is not None:
             return  # already showing the right overlay
         self.hide_drop_overlay()
@@ -374,7 +374,7 @@ class SplitView(Frame):
         from VIStk.Objects._TabManager import TabManager
 
         orient = "horizontal" if direction == "right" else "vertical"
-        parent_node = self._pane_parents.get(id(pane))
+        parent_node = self._pane_parents.get(pane.id)
 
         # Create a _SplitNode to replace the pane
         if parent_node is None:
@@ -407,50 +407,54 @@ class SplitView(Frame):
         node.set_slot1(left_pane)
         node.set_slot2(right_pane)
 
-        self._pane_parents[id(node)] = parent_node
-        self._pane_parents[id(left_pane)] = node
-        self._pane_parents[id(right_pane)] = node
+        self._pane_parents[node.id] = parent_node
+        self._pane_parents[left_pane.id] = node
+        self._pane_parents[right_pane.id] = node
         self._wire_pane(left_pane)
         self._wire_pane(right_pane)
 
-        # Transfer existing tabs from old pane to left_pane (re-runs setup)
+        # Transfer existing tabs from old pane to left_pane, preserving
+        # their tab_ids so callers holding an ID still resolve correctly.
         _exclude = exclude or set()
-        for tab_name in list(pane._tabs.keys()):
-            if tab_name in _exclude:
+        for tab_id in list(pane._tabs.keys()):
+            if tab_id in _exclude:
                 continue
-            entry = pane._tabs[tab_name]
+            entry = pane._tabs[tab_id]
+            display   = entry.get("display_name", "")
             module    = entry.get("module")
             hooks     = entry.get("hooks")
             icon      = entry.get("icon")
-            base_name = entry.get("base_name", tab_name)
+            base_name = entry.get("base_name", display)
             info_data = entry.get("_info_trace")  # (StringVar, tid) or None
             info_str  = entry.get("info", "")
 
-            left_pane.open_tab(tab_name, module, hooks=hooks, icon=icon,
-                               base_name=base_name)
+            left_pane.open_tab(display, module, hooks=hooks, icon=icon,
+                               base_name=base_name, tab_id=tab_id)
 
             # Restore tab info (prefer StringVar if traced)
             if info_data is not None:
                 var, _ = info_data
-                left_pane.set_tab_info(tab_name, var)
+                left_pane.set_tab_info(tab_id, var)
             elif info_str:
-                left_pane.set_tab_info(tab_name, info_str)
+                left_pane.set_tab_info(tab_id, info_str)
 
-        # Clean up old pane without triggering callbacks
-        for tab_name in list(pane._tabs.keys()):
-            trace_info = pane._tabs[tab_name].get("_info_trace")
+        # Clean up old pane without triggering callbacks. Tabs that were
+        # transferred now live in left_pane; we still need to tear down
+        # any excluded tabs' frames here.
+        for tab_id in list(pane._tabs.keys()):
+            trace_info = pane._tabs[tab_id].get("_info_trace")
             if trace_info is not None:
-                var, tid = trace_info
+                var, trace_tid = trace_info
                 try:
-                    var.trace_remove("write", tid)
+                    var.trace_remove("write", trace_tid)
                 except TclError:
                     pass
             try:
-                pane._tabs[tab_name]["frame"].destroy()
+                pane._tabs[tab_id]["frame"].destroy()
             except TclError:
                 pass
         pane._tabs.clear()
-        del self._pane_parents[id(pane)]
+        del self._pane_parents[pane.id]
         try:
             pane.destroy()
         except TclError:
@@ -485,13 +489,13 @@ class SplitView(Frame):
         """
         from VIStk.Objects._TabManager import TabManager
 
-        parent_node = self._pane_parents.get(id(pane))
+        parent_node = self._pane_parents.get(pane.id)
         if parent_node is None:
             # This is the root — can't remove the last pane
             return
 
         sibling = parent_node.other_child(pane)
-        grandparent_node = self._pane_parents.get(id(parent_node))
+        grandparent_node = self._pane_parents.get(parent_node.id)
 
         # Determine the Tk parent for the rebuilt sibling
         if grandparent_node is None:
@@ -507,10 +511,18 @@ class SplitView(Frame):
             else:
                 grandparent_slot = 2
 
-        # Track whether the focused pane was the one being removed
-        # or lives inside the sibling subtree
+        # Track the tab_id that was focused in the focused pane so we can
+        # restore focus to the *same specific tab* after the sibling subtree
+        # is rebuilt — this is the 0.4.7 fix for multi-split focus restore
+        # with duplicate screen names (changelog.md:660).
         old_focused = self._focused_pane
         focused_was_removed = (old_focused is pane)
+        focused_tab_id: int | None = None
+        if old_focused is not None and not focused_was_removed:
+            try:
+                focused_tab_id = old_focused._active
+            except Exception:
+                focused_tab_id = None
 
         # Collect tab data from sibling subtree BEFORE destroying anything
         sibling_snapshot = self._snapshot_subtree(sibling)
@@ -542,7 +554,7 @@ class SplitView(Frame):
         if grandparent_node is None:
             self._root_widget = rebuilt
             rebuilt.pack(fill="both", expand=True)
-            self._pane_parents[id(rebuilt)] = None
+            self._pane_parents[rebuilt.id] = None
             if isinstance(rebuilt, _SplitNode):
                 self._update_parent_tracking(rebuilt, None)
         else:
@@ -553,16 +565,25 @@ class SplitView(Frame):
                 grandparent_node.slot2 = rebuilt
             # Re-add both slots to the PanedWindow in correct order
             grandparent_node.replace_child_fresh(rebuilt)
-            self._pane_parents[id(rebuilt)] = grandparent_node
+            self._pane_parents[rebuilt.id] = grandparent_node
             if isinstance(rebuilt, _SplitNode):
                 self._update_parent_tracking(rebuilt, grandparent_node)
 
-        # Restore focus
-        # The rebuilt subtree contains all surviving panes; pick the first one.
-        # Name-based matching is avoided here — that is deferred to the tab-ID
-        # refactor planned for 0.4.6.
+        # Restore focus via tab_id (0.4.7).  If the previously focused pane
+        # lived inside the surviving sibling subtree, its tab IDs were
+        # preserved across the rebuild — find whichever new pane now owns
+        # the old active tab and focus it there.  If the focused pane was
+        # the one removed (or we couldn't recover a tab_id), fall back to
+        # the first surviving pane.
         panes = self.all_tab_managers()
-        self._focused_pane = panes[0] if panes else None
+        target_pane = None
+        if focused_tab_id is not None:
+            for p in panes:
+                if focused_tab_id in p._tabs:
+                    target_pane = p
+                    p.tab_bar.focus_tab(focused_tab_id)
+                    break
+        self._focused_pane = target_pane or (panes[0] if panes else None)
 
         # Update visual focus indicators (single pane = always focused)
         self._update_focused_styles()
@@ -585,6 +606,9 @@ class SplitView(Frame):
 
     def _focus_from_click(self, event):
         """Walk up from clicked widget to find the owning pane and focus it."""
+        # Use Python's ``id(w)`` (object identity) to look up the containing
+        # TabManager as we climb the widget tree — this is a transient map,
+        # not a persistent identifier, so object identity is fine here.
         panes = {id(tm): tm for tm in self.all_tab_managers()}
         w = event.widget
         try:
@@ -629,7 +653,7 @@ class SplitView(Frame):
                 orig(name)
             # If name is None, all tabs are gone — collapse this pane
             if name is None and len(_pane._tabs) == 0:
-                parent_node = self._pane_parents.get(id(_pane))
+                parent_node = self._pane_parents.get(_pane.id)
                 if parent_node is not None:
                     # Schedule collapse to avoid modifying widget tree mid-callback
                     _pane.after_idle(lambda: self.remove_pane(_pane))
@@ -700,7 +724,7 @@ class SplitView(Frame):
         ``_skip_activate`` flag is set by ``_activate_and_focus`` which
         fires the callback itself to avoid a double-fire.
         """
-        if id(pane) not in self._pane_parents:
+        if pane.id not in self._pane_parents:
             return
         old = self._focused_pane
         if pane is old and SplitView._global_focused_pane is pane:
@@ -747,15 +771,17 @@ class SplitView(Frame):
 
         if isinstance(widget, TabManager):
             tabs = []
-            for tab_name in list(widget._tabs.keys()):
-                entry = widget._tabs[tab_name]
+            for tab_id in list(widget._tabs.keys()):
+                entry = widget._tabs[tab_id]
+                display = entry.get("display_name", "")
                 tab_data = {
-                    "name": tab_name,
-                    "module": entry.get("module"),
-                    "hooks": entry.get("hooks"),
-                    "icon": entry.get("icon"),
-                    "base_name": entry.get("base_name", tab_name),
-                    "info_str": entry.get("info", ""),
+                    "tab_id":    tab_id,
+                    "name":      display,
+                    "module":    entry.get("module"),
+                    "hooks":     entry.get("hooks"),
+                    "icon":      entry.get("icon"),
+                    "base_name": entry.get("base_name", display),
+                    "info_str":  entry.get("info", ""),
                 }
                 # Capture StringVar value if traced (can't keep the var across destroy)
                 info_trace = entry.get("_info_trace")
@@ -770,7 +796,7 @@ class SplitView(Frame):
                 "type": "leaf",
                 "tabs": tabs,
                 "is_focused": widget is self._focused_pane,
-                "active": widget._active,
+                "active_tab_id": widget._active,
             }
         elif isinstance(widget, _SplitNode):
             return {
@@ -779,11 +805,11 @@ class SplitView(Frame):
                 "slot1": self._snapshot_subtree(widget.slot1) if widget.slot1 else None,
                 "slot2": self._snapshot_subtree(widget.slot2) if widget.slot2 else None,
             }
-        return {"type": "leaf", "tabs": [], "is_focused": False, "active": None}
+        return {"type": "leaf", "tabs": [], "is_focused": False, "active_tab_id": None}
 
     def _remove_tracking(self, widget):
         """Recursively remove all _pane_parents entries for a subtree."""
-        self._pane_parents.pop(id(widget), None)
+        self._pane_parents.pop(widget.id, None)
         if isinstance(widget, _SplitNode):
             if widget.slot1 is not None:
                 self._remove_tracking(widget.slot1)
@@ -800,17 +826,25 @@ class SplitView(Frame):
         if snapshot["type"] == "leaf":
             pane = TabManager(tk_parent, position=self._tab_position)
             self._wire_pane(pane)
-            # Re-open all tabs
+            # Re-open all tabs, preserving their stable tab_id so external
+            # references survive the destroy/rebuild (fixes 0.4.7 focus
+            # restore after remove_pane).
             for tab_data in snapshot["tabs"]:
+                tab_id = tab_data.get("tab_id")
                 pane.open_tab(
                     tab_data["name"],
                     tab_data["module"],
                     hooks=tab_data.get("hooks"),
                     icon=tab_data.get("icon"),
                     base_name=tab_data.get("base_name", tab_data["name"]),
+                    tab_id=tab_id,
                 )
                 if tab_data.get("info_str"):
-                    pane.set_tab_info(tab_data["name"], tab_data["info_str"])
+                    pane.set_tab_info(tab_id, tab_data["info_str"])
+            # Restore the previously active tab within this pane
+            active_id = snapshot.get("active_tab_id")
+            if active_id is not None and active_id in pane._tabs:
+                pane.tab_bar.focus_tab(active_id)
             # Track focus
             if snapshot.get("is_focused"):
                 self._focused_pane = pane
@@ -822,13 +856,13 @@ class SplitView(Frame):
             if snapshot["slot1"] is not None:
                 child1 = self._rebuild_from_snapshot(snapshot["slot1"], node.paned)
                 node.set_slot1(child1)
-                self._pane_parents[id(child1)] = node
+                self._pane_parents[child1.id] = node
                 if isinstance(child1, _SplitNode):
                     self._update_parent_tracking(child1, node)
             if snapshot["slot2"] is not None:
                 child2 = self._rebuild_from_snapshot(snapshot["slot2"], node.paned)
                 node.set_slot2(child2)
-                self._pane_parents[id(child2)] = node
+                self._pane_parents[child2.id] = node
                 if isinstance(child2, _SplitNode):
                     self._update_parent_tracking(child2, node)
             # Set sash to 50/50
@@ -841,9 +875,9 @@ class SplitView(Frame):
         """Update _pane_parents for *widget* and its subtree."""
         from VIStk.Objects._TabManager import TabManager
         if isinstance(widget, TabManager):
-            self._pane_parents[id(widget)] = parent_node
+            self._pane_parents[widget.id] = parent_node
         elif isinstance(widget, _SplitNode):
-            self._pane_parents[id(widget)] = parent_node
+            self._pane_parents[widget.id] = parent_node
             if widget.slot1 is not None:
                 self._update_parent_tracking(widget.slot1, widget)
             if widget.slot2 is not None:
@@ -872,6 +906,9 @@ class _SplitNode(Frame):
 
     def __init__(self, parent, orient: str = "horizontal", **kwargs):
         super().__init__(parent, **kwargs)
+        from VIStk.Objects._Identity import new_id
+        self.id: int = new_id()
+        """Stable process-unique split-node ID (0.4.7)."""
         self.orient = orient
         self.paned = ttk.PanedWindow(self, orient=orient)
         self.paned.pack(fill="both", expand=True)

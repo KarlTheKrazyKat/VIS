@@ -13,6 +13,9 @@ Released
    * - Version
      - Title
      - Highlights
+   * - :doc:`0.4.7`
+     - Tab Identity Refactor
+     - Every tab, pane, and window gets a stable integer ID; fixes focus restoration after ``SplitView.remove_pane`` with duplicate screen names
    * - :doc:`0.4.6`
      - Screen Groups & Partial Installs
      - Installer groups with expand/collapse, per-screen dependencies, ``--Groups``/``--Screens`` release, runtime missing-screen banner
@@ -68,6 +71,7 @@ Upcoming
    :maxdepth: 1
    :hidden:
 
+   0.4.7
    0.4.6
    0.4.4
    0.4.3

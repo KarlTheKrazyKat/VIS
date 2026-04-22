@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from tkinter import Toplevel
 
+from VIStk.Objects._Identity import new_id
 from VIStk.Objects._TabManager import TabManager
 from VIStk.Widgets._HostMenu import HostMenu
 from VIStk.Widgets._InfoRow import InfoRow
@@ -39,6 +40,9 @@ class DetachedWindow:
             btn_offset_y: Cursor y offset within the original tab button.
         """
         from VIStk.Objects._Host import _HOST_INSTANCE
+
+        self.id: int = new_id()
+        """Stable process-unique window ID (0.4.7)."""
 
         self.host = host
         self._closing = False
@@ -152,9 +156,9 @@ class DetachedWindow:
             self.win.geometry("1200x800+0+0")
             self.win.update_idletasks()
 
-            tab_names = list(self.tab_manager._tabs.keys())
-            if tab_names:
-                btn = self.tab_manager.tab_bar._tabs[tab_names[0]]["button"]
+            tab_ids = list(self.tab_manager._tabs.keys())
+            if tab_ids:
+                btn = self.tab_manager.tab_bar._tabs[tab_ids[0]]["button"]
                 btn_in_win_x, btn_in_win_y = 0, 0
                 w = btn
                 while True:
@@ -187,22 +191,24 @@ class DetachedWindow:
 
     # ── Lifecycle callbacks (tab events) ──────────────────────────────────────
 
-    def _on_tab_activate(self, name: str, module):
+    def _on_tab_activate(self, tab_id: int, module):
         """Update title, InfoRow, and menu when a tab gains focus."""
         self.HostMenu.restore_defaults()
         self.HostMenu.clear_screen_items()
 
-        info = self.tab_manager._tabs.get(name, {}).get("info", "")
-        self._set_title(name, info)
-        base_name = self.tab_manager._tabs.get(name, {}).get("base_name", name)
+        entry = self.tab_manager._tabs.get(tab_id, {})
+        display = entry.get("display_name", "")
+        info = entry.get("info", "")
+        self._set_title(display, info)
+        base_name = entry.get("base_name", display)
         scr = self.host.Project.getScreen(base_name)
-        self.InfoRow.set_screen(name, str(scr.s_version) if scr else "")
+        self.InfoRow.set_screen(display, str(scr.s_version) if scr else "")
 
         # Route configure_menu through TabManager
-        self.tab_manager._call_configure_menu(name)
+        self.tab_manager._call_configure_menu(tab_id)
 
         # Apply MENU_OVERRIDES if present
-        hooks = self.tab_manager._tabs.get(name, {}).get("hooks")
+        hooks = entry.get("hooks")
         overrides = (getattr(hooks, "MENU_OVERRIDES", None)
                      or getattr(module, "MENU_OVERRIDES", None))
         if overrides:
@@ -211,16 +217,17 @@ class DetachedWindow:
             except Exception:
                 pass
 
-    def _on_tab_deactivate(self, name: str | None):
+    def _on_tab_deactivate(self, tab_id: int | None):
         self.HostMenu.restore_defaults()
         self.HostMenu.clear_screen_items()
-        if name is None:
+        if tab_id is None:
             self.win.title(self.host.Project.title)
             self.InfoRow.set_screen("")
 
-    def _on_tab_info_change(self, name: str, info: str):
-        if self.tab_manager.active == name:
-            self._set_title(name, info)
+    def _on_tab_info_change(self, tab_id: int, info: str):
+        if self.tab_manager.active == tab_id:
+            entry = self.tab_manager._tabs.get(tab_id, {})
+            self._set_title(entry.get("display_name", ""), info)
 
     def _set_title(self, screen: str, info: str = ""):
         base = self.host.Project.title
@@ -231,79 +238,83 @@ class DetachedWindow:
 
     # ── Pop-out, detach, refresh, split ───────────────────────────────────────
 
-    def _on_tab_popout(self, name: str):
+    def _on_tab_popout(self, tab_id: int):
         """Pop out a tab into a new DetachedWindow at cursor position."""
-        pane = self._split_view.find_pane_for_tab(name)
+        pane = self._split_view.find_pane_for_tab(tab_id)
         if pane is None:
             return
-        entry = pane._tabs[name]
+        entry = pane._tabs[tab_id]
+        display = entry["display_name"]
         module = entry.get("module")
         hooks = entry.get("hooks")
         icon = entry.get("icon")
-        base_name = entry.get("base_name", name)
-        pane.close_tab(name, skip_on_quit=True)
+        base_name = entry.get("base_name", display)
+        pane.close_tab(tab_id, skip_on_quit=True)
         x = self.win.winfo_pointerx()
         y = self.win.winfo_pointery()
-        self._create_detached(name, module, hooks, icon, base_name, x, y, 0, 0)
+        self._create_detached(display, module, hooks, icon, base_name, x, y, 0, 0)
 
-    def _on_tab_detach(self, name: str):
+    def _on_tab_detach(self, tab_id: int):
         """Handle drag-to-detach — use pointer position and stored offsets."""
-        pane = self._split_view.find_pane_for_tab(name)
+        pane = self._split_view.find_pane_for_tab(tab_id)
         if pane is None:
             return
-        entry = pane._tabs[name]
+        entry = pane._tabs[tab_id]
+        display = entry["display_name"]
         module = entry.get("module")
         hooks = entry.get("hooks")
         icon = entry.get("icon")
-        base_name = entry.get("base_name", name)
+        base_name = entry.get("base_name", display)
         bx = pane.tab_bar._last_drag_btn_offset_x
         by = pane.tab_bar._last_drag_btn_offset_y
-        pane.close_tab(name, skip_on_quit=True)
+        pane.close_tab(tab_id, skip_on_quit=True)
         x = self.win.winfo_pointerx()
         y = self.win.winfo_pointery()
-        self._create_detached(name, module, hooks, icon, base_name, x, y, bx, by)
+        self._create_detached(display, module, hooks, icon, base_name, x, y, bx, by)
 
-    def _create_detached(self, name, module, hooks, icon, base_name,
+    def _create_detached(self, display, module, hooks, icon, base_name,
                          x_root, y_root, btn_offset_x, btn_offset_y):
         """Create a new DetachedWindow and open a tab in it."""
         dw = DetachedWindow(self.host, module=None, screen_name=None,
                             x_root=x_root, y_root=y_root,
                             btn_offset_x=btn_offset_x,
                             btn_offset_y=btn_offset_y)
-        dw.tab_manager.open_tab(name, module, hooks=hooks, icon=icon,
+        dw.tab_manager.open_tab(display, module, hooks=hooks, icon=icon,
                                 base_name=base_name)
 
-    def _on_tab_refresh(self, name: str):
-        pane = self._split_view.find_pane_for_tab(name)
+    def _on_tab_refresh(self, tab_id: int):
+        pane = self._split_view.find_pane_for_tab(tab_id)
         if pane is None:
             return
-        entry = pane._tabs[name]
-        base_name = entry.get("base_name", name)
+        entry = pane._tabs[tab_id]
+        display = entry["display_name"]
+        base_name = entry.get("base_name", display)
         icon = entry.get("icon")
-        idx = pane.tab_bar.get_tab_idx(name)
+        idx = pane.tab_bar.get_tab_idx(tab_id)
         scr = self.host.Project.getScreen(base_name)
         if scr is None:
-            pane.force_refresh_tab(name)
+            pane.force_refresh_tab(tab_id)
             return
-        pane.close_tab(name, skip_on_quit=True)
+        pane.close_tab(tab_id, skip_on_quit=True)
         module = self.host._import_screen(scr)
         hooks = self.host._import_hooks(scr)
-        pane.open_tab(name, module, hooks=hooks, icon=icon,
+        pane.open_tab(display, module, hooks=hooks, icon=icon,
                       insert_idx=idx, base_name=base_name)
 
-    def _on_tab_split(self, name: str, direction: str, target_pane=None):
+    def _on_tab_split(self, tab_id: int, direction: str, target_pane=None):
         """Handle right-click 'Split right' / 'Split down' or drag-to-split."""
         from VIStk.Widgets._SplitView import SplitView
 
-        source_pane = self._split_view.find_pane_for_tab(name)
+        source_pane = self._split_view.find_pane_for_tab(tab_id)
         if source_pane is None:
             return
         split_pane = target_pane if target_pane is not None else source_pane
-        entry = source_pane._tabs[name]
+        entry = source_pane._tabs[tab_id]
+        display = entry["display_name"]
         module = entry.get("module")
         hooks = entry.get("hooks")
         icon = entry.get("icon")
-        base_name = entry.get("base_name", name)
+        base_name = entry.get("base_name", display)
 
         target_sv = SplitView.find_owner(split_pane)
         if target_sv is None:
@@ -312,20 +323,20 @@ class DetachedWindow:
         if direction == "center":
             if split_pane is source_pane:
                 return
-            source_pane.close_tab(name, skip_on_quit=True)
-            split_pane.open_tab(name, module, hooks=hooks, icon=icon,
+            source_pane.close_tab(tab_id, skip_on_quit=True)
+            split_pane.open_tab(display, module, hooks=hooks, icon=icon,
                                 base_name=base_name)
         elif split_pane is source_pane:
             if len(source_pane._tabs) <= 1:
                 return
             left_pane, right_pane = target_sv.split(
-                split_pane, direction, exclude={name})
-            right_pane.open_tab(name, module, hooks=hooks, icon=icon,
+                split_pane, direction, exclude={tab_id})
+            right_pane.open_tab(display, module, hooks=hooks, icon=icon,
                                 base_name=base_name)
         else:
-            source_pane.close_tab(name, skip_on_quit=True)
+            source_pane.close_tab(tab_id, skip_on_quit=True)
             left_pane, right_pane = target_sv.split(split_pane, direction)
-            right_pane.open_tab(name, module, hooks=hooks, icon=icon,
+            right_pane.open_tab(display, module, hooks=hooks, icon=icon,
                                 base_name=base_name)
 
     # ── SplitView pane callbacks ──────────────────────────────────────────────
@@ -368,10 +379,18 @@ class DetachedWindow:
             return
         self._closing = True
 
-        # Pass 1: collect vetoes
-        vetoed: list[str] = []
-        for tm in list(self.tab_managers):
-            for name, tab in list(tm._tabs.items()):
+        # (0.4.7) Iterate the live SplitView tree rather than
+        # ``self.tab_managers``, which is seeded at init and never
+        # maintained across splits — the seeded-only list misses every
+        # pane created by ``SplitView.split`` and every pane rebuilt by
+        # ``SplitView.remove_pane``, causing on_quit vetoes to be
+        # silently skipped in those panes.
+        live_panes = list(self._split_view.all_tab_managers())
+
+        # Pass 1: collect vetoes (by tab_id)
+        vetoed: set[int] = set()
+        for tm in live_panes:
+            for tab_id, tab in list(tm._tabs.items()):
                 module = tab.get("module")
                 hooks = tab.get("hooks")
                 quit_fn = (getattr(hooks, "on_quit", None)
@@ -379,15 +398,15 @@ class DetachedWindow:
                 if quit_fn:
                     try:
                         if quit_fn() is False:
-                            vetoed.append(name)
+                            vetoed.add(tab_id)
                     except Exception:
                         pass
 
         # Pass 2: destroy tabs that did not veto
-        for tm in list(self.tab_managers):
-            for name in list(tm._tabs.keys()):
-                if name not in vetoed:
-                    tm.close_tab(name, skip_on_quit=True)
+        for tm in live_panes:
+            for tab_id in list(tm._tabs.keys()):
+                if tab_id not in vetoed:
+                    tm.close_tab(tab_id, skip_on_quit=True)
 
         # If nothing vetoed, destroy window
         if vetoed:
