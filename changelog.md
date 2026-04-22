@@ -652,12 +652,86 @@ The License/EULA page, `\r` quiet-mode progress bar, and
 
 ### 0.4.7 Tab Identity Refactor
 
-**Per-instance tab IDs**
+*Released.*
 
-- Every tab opened by `TabManager.open_tab` is assigned a unique ID (UUID or integer) at creation time
-- All internal operations (close, focus restore, merge, popout, IPC `__VIS_CLOSE__`) reference the ID rather than the display name
-- Display names remain mutable and non-unique; IDs are stable for the lifetime of the tab
-- Fixes focus restoration after `SplitView.remove_pane` in multi-split layouts with duplicate screen names
+**Identity module**
+
+- New `VIStk/Objects/_Identity.py` provides `new_id()`, a monotonic
+  integer allocator used for every tab, pane, and window.
+- IDs are process-unique but **not** persisted across runs; persistence
+  (for features like "remember open tabs on restart") is out of scope.
+
+**Tab IDs**
+
+- `TabManager.open_tab(name, ...)` now returns the new `tab_id: int`
+  (was `bool`) — hold this to address a specific instance.
+- `TabManager._tabs` is keyed by `tab_id` (was the display label); each
+  entry carries its own `display_name`, `base_name`, and `tab_id`.
+- `TabManager` public methods (`close_tab`, `focus_tab`, `has_tab`,
+  `force_refresh_tab`, `set_tab_info`) accept **either** a `tab_id`
+  (`int`) or a display label (`str`). Label lookups are
+  non-deterministic when duplicates exist.
+- `TabManager.active` is now `int | None` (was `str | None`); use the
+  new `TabManager.display_name(tab_id)` helper to resolve back to a
+  label.
+- `TabManager` ⇄ Host callbacks now pass `tab_id` instead of the
+  display name: `on_tab_activate(tab_id, module)`,
+  `on_tab_deactivate(tab_id | None)`, `on_tab_popout(tab_id)`,
+  `on_tab_detach(tab_id)`, `on_tab_refresh(tab_id)`,
+  `on_tab_info_change(tab_id, info)`,
+  `on_tab_split(tab_id, direction, target_pane)`.
+- `TabBar._tabs` is keyed by `tab_id` with the label stored in
+  `entry["label"]`; `update_tab_label(tab_id, new_label)` replaces it.
+
+**Pane and window IDs**
+
+- `TabManager` gains `self.id: int` at construction.
+- `_SplitNode` gains `self.id: int` so `SplitView._pane_parents` is now
+  keyed by `.id` instead of Python's `id(...)` — stable across the
+  object's lifetime, no risk of address reuse collisions.
+- `DetachedWindow` gains `self.id: int` (currently used only for
+  debug/logging; no lookups yet).
+
+**`SplitView.remove_pane` focus restore — the bug fix**
+
+- Before removing a pane, the SplitView records which `tab_id` was
+  focused in the surviving pane subtree.
+- `_snapshot_subtree` / `_rebuild_from_snapshot` preserve each tab's
+  `tab_id` across destroy-and-rebuild by passing the original ID
+  through the new `TabManager.open_tab(..., tab_id=...)` kwarg.
+- After the rebuild the SplitView finds the new pane that now owns the
+  recorded `tab_id` and restores focus there. Previously focus fell
+  back to the first pane in left-to-right order, which failed when
+  multiple panes held tabs with the same base name.
+- `SplitView.find_pane_for_tab(tab_id)` replaces the former
+  name-based helper.
+
+**`Host`**
+
+- `_find_tab_by_base(base_name)` now returns `(tm, tab_id)` instead of
+  `(tm, display_name)`.
+- `_get_all_tab_names` → `_get_all_tab_labels` (collects labels for
+  `_unique_display_name` only; internal tracking uses IDs).
+- `_open_counts` retired — tab IDs make multi-instance tracking
+  trivial; label collisions stay a UX concern only.
+- `Screen.close()` routes through the new ID-based
+  `close_tab(tab_id)`.
+
+**IPC**
+
+- The original 0.4.7 scope mentioned `__VIS_CLOSE__` IPC. IPC is not
+  being reintroduced — in-process `_HOST_INSTANCE` singleton stays the
+  only navigation path. If IPC ever comes back it will use IDs
+  natively.
+
+**Out of scope**
+
+- UUIDs for cross-process persistence — deferred to 0.6.X application
+  settings when "remember open tabs" lands.
+- Deregistering stale TabManager references from
+  `Host.registered_tab_managers` / `DetachedWindow.tab_managers` after
+  `remove_pane` — pre-existing bookkeeping leak, not part of this
+  refactor.
 
 ---
 

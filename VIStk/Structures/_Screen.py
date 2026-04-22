@@ -295,14 +295,19 @@ class Screen(VINFO):
     def close(self) -> bool:
         """Ask the Host to close this screen's tab.
 
-        Returns ``True`` if the tab was found and closed, ``False`` otherwise.
+        Closes the first open instance matching ``self.name``.  Screen code
+        that has opened multiple instances and wants to close a specific
+        one should hold the tab_id returned by ``TabManager.open_tab`` and
+        call ``tm.close_tab(tab_id)`` directly.
+
+        Returns ``True`` if a tab was found and closed, ``False`` otherwise.
         """
         from VIStk.Objects._Host import _HOST_INSTANCE
         if _HOST_INSTANCE is None:
             return False
-        tm, display = _HOST_INSTANCE._find_tab_by_base(self.name)
-        if tm is not None and display is not None:
-            tm.close_tab(display)
+        tm, tab_id = _HOST_INSTANCE._find_tab_by_base(self.name)
+        if tm is not None and tab_id is not None:
+            tm.close_tab(tab_id)
             return True
         return False
 
