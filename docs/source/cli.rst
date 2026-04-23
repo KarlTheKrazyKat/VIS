@@ -112,6 +112,24 @@ compiles them to native binaries, bundles required assets (``Icons``, ``Images``
    * - ``-Note``
      - ``-n``
      - Release note (informational)
+   * - ``-Groups``
+     - ``-g``
+     - Comma-separated group names (from ``release_info.groups``). Build an
+       installer containing only the union of the listed groups' members.
+   * - ``-Screens``
+     -
+     - Comma-separated screen names. Build an installer containing only the
+       listed screens. May be combined with ``-Groups``; the Host is always
+       included. Excluded screens are pruned from the archived
+       ``project.json`` and empty groups are dropped.
+
+Examples:
+
+.. code-block:: text
+
+   VIS release -Groups Core
+   VIS release -Screens WorderEditor,FloorView
+   VIS release -Groups Core -Screens DashboardA
 
 Release a single screen
 -----------------------
@@ -209,6 +227,17 @@ Directly sets any attribute in a screen's ``project.json`` entry.
    * - ``current``
      - string / none
      - ``none`` or ``null`` clears the value
+   * - ``requires``
+     - list
+     - Comma-separated screen names that must be installed alongside this
+       one. Use ``none`` / ``null`` / ``""`` / ``[]`` to clear.
+   * - ``suggests``
+     - list
+     - Comma-separated screen names recommended alongside this one.
+   * - ``warn_message``
+     - string / none
+     - Custom message shown by the installer's dependency dialog and by the
+       runtime missing-screen banner.
 
 Examples:
 
@@ -217,6 +246,64 @@ Examples:
    VIS edit WorkOrders single_instance true
    VIS edit Dashboard tabbed false
    VIS edit Settings version 2.0.0
+   VIS edit Dashboard requires "WorkOrders,TimeClock"
+   VIS edit Dashboard warn_message "Dashboard needs the WorkOrders screen to load data."
+
+Manage screen groups
+--------------------
+
+.. code-block:: text
+
+   VIS group add <group_name> [description]
+   VIS group remove <group_name>
+   VIS group assign <screen> <group_name> [true|false]
+   VIS group unassign <screen>
+   VIS group default <screen> <true|false>
+   VIS group list
+
+Maintains the ``release_info.groups`` block in ``project.json``. Screen
+groups bundle related screens under a single checkbox in the installer
+GUI; the expand arrow reveals indented sub-checkboxes so end-users can
+pick individual members. Each member carries a ``default`` flag
+controlling whether it is initially checked.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 78
+
+   * - Subcommand
+     - Description
+   * - ``add``
+     - Creates an empty group with an optional description. The name must
+       be a valid identifier, not clash with any screen name, and not
+       collide with a reserved VIS command.
+   * - ``remove``
+     - Removes a group. Member screens themselves are left intact; they
+       simply become ungrouped.
+   * - ``assign``
+     - Places a screen in a group. A screen belongs to at most one group;
+       assigning reassigns and removes the screen from any previous group.
+       The optional ``true|false`` argument sets the member's ``default``
+       flag (defaults to ``true``).
+   * - ``unassign``
+     - Removes a screen from whichever group currently contains it.
+   * - ``default``
+     - Flips the ``default`` flag for a screen already inside a group.
+       ``false`` means the screen starts **unchecked** when the group
+       checkbox is checked — users can still tick it manually.
+   * - ``list``
+     - Prints every group with its description and members (including
+       each member's default flag).
+
+Examples:
+
+.. code-block:: text
+
+   VIS group add Core "Main application screens"
+   VIS group assign WorkOrders Core
+   VIS group assign FloorView Core
+   VIS group assign Diagnostics Core false
+   VIS group list
 
 Stop the Host
 -------------

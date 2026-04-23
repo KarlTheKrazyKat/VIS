@@ -57,9 +57,9 @@ class Host:
         self._fps_acc: float = 0.0
         self._fps_listeners: list = []
 
-        # Multiple-instance tracking: base_name → count of currently open instances
-        self._open_counts: dict[str, int] = {}
-
+        # (0.4.7) Multiple-instance tracking retired — tab IDs now make
+        # every tab uniquely addressable; label uniqueness is only a UX
+        # concern, handled by :meth:`_unique_display_name`.
         self.Active: bool = True
 
         self._opened_default = False
@@ -115,26 +115,50 @@ class Host:
 
     # ── Tabs ───────────────────────────────────────────────────────────────────
 
-    def _get_all_tab_names(self) -> set[str]:
-        """Return all display names currently open in any window."""
-        names: set[str] = set()
+    def _get_all_tab_labels(self) -> set[str]:
+        """Return every display label currently in use across all windows.
+
+        Used by :meth:`_unique_display_name` to avoid visually ambiguous
+        duplicate labels; internal bookkeeping relies on tab IDs (0.4.7),
+        not on label uniqueness.
+
+        Walks the live SplitView tree rather than ``dw.tab_managers`` so
+        ghost labels from TabManagers destroyed by ``SplitView.remove_pane``
+        (a pre-existing bookkeeping leak) don't trigger spurious ``(2)``
+        suffixes on new tabs.
+        """
+        labels: set[str] = set()
         for dw in self.detached_windows:
-            for tm in dw.tab_managers:
-                names.update(tm._tabs.keys())
-        return names
+            for tm in dw._split_view.all_tab_managers():
+                for entry in tm._tabs.values():
+                    label = entry.get("display_name")
+                    if label:
+                        labels.add(label)
+        return labels
 
     def _find_tab_by_base(self, base_name: str):
-        """Return (tab_manager, display_name) for the first open tab whose base_name matches."""
+        """Return ``(tab_manager, tab_id)`` for the first open tab whose
+        ``base_name`` matches, else ``(None, None)``.
+
+        With duplicate base names this picks the first match — callers
+        wanting a specific instance should hold the tab_id returned by
+        :meth:`TabManager.open_tab`.
+
+        Walks the live SplitView tree so ghost entries from destroyed
+        TabManagers (see ``_get_all_tab_labels``) aren't returned.
+        """
         for dw in self.detached_windows:
-            for tm in dw.tab_managers:
-                for display, entry in tm._tabs.items():
+            for tm in dw._split_view.all_tab_managers():
+                for tab_id, entry in tm._tabs.items():
+                    display = entry.get("display_name", "")
                     if entry.get("base_name", display) == base_name:
-                        return tm, display
+                        return tm, tab_id
         return None, None
 
     def _unique_display_name(self, base: str) -> str:
-        """Return a display name that doesn't conflict with open tabs."""
-        existing = self._get_all_tab_names()
+        """Return a display name that doesn't visually collide with an
+        already-open tab label."""
+        existing = self._get_all_tab_labels()
         if base not in existing:
             return base
         n = 2
@@ -144,9 +168,9 @@ class Host:
 
     def _open_tab(self, scr):
         if scr.single_instance:
-            tm, display = self._find_tab_by_base(scr.name)
-            if tm is not None:
-                tm.focus_tab(display)
+            tm, tab_id = self._find_tab_by_base(scr.name)
+            if tm is not None and tab_id is not None:
+                tm.focus_tab(tab_id)
                 # Raise the DetachedWindow that owns the target pane
                 for dw in self.detached_windows:
                     if tm in dw.tab_managers:
