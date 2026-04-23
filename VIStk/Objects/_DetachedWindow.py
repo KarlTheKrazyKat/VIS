@@ -298,8 +298,11 @@ class DetachedWindow:
         pane.close_tab(tab_id, skip_on_quit=True)
         module = self.host._import_screen(scr)
         hooks = self.host._import_hooks(scr)
+        # Reuse the original tab_id so external references (recorded focus
+        # IDs, _pane_parents look-ups) survive the refresh — mirrors the
+        # identity-preserving behaviour of TabManager.force_refresh_tab.
         pane.open_tab(display, module, hooks=hooks, icon=icon,
-                      insert_idx=idx, base_name=base_name)
+                      insert_idx=idx, base_name=base_name, tab_id=tab_id)
 
     def _on_tab_split(self, tab_id: int, direction: str, target_pane=None):
         """Handle right-click 'Split right' / 'Split down' or drag-to-split."""

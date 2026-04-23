@@ -121,10 +121,15 @@ class Host:
         Used by :meth:`_unique_display_name` to avoid visually ambiguous
         duplicate labels; internal bookkeeping relies on tab IDs (0.4.7),
         not on label uniqueness.
+
+        Walks the live SplitView tree rather than ``dw.tab_managers`` so
+        ghost labels from TabManagers destroyed by ``SplitView.remove_pane``
+        (a pre-existing bookkeeping leak) don't trigger spurious ``(2)``
+        suffixes on new tabs.
         """
         labels: set[str] = set()
         for dw in self.detached_windows:
-            for tm in dw.tab_managers:
+            for tm in dw._split_view.all_tab_managers():
                 for entry in tm._tabs.values():
                     label = entry.get("display_name")
                     if label:
@@ -138,9 +143,12 @@ class Host:
         With duplicate base names this picks the first match — callers
         wanting a specific instance should hold the tab_id returned by
         :meth:`TabManager.open_tab`.
+
+        Walks the live SplitView tree so ghost entries from destroyed
+        TabManagers (see ``_get_all_tab_labels``) aren't returned.
         """
         for dw in self.detached_windows:
-            for tm in dw.tab_managers:
+            for tm in dw._split_view.all_tab_managers():
                 for tab_id, entry in tm._tabs.items():
                     display = entry.get("display_name", "")
                     if entry.get("base_name", display) == base_name:
