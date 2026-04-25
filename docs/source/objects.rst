@@ -419,16 +419,43 @@ Positions and sizes the window.
     # Center an 800x600 window on screen
     root.WindowGeometry.setGeometry(width=800, height=600, align="center")
 
-    # Center a popup on its parent window
-    popup.update()
-    popup.WindowGeometry.getGeometry(True)
-    popup.WindowGeometry.setGeometry(
-        width=popup.winfo_width(),
-        height=popup.winfo_height(),
-        align="center",
-        size_style="window_relative",
-        window_ref=root
-    )
+    # Center a popup on its parent window — flicker-free (0.5.0+)
+    from VIStk.Objects import WindowGeometry
+    WindowGeometry(popup)
+    # ... build all child widgets first ...
+    popup.WindowGeometry.center_on(root)
+
+.. note::
+
+   The pre-0.5.0 multi-call pattern (``popup.update()`` →
+   ``getGeometry(True)`` → ``setGeometry(align="center", ...)``) made the
+   popup briefly visible at the OS default position before jumping to
+   the centred position.  :meth:`center_on` performs the same math
+   inside a ``withdraw()`` / ``deiconify()`` wrap and uses
+   ``update_idletasks()`` (layout-only) instead of ``update()``, so the
+   window is never drawn at its default position.
+
+   Do not call ``center_on`` on the root ``Tk()`` window — ``withdraw()``
+   on the main application window hides it entirely.
+
+center_on (0.5.0)
+~~~~~~~~~~~~~~~~~
+
+``center_on(window_ref)``
+
+Centre this window on *window_ref* without a visible flicker.  Drop-in
+replacement for the multi-call ``update + getGeometry + setGeometry``
+pattern.  Call after all child widgets are built so ``winfo_width`` /
+``winfo_height`` reflect the final size.
+
+.. code-block:: python
+
+    popup = Toplevel(root)
+    Button(popup, text="OK", command=popup.destroy).pack(padx=50, pady=50)
+
+    from VIStk.Objects import WindowGeometry
+    WindowGeometry(popup)
+    popup.WindowGeometry.center_on(root)
 
 stripGeometry
 ~~~~~~~~~~~~~
@@ -636,3 +663,26 @@ with a keyword and a callback function. Flags are passed with ``--`` on the comm
 
 The ``ArgHandler`` on ``Root.Project`` is used internally by the CLI for screen loading with
 arguments.
+
+
+open_active_screen_docs (0.5.0)
+-------------------------------
+
+Reads the active screen from the in-process Host singleton, runs
+``Project.resolve_docs_url()`` (active screen ``docs`` -> project
+``defaults.docs`` -> ``None``), and hands the URL to
+:func:`webbrowser.open`.  Returns ``True`` on dispatch, ``False`` if no
+URL is configured.
+
+Intended to be wired into ``HostMenu.add_project_command`` for a
+one-line top-level Help button:
+
+.. code-block:: python
+
+    from VIStk.Widgets import HostMenu
+    from VIStk.Objects import open_active_screen_docs
+
+    host_menu.add_project_command("Help", open_active_screen_docs)
+
+The URL is taken verbatim from ``project.json``; configure entries via
+``VIS docs set ...`` (see :doc:`cli`).

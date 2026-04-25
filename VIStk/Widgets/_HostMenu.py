@@ -89,6 +89,24 @@ class HostMenu:
         self.menubar.add_cascade(label=label, menu=cascade)
         self._project_labels.append(label)
 
+    def add_project_command(self, label: str, command) -> None:
+        """Add one leaf command directly to the menubar (project layer).
+
+        Unlike :meth:`set_project_items` which adds a cascade (a dropdown),
+        this adds a single clickable menubar entry whose label *is* the
+        action — e.g. a top-level ``Help`` button.  Persists across all
+        tab changes; only removed by :meth:`clear_project_items`.
+
+        May be called multiple times to add more than one top-level
+        command, side by side, in call order.
+
+        Args:
+            label:   Top-level label shown on the menubar.
+            command: Zero-arg callable invoked when the user clicks.
+        """
+        self.menubar.add_command(label=label, command=command)
+        self._project_labels.append(label)
+
     def clear_project_items(self):
         """Remove all project-layer cascades.
 

@@ -6,6 +6,7 @@ from VIStk.Objects._Layout import *
 from VIStk.Objects._TabManager import TabManager, set_tab_info
 from VIStk.Objects._Host import Host
 from VIStk.Objects._DetachedWindow import DetachedWindow
+from VIStk.Objects._Docs import open_active_screen_docs
 
 __all__ = ["WindowGeometry",
            "Root",
@@ -15,4 +16,5 @@ __all__ = ["WindowGeometry",
            "TabManager",
            "set_tab_info",
            "Host",
-           "DetachedWindow"]
+           "DetachedWindow",
+           "open_active_screen_docs"]

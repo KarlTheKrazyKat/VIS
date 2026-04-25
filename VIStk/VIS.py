@@ -137,6 +137,42 @@ def __main__():
                 case _:
                     print(f"Unknown group subcommand: {inp[2]!r}")
 
+        case "docs" | "Docs":
+            # VIS docs set <screen|--default> <url>
+            # VIS docs clear <screen|--default>
+            # VIS docs list
+            if len(inp) < 3:
+                print("Usage: VIS docs <set|clear|list> ...")
+                return
+            project = Project()
+            match inp[2]:
+                case "set":
+                    if len(inp) < 5:
+                        print("Usage: VIS docs set <screen_name|--default> <url>")
+                        return
+                    target, url = inp[3], inp[4]
+                    if target in ("--default", "--Default", "-d", "-D"):
+                        project.set_default_docs(url)
+                    else:
+                        project.edit_screen(target, "docs", url)
+                case "clear":
+                    if len(inp) < 4:
+                        print("Usage: VIS docs clear <screen_name|--default>")
+                        return
+                    target = inp[3]
+                    if target in ("--default", "--Default", "-d", "-D"):
+                        project.set_default_docs(None)
+                    else:
+                        project.edit_screen(target, "docs", "null")
+                case "list":
+                    default = project.default_docs or "(none)"
+                    print(f"  --default: {default}")
+                    for scr in project.screenlist:
+                        url = scr.docs or "(falls through to default)"
+                        print(f"  {scr.name}: {url}")
+                case _:
+                    print(f"Unknown docs subcommand: {inp[2]!r}")
+
         case "release" | "Release" | "r" | "R":
             project=Project()
             flag:str=""

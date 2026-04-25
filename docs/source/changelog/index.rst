@@ -13,6 +13,9 @@ Released
    * - Version
      - Title
      - Highlights
+   * - :doc:`0.5`
+     - VIS Widgets, Help Button & Popup Polish
+     - Tooltip / CollapsibleFrame / AutocompleteEntry / DateEntry; ``HostMenu.add_project_command``; per-screen ``docs`` URL + ``VIS docs`` CLI; ``confirm`` / ``confirm_discard``; ``WindowGeometry.center_on``
    * - :doc:`0.4.7`
      - Tab Identity Refactor
      - Every tab, pane, and window gets a stable integer ID; fixes focus restoration after ``SplitView.remove_pane`` with duplicate screen names
@@ -48,9 +51,6 @@ Upcoming
    * - Version
      - Title
      - Planned
-   * - :doc:`0.5`
-     - VIS Widgets & Upgrade Tool
-     - Tooltip, CollapsibleFrame, AutocompleteEntry, DateEntry, ``VIS upgrade``
    * - :doc:`0.6`
      - Application Settings
      - Per-project settings, settings UI, remember window state and open tabs
@@ -71,6 +71,7 @@ Upcoming
    :maxdepth: 1
    :hidden:
 
+   0.5
    0.4.7
    0.4.6
    0.4.4
@@ -80,7 +81,6 @@ Upcoming
    0.4.0
    0.3
    0.4.5
-   0.5
    0.6
    0.7
    0.8

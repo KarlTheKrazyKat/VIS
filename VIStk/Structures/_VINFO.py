@@ -45,6 +45,7 @@ _RESERVED_VIS_COMMANDS = {
     "edit", "Edit",
     "release", "Release", "r", "R",
     "group", "Group",
+    "docs", "Docs",
 }
 
 def validName(name:str):
