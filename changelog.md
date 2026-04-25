@@ -735,21 +735,57 @@ The License/EULA page, `\r` quiet-mode progress bar, and
 
 ---
 
-### 0.5.X VIS Widgets
+### 0.5.0 VIS Widgets, Help Button & Popup Polish
 
-Widgets that Tkinter does not provide natively. General-purpose and usable in any VIStk app.
+**Released.**  Adds general-purpose widgets, a one-line Help-button hookup, standard confirmation dialogs, and a flicker-free popup centring helper.
 
-- `Tooltip` — hover tooltip bound to any widget; Tkinter has no native tooltip
-- `CollapsibleFrame` — frame with a header button that toggles content visibility
-- `AutocompleteEntry` — Entry with a filtered dropdown suggestion list
-- `DateEntry` — date input widget with format validation and optional calendar picker popup
-- Expand custom frames
-- More menu options
-- Color palette feature — recolor default VIStk widgets; accessible throughout user code
+**VIS Widgets** — all exported from `VIStk.Widgets`:
+
+- `Tooltip` — hover tooltip bound to any widget; `text` may be a `str` or zero-arg callable for state-dependent tooltips; cleans up its `after` callback on widget destroy
+- `CollapsibleFrame` — frame whose body is hidden under a header button; pack children into `cf.body`; `cf.expanded_var` is a shared `BooleanVar`
+- `AutocompleteEntry` — `ttk.Entry` with a filtered dropdown `Listbox`; `values` may be iterable or callable; `match="prefix"` (default) or `"contains"`
+- `DateEntry` — entry + calendar-picker popup, no third-party dependencies; `get()` returns `date | None`; invalid manual input reverts on focus-out
+
+**Confirmation dialogs:**
+
+- `confirm(parent, *, title, message, yes="Yes", no="No") -> bool` — two-button Yes/No
+- `confirm_discard(parent, *, title=None, message=None, name=None) -> "save" | "discard" | "cancel"` — three-button Save / Discard / Cancel; closing the window or pressing Escape returns `"cancel"`
+- Both are modal, transient, and centred via `WindowGeometry.center_on` (no flicker)
+
+**Help button & per-screen `docs` URL:**
+
+- `HostMenu.add_project_command(label, command)` — adds a clickable leaf entry directly on the menubar (not a cascade); persists across all tab changes
+- `Screen.docs: str | None` — per-screen URL field on `project.json` `Screens.<name>.docs`
+- `Project.default_docs: str | None` — project-wide fallback (`defaults.docs`)
+- `Project.resolve_docs_url(screen_name=None)` — runs the resolution chain (per-screen → project default → `None`)
+- `Project.active_screen_name` property — returns the active tab's `base_name` (resolved via the 0.4.7 tab IDs)
+- `VIStk.Objects.open_active_screen_docs()` — looks up the active screen's URL and hands it to `webbrowser.open`; returns `True` on dispatch
+- `VIS docs` CLI:
+  ```
+  VIS docs set <screen_name> <url>
+  VIS docs set --default <url>
+  VIS docs clear <screen_name>
+  VIS docs clear --default
+  VIS docs list
+  ```
+- `VIS add screen` scaffolder writes `"docs": null` so the field is discoverable
+- URLs are passed verbatim to `webbrowser.open` — no path normalisation; authors write fully-qualified URLs
+
+**Popup flicker fix:**
+
+- `WindowGeometry.center_on(window_ref)` — performs the canonical centre-on-parent math inside a `withdraw()` / `deiconify()` wrap and uses `update_idletasks()` (layout-only) instead of `update()` (which also processes the map request); the popup is never drawn at the OS default position
+- Existing `setGeometry` is unchanged — no behavioural change for root-window callers
+- `objects.rst` "Center a popup on its parent window" example updated
+
+**Out of scope (deferred):**
+
+- **Project Upgrade Tool** (`VIS upgrade`) — moved to 0.7 (already titled "Defaults & Navigation, update tools")
+- **Color palette feature** — tracked separately for a later 0.5.x or 0.6.x
+- **`is_dirty` auto-generated `on_quit`** — `confirm_discard` covers the manual case; the auto-wrapper can land later without an API break
 
 ---
 
-### 0.5.X Project Upgrade Tool
+### 0.7.X Project Upgrade Tool *(moved from 0.5)*
 
 # this kinda seems like a bad idea looking at it now
 

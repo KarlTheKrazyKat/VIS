@@ -590,3 +590,110 @@ WarningWindow
 The window is automatically made modal (``modalize()``), blocking input to the parent until
 dismissed. Use for non-recoverable error messages where the user must acknowledge before
 continuing.
+
+
+----
+
+Tooltip (0.5.0)
+---------------
+
+Hover tooltip bound to any widget. Tkinter has no native tooltip.
+
+.. code-block:: python
+
+    from VIStk.Widgets import Tooltip
+    Tooltip(my_button, text="Save the current document")
+
+``text`` may be a string or a zero-arg callable for state-dependent
+tooltips (re-evaluated each show). Cleans up its ``after`` callback on
+widget destroy.
+
+Keyword args: ``delay_ms=500``, ``wraplength=240``, ``background``,
+``foreground``, ``borderwidth``.
+
+----
+
+CollapsibleFrame (0.5.0)
+------------------------
+
+Frame whose body is hidden under a header button. Pack children into
+``cf.body`` (NOT directly into the frame).
+
+.. code-block:: python
+
+    from VIStk.Widgets import CollapsibleFrame
+    cf = CollapsibleFrame(parent, text="Advanced", expanded=False)
+    cf.pack(fill="x")
+    ttk.Entry(cf.body).pack()
+
+``cf.expanded_var`` is a ``BooleanVar`` callers can bind to share state
+or persist it. Methods: ``expand()``, ``collapse()``, ``toggle()``,
+``set_expanded(bool)``, ``set_text(str)``.
+
+----
+
+AutocompleteEntry (0.5.0)
+-------------------------
+
+``ttk.Entry`` with a filtered dropdown ``Listbox`` of suggestions.
+
+.. code-block:: python
+
+    from VIStk.Widgets import AutocompleteEntry
+    AutocompleteEntry(parent, values=["Boston", "Chicago", ...]).pack()
+
+``values`` may be an iterable or a callable ``(text) -> iterable``
+(use the callable form for dynamic lookups).
+
+Keyword args: ``max_results=8``, ``case_sensitive=False``,
+``match="prefix"`` (or ``"contains"``).
+
+Keyboard: ``Up``/``Down`` move, ``Return`` accepts, ``Tab`` accepts the
+first match, ``Escape`` closes the popup.
+
+----
+
+DateEntry (0.5.0)
+-----------------
+
+Date input with format validation and a calendar-picker popup. No
+third-party dependencies.
+
+.. code-block:: python
+
+    from VIStk.Widgets import DateEntry
+    de = DateEntry(parent, date_format="%Y-%m-%d")
+    de.pack()
+
+``de.get()`` returns ``date | None``. ``de.set(d)`` sets
+programmatically. Invalid manual input reverts to the last valid value
+on focus-out. Keyword args include ``initial: date | None``,
+``on_change: callable``, ``entry_width: int``.
+
+----
+
+confirm / confirm_discard (0.5.0)
+---------------------------------
+
+Drop-in modal helpers so screens stop reimplementing
+:mod:`tkinter.messagebox`.
+
+.. code-block:: python
+
+    from VIStk.Widgets import confirm, confirm_discard
+
+    if confirm(parent, title="Delete?", message="Really delete?"):
+        ...
+
+    choice = confirm_discard(parent, name="Work Order #12345")
+    if choice == "cancel":
+        return False                # veto on_quit
+    if choice == "save":
+        _save()
+    return True
+
+Both dialogs centre on the parent via ``WindowGeometry.center_on``
+(no flicker), are modal/transient, and return plain values
+(``bool`` for ``confirm``; ``"save" | "discard" | "cancel"`` for
+``confirm_discard``). Closing the window or pressing Escape returns
+the negative outcome.

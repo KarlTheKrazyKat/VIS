@@ -47,6 +47,9 @@ class Screen(VINFO):
 
             info[self.title]["Screens"][self.name]["tabbed"] = tabbed
             info[self.title]["Screens"][self.name]["single_instance"] = False
+            # (0.5.0) Stub the docs field so developers discover it on
+            # inspection.  ``null`` means "fall through to project default".
+            info[self.title]["Screens"][self.name]["docs"] = None
 
             with open(self.p_sinfo,"w") as f:
                 json.dump(info,f,indent=4)
@@ -86,6 +89,15 @@ class Screen(VINFO):
         """Names of screens recommended alongside this one (soft suggestion)."""
         self.warn_message: str | None = scr_data.get("warn_message")
         """Optional custom message shown by the installer when a dependency is unmet."""
+        self.docs: str | None = scr_data.get("docs")
+        """Optional documentation URL for this screen.
+
+        When ``None`` (the default), the Host's ``open_active_screen_docs``
+        helper falls through to the project-level ``default_docs`` field.
+        The string is passed verbatim to :func:`webbrowser.open` — author is
+        responsible for using a fully-qualified URL (``https://``,
+        ``file:///``, etc.).
+        """
       
     def addElement(self,element:str) -> int:
         if validName(element):

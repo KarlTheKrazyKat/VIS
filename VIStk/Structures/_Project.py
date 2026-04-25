@@ -7,10 +7,10 @@ from VIStk.Structures._Screen import *
 _EDITABLE_SCREEN_ATTRS = {
     "script", "release", "icon", "desc", "tabbed",
     "single_instance", "version", "current",
-    "requires", "suggests", "warn_message",
+    "requires", "suggests", "warn_message", "docs",
 }
 _BOOL_ATTRS      = {"release", "tabbed", "single_instance"}
-_NULLABLE_ATTRS  = {"icon", "current", "warn_message"}
+_NULLABLE_ATTRS  = {"icon", "current", "warn_message", "docs"}
 _VERSION_ATTRS   = {"version"}
 _LIST_ATTRS      = {"requires", "suggests"}
 
@@ -40,6 +40,13 @@ class Project(VINFO):
             self.collect_packages:list[str] = info[self.title]["release_info"].get("collect_packages", [])
             self.host_script: str = info[self.title].get("host", {}).get("script", ".VIS/Host.py")
             """Filename of the Host entry-point script"""
+            self.default_docs: str | None = info[self.title].get("defaults", {}).get("docs")
+            """Project-level fallback documentation URL.
+
+            Used by :meth:`resolve_docs_url` when the active screen's own
+            ``Screen.docs`` is ``None``.  Passed verbatim to
+            :func:`webbrowser.open`.
+            """
         self.Screen: Screen = None
         """The Currently Running `Screen`"""
 
@@ -277,6 +284,7 @@ class Project(VINFO):
                 "requires":        lambda: setattr(scr, "requires", list(coerced)),
                 "suggests":        lambda: setattr(scr, "suggests", list(coerced)),
                 "warn_message":    lambda: setattr(scr, "warn_message", coerced),
+                "docs":            lambda: setattr(scr, "docs", coerced),
             }
             attr_map[attribute]()
 
@@ -360,7 +368,7 @@ class Project(VINFO):
 
     def reload(self) -> None:
         """Reloads the current screen
-        
+
         Returns:
             (None): When load fails
         """
@@ -368,6 +376,69 @@ class Project(VINFO):
             self.Screen.load()
         except AttributeError:
             return None
+
+    # ── Active-screen helpers (0.5.0) ──────────────────────────────────────
+
+    @property
+    def active_screen_name(self) -> str | None:
+        """Return the ``base_name`` of the screen whose tab is focused.
+
+        Reads the in-process ``Host`` singleton's ``active_tab_manager``
+        and resolves its active ``tab_id`` back to the screen identity
+        used as a key under ``project.json`` -> ``Screens``.  Returns
+        ``None`` when no Host is running, no pane has focus, or the
+        active pane has no open tab.
+        """
+        from VIStk.Objects._Host import _HOST_INSTANCE
+        if _HOST_INSTANCE is None:
+            return None
+        tm = _HOST_INSTANCE.active_tab_manager
+        if tm is None:
+            return None
+        active_id = getattr(tm, "active", None)
+        if active_id is None:
+            return None
+        entry = tm._tabs.get(active_id)
+        if entry is None:
+            return None
+        return entry.get("base_name") or entry.get("display_name")
+
+    def set_default_docs(self, url: str | None) -> int:
+        """Set or clear the project-level default documentation URL.
+
+        Writes ``defaults.docs`` in ``project.json``.  Pass ``None`` to
+        clear.  Keeps the in-memory ``default_docs`` attribute in sync.
+        """
+        with open(self.p_sinfo, "r") as f:
+            info = json.load(f)
+        old = info[self.title].get("defaults", {}).get("docs")
+        info[self.title].setdefault("defaults", {})["docs"] = url
+        with open(self.p_sinfo, "w") as f:
+            json.dump(info, f, indent=4)
+        self.default_docs = url
+        print(f"  project.defaults.docs: {old!r} → {url!r}")
+        return 1
+
+    def resolve_docs_url(self, screen_name: str | None = None) -> str | None:
+        """Return the documentation URL for a screen, or the project default.
+
+        Resolution order:
+
+        1. The named screen's ``Screen.docs`` (if set)
+        2. ``Project.default_docs`` (if set)
+        3. ``None``
+
+        Args:
+            screen_name: Screen to resolve for.  When ``None`` (default)
+                uses :attr:`active_screen_name`.
+        """
+        if screen_name is None:
+            screen_name = self.active_screen_name
+        if screen_name:
+            scr = self.getScreen(screen_name)
+            if scr is not None and scr.docs:
+                return scr.docs
+        return self.default_docs or None
 
     # ── Screen group management (release_info.groups) ──────────────────────
 

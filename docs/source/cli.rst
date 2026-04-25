@@ -305,6 +305,36 @@ Examples:
    VIS group assign Diagnostics Core false
    VIS group list
 
+Manage documentation URLs
+-------------------------
+
+.. code-block:: text
+
+   VIS docs set <screen_name> <url>
+   VIS docs set --default <url>
+   VIS docs clear <screen_name>
+   VIS docs clear --default
+   VIS docs list
+
+Maintains the per-screen ``docs`` field and the project-level
+``defaults.docs`` field in ``project.json``.  Used by the built-in
+:func:`VIStk.Objects.open_active_screen_docs` helper to drive a Help
+button.  URLs are passed verbatim to :func:`webbrowser.open` --- the
+author writes a fully-qualified URL (``https://``, ``file:///``, etc.).
+
+Resolution order at click-time is: active screen's ``docs`` →
+``defaults.docs`` → no-op.  ``--default`` is the project-wide
+fallback.
+
+Examples:
+
+.. code-block:: text
+
+   VIS docs set --default https://example.com/docs
+   VIS docs set Settings   https://example.com/docs/settings
+   VIS docs clear Settings
+   VIS docs list
+
 Stop the Host
 -------------
 

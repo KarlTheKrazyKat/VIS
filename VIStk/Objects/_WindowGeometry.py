@@ -123,3 +123,37 @@ class WindowGeometry():
 
         self.geometry = [int(width), int(height), int(x-7), int(y)]
         self.window.geometry('%dx%d+%d+%d' % tuple(self.geometry))
+
+    def center_on(self, window_ref: "Tk|Toplevel") -> None:
+        """Center this window on *window_ref* without a visible flicker.
+
+        The canonical *update + getGeometry + setGeometry* pattern makes the
+        popup visible at the OS default position (top-left of screen) before
+        ``setGeometry`` repositions it — a brief but noticeable flash on
+        every open.  ``center_on`` performs the same math inside a
+        ``withdraw()`` / ``deiconify()`` wrap and uses
+        ``update_idletasks()`` (layout-only) instead of ``update()`` (which
+        also processes the map request), so the window is never drawn at
+        its default position.
+
+        Safe to call on a freshly-constructed ``Toplevel`` before any
+        widgets are packed; call it *after* all child widgets are built so
+        that ``winfo_width`` / ``winfo_height`` reflect the final size.
+
+        Not intended for root ``Tk()`` windows — calling ``withdraw()`` on
+        the main application window hides it entirely.
+
+        Args:
+            window_ref: The ``Tk`` or ``Toplevel`` to center on.
+        """
+        self.window.withdraw()
+        self.window.update_idletasks()
+        self.getGeometry(True)
+        self.setGeometry(
+            width=self.window.winfo_width(),
+            height=self.window.winfo_height(),
+            align="center",
+            size_style="window_relative",
+            window_ref=window_ref,
+        )
+        self.window.deiconify()
