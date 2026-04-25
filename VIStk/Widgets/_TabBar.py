@@ -141,6 +141,8 @@ class TabBar(Frame):
             compound="left" if icon else "none",
             relief="flat",
             bd=0,
+            highlightthickness=0,
+            takefocus=0,
             bg=_BG_INACTIVE,
             activebackground=_BG_HOVER_TAB,
             command=lambda n=name: self._btn_click(n),
@@ -160,6 +162,8 @@ class TabBar(Frame):
             text="✕",
             relief="flat",
             bd=0,
+            highlightthickness=0,
+            takefocus=0,
             width=2,
             bg=_BG_INACTIVE,
             activebackground=_BG_HOVER_CLOSE,
@@ -254,6 +258,8 @@ class TabBar(Frame):
         When focused the bar uses the normal background; when unfocused
         it dims slightly so the user can see which pane is active.
         """
+        if self._focused == focused:
+            return
         self._focused = focused
         bg = _BG_FOCUSED if focused else _BG_UNFOCUSED
         self.configure(bg=bg)

@@ -703,6 +703,8 @@ class SplitView(Frame):
         if id(pane) not in self._pane_parents:
             return
         old = self._focused_pane
+        if pane is old and SplitView._global_focused_pane is pane:
+            return
         self._focused_pane = pane
         SplitView._global_focused_pane = pane
         self._update_focused_styles()
