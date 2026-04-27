@@ -149,9 +149,15 @@ class Release(Project):
         parts.append("--follow-imports")
         parts.append("--enable-plugin=tk-inter")
 
-        # Include hidden imports (pywomlib, VIStk, etc.)
+        # Include hidden imports.
+        # Top-level packages (no dots) use --include-package so all sub-packages
+        # are bundled into the exe.  Dotted names (e.g. PIL._tkinter_finder) are
+        # module-level hints and use --include-module.
         for imp in self.hidden_imports:
-            parts.append(f"--include-module={imp}")
+            if "." not in imp:
+                parts.append(f"--include-package={imp}")
+            else:
+                parts.append(f"--include-module={imp}")
 
         # Bundle project packages so screen .pyds can resolve imports at runtime
         parts.append("--include-package=modules")
