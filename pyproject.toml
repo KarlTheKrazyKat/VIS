@@ -34,7 +34,7 @@ Changelog = "https://github.com/KarlTheKrazyKat/VIS/blob/master/changelog.md"
 [project.scripts]
 VIS = "VIStk.VIS:__main__"
 [tool.setuptools]
-packages = ["VIStk","VIStk.Widgets","VIStk.Objects","VIStk.Structures"]
+packages = ["VIStk","VIStk.Widgets","VIStk.Objects","VIStk.Structures","VIStk.Bindings"]
 ext-modules = []
 
 [tool.setuptools.package-data]
