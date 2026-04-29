@@ -86,6 +86,82 @@ class Release(Project):
             return ["--msvc=latest"]
         return []
 
+    def _check_compiler(self) -> bool:
+        """Verify the platform's required C compiler is installed.
+
+        Aborts ``VIS release`` with an actionable error before any pip
+        updates or compilation steps if the compiler we plan to hand to
+        Nuitka is missing.  See #35 for why falling back silently is bad.
+
+        Returns ``True`` when the compiler is available, ``False`` (with
+        a printed message) otherwise.
+        """
+        if sys.platform == "win32":
+            # Nuitka locates MSVC via vswhere.exe + the registry, NOT $PATH.
+            # cl.exe is only on PATH inside a Developer Command Prompt, so
+            # we must use the same discovery mechanism Nuitka does.
+            vswhere = (
+                "C:/Program Files (x86)/Microsoft Visual Studio/"
+                "Installer/vswhere.exe"
+            )
+            if not exists(vswhere):
+                self._print_msvc_missing()
+                return False
+            try:
+                result = subprocess.run(
+                    [
+                        vswhere, "-products", "*",
+                        "-requires", "Microsoft.VisualCpp.Tools.HostX64.TargetX64",
+                        "-property", "installationPath",
+                    ],
+                    capture_output=True, text=True, timeout=15,
+                )
+            except (subprocess.TimeoutExpired, OSError):
+                self._print_msvc_missing()
+                return False
+            if not result.stdout.strip():
+                self._print_msvc_missing()
+                return False
+            return True
+
+        if sys.platform == "linux":
+            if shutil.which("gcc") is None:
+                print(
+                    "\nVIS release requires gcc.\n"
+                    "Install via your package manager, e.g.:\n"
+                    "    sudo apt install build-essential\n",
+                    flush=True,
+                )
+                return False
+            return True
+
+        if sys.platform == "darwin":
+            # clang ships with the Xcode Command Line Tools.
+            if shutil.which("clang") is None:
+                print(
+                    "\nVIS release requires clang.\n"
+                    "Install the Xcode Command Line Tools:\n"
+                    "    xcode-select --install\n",
+                    flush=True,
+                )
+                return False
+            return True
+
+        # Unknown platform — let Nuitka try and fail with its own message.
+        return True
+
+    @staticmethod
+    def _print_msvc_missing():
+        print(
+            "\nVIS release requires Microsoft Visual C++ Build Tools.\n"
+            "  1. Download: https://aka.ms/vs/17/release/vs_BuildTools.exe\n"
+            "  2. In the installer, select the 'Desktop development with C++'\n"
+            "     workload (MSVC v143 + Windows SDK).\n"
+            "  3. After installation finishes, open a fresh terminal and\n"
+            "     re-run VIS release.\n",
+            flush=True,
+        )
+
     def _status(self, text: str, newline: bool = False):
         """Overwrite the single progress line. Pads to _LINE_WIDTH."""
         end = "\n" if newline else ""
@@ -506,6 +582,10 @@ class Release(Project):
 
     def release(self):
         """Releases a version of your project"""
+        #Check compiler — fail fast before pip updates / version bumps
+        if not self._check_compiler():
+            return
+
         #Check default screen
         if self.default_screen is None:
             print("Warning: No default screen set in project.json.", flush=True)
