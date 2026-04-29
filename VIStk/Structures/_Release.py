@@ -73,6 +73,19 @@ class Release(Project):
 
     _LINE_WIDTH = 70
 
+    def _compiler_args(self) -> list:
+        """Return Nuitka compiler-selection flags for the current platform.
+
+        Forces MSVC on Windows so Nuitka does not silently fall back to its
+        bundled zig toolchain, which has produced corrupt frozen-bytecode
+        binaries on Python 3.13 (see #35).  On Linux and macOS, Nuitka's
+        auto-detection picks the platform-native compiler (gcc / clang),
+        which is what we want — no flag needed.
+        """
+        if sys.platform == "win32":
+            return ["--msvc=latest"]
+        return []
+
     def _status(self, text: str, newline: bool = False):
         """Overwrite the single progress line. Pads to _LINE_WIDTH."""
         end = "\n" if newline else ""
@@ -146,6 +159,7 @@ class Release(Project):
         mode = "--onefile" if onefile else "--standalone"
 
         parts = [sys.executable, "-m", "nuitka", mode]
+        parts.extend(self._compiler_args())
         parts.append("--follow-imports")
         parts.append("--enable-plugin=tk-inter")
 
@@ -252,6 +266,7 @@ class Release(Project):
                 stem = os.path.splitext(scr.script)[0]
                 parts = [
                     sys.executable, "-m", "nuitka", "--module",
+                    *self._compiler_args(),
                     f"--output-dir={self.location}",
                     "--assume-yes-for-downloads",
                     scr.script,
@@ -274,6 +289,7 @@ class Release(Project):
 
                 parts = [
                     sys.executable, "-m", "nuitka", "--standalone",
+                    *self._compiler_args(),
                     "--enable-plugin=tk-inter",
                     f"--output-dir={self.location}",
                     f"--output-filename={scr.name}.exe",
@@ -353,6 +369,7 @@ class Release(Project):
 
             parts = [
                 sys.executable, "-m", "nuitka", "--module",
+                *self._compiler_args(),
                 f"--output-dir={self.location}",
                 "--assume-yes-for-downloads",
                 pkg_path,
