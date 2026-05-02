@@ -388,8 +388,9 @@ class Release(Project):
                 parts.append(f"--windows-product-version={self.Version}")
                 if sys.platform == "win32":
                     parts.append("--windows-console-mode=disable")
-                # Standalone screens share the Host runtime in .Runtime/
-                # Only follow direct imports — shared packages live alongside
+                # Standalone screens share the Host runtime at the install
+                # root (python313.dll, .pyd, third-party packages).  Follow
+                # direct imports only — shared packages live alongside.
                 parts.append("--follow-imports")
                 parts.append(scr.script)
 
@@ -543,22 +544,9 @@ class Release(Project):
         if os.path.exists(stale_host):
             os.remove(stale_host)
 
-        # Move runtime into hidden .Runtime/ subfolder
-        # Keep only asset dirs, Screens, and license files at root
-        _keep_at_root = {".VIS", "Icons", "Images", "Screens", "Shared", ".Runtime"}
-        _keep_files = {"LICENSE", "LICENSE.txt", "EULA.txt", "EULA.md"}
-        runtime_dir = os.path.join(out_dir, ".Runtime")
-        os.makedirs(runtime_dir, exist_ok=True)
-
-        for item in os.listdir(out_dir):
-            if item in _keep_at_root or item in _keep_files:
-                continue
-            full = os.path.join(out_dir, item)
-            dest = os.path.join(runtime_dir, item)
-            if os.path.isdir(full):
-                shutil.move(full, dest)
-            else:
-                shutil.move(full, dest)
+        # The Nuitka standalone exes live at the install root alongside
+        # their python313.dll / .pyd / package dependencies.  No .Runtime/
+        # indirection layer, no launcher shim — see #105.
 
         print(f"\n\nReleased a new{' '+self.flag+' ' if self.flag else ' '}build of {self.title}!", flush=True)
 
@@ -692,102 +680,10 @@ class Release(Project):
         #Clean Environment
         self.clean()
 
-        #%Launcher Generation (cached per icon)
+        # Nuitka exes live at the install root and are launched directly.
+        # No PyInstaller launcher shim, no .Runtime/ indirection — see #105.
         pendix = self.title if self.flag == "" else f"{self.title}-{self.flag}"
         final = f"{self.location}{pendix}"
-        runtime_dir = f"{final}/.Runtime"
-
-        cache_dir = self.p_vinfo + "/cache"
-        os.makedirs(cache_dir, exist_ok=True)
-
-        launcher_src = VISROOT.replace("\\", "/") + "Structures/Launcher.py"
-        ixt = ".ico" if sys.platform == "win32" else ".xbm"
-
-        # Read launcher source hash once
-        launcher_hasher = hashlib.sha256()
-        with open(launcher_src, "rb") as f:
-            launcher_hasher.update(f.read())
-        launcher_src_hash = launcher_hasher.hexdigest()
-
-        # Build a mapping of exe name → icon file for each app exe in .Runtime/
-        _no_launcher = {"Uninstaller.exe"}
-        exe_icon_map = {}
-        if os.path.exists(runtime_dir):
-            for item in os.listdir(runtime_dir):
-                if item.endswith(".exe") and item not in _no_launcher:
-                    # Find the matching screen's icon, or fall back to default
-                    stem = os.path.splitext(item)[0]
-                    scr_icon = self.d_icon
-                    for scr in self.screenlist:
-                        if scr.name == stem and scr.icon:
-                            scr_icon = scr.icon
-                            break
-                    icon_path = f"{self.p_project}/Icons/{scr_icon}{ixt}"
-                    if not exists(icon_path):
-                        icon_path = f"{self.p_project}/Icons/{self.d_icon}{ixt}"
-                    exe_icon_map[item] = icon_path
-
-        # Build one cached launcher per unique icon
-        unique_icons = set(exe_icon_map.values())
-        icon_to_cache = {}
-        for icon_path in unique_icons:
-            # Hash launcher source + icon to detect changes
-            hasher = hashlib.sha256()
-            hasher.update(launcher_src_hash.encode())
-            if exists(icon_path):
-                with open(icon_path, "rb") as f:
-                    hasher.update(f.read())
-            icon_hash = hasher.hexdigest()[:12]
-
-            cache_name = f"launcher_{icon_hash}"
-            cache_path = cache_dir + f"/{cache_name}"
-            if sys.platform == "win32":
-                cache_path += ".exe"
-            hash_file = cache_dir + f"/{cache_name}.hash"
-
-            cached_hash = ""
-            if os.path.exists(hash_file) and os.path.exists(cache_path):
-                with open(hash_file, "r") as f:
-                    cached_hash = f.read().strip()
-
-            if cached_hash == icon_hash:
-                pass  # Cache hit
-            else:
-                icon_name = os.path.splitext(os.path.basename(icon_path))[0]
-                print(f"Compiling launcher ({icon_name})", flush=True)
-                icon_arg = f"--icon {icon_path} " if exists(icon_path) else ""
-                subprocess.call(
-                    f"pyinstaller --noconfirm --onefile "
-                    f"--windowed --name {cache_name} --log-level FATAL "
-                    f"{icon_arg}"
-                    f"{launcher_src}",
-                    shell=True, cwd=self.location
-                )
-                launcher_results = glob.glob(f"{cache_name}*", root_dir=self.location + "dist/")
-                if not launcher_results:
-                    print(f"Build failed: {cache_name} not found in dist/")
-                    return
-                built_launcher = launcher_results[0]
-                shutil.copy2(self.location + f"dist/{built_launcher}", cache_path)
-                with open(hash_file, "w") as f:
-                    f.write(icon_hash)
-                shutil.rmtree(self.location + "dist/", ignore_errors=True)
-                shutil.rmtree(self.location + "build/", ignore_errors=True)
-                spec_file = self.location + f"{cache_name}.spec"
-                if os.path.exists(spec_file):
-                    os.remove(spec_file)
-                print(f"Launcher cached ({icon_name})", flush=True)
-
-            icon_to_cache[icon_path] = cache_path
-
-        # Place launchers with correct per-screen icons
-        count = 0
-        for exe_name, icon_path in exe_icon_map.items():
-            cache_path = icon_to_cache[icon_path]
-            shutil.copy2(cache_path, os.path.join(final, exe_name))
-            count += 1
-        if count:
-            print(f"Launchers placed for {count} executable(s)", flush=True)
 
         #%Installer & Uninstaller Generation
         binaries_zip = f"{self.location}binaries.zip"
