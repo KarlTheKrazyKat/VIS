@@ -115,13 +115,15 @@ class DetachedWindow:
         if x_root is not None and y_root is not None:
             self._position_window(x_root, y_root, btn_offset_x, btn_offset_y)
         else:
-            # Default: center on screen
+            # Default: center on screen, with a cascade offset so additional
+            # windows don't sit exactly on top of the first one.
             self.win.geometry("1200x800")
             self.win.update_idletasks()
             sw = self.win.winfo_screenwidth()
             sh = self.win.winfo_screenheight()
-            x = (sw - 1200) // 2
-            y = (sh - 800) // 2
+            cascade = max(0, len(host.detached_windows) - 1) * 30
+            x = (sw - 1200) // 2 + cascade
+            y = (sh - 800) // 2 + cascade
             self.win.geometry(f"+{x}+{y}")
 
     # ── Property shim ─────────────────────────────────────────────────────────
