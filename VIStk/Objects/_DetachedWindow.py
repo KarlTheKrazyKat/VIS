@@ -28,7 +28,8 @@ class DetachedWindow:
 
     def __init__(self, host, module=None, screen_name: str | None = None,
                  x_root: int | None = None, y_root: int | None = None,
-                 btn_offset_x: int = 0, btn_offset_y: int = 0):
+                 btn_offset_x: int = 0, btn_offset_y: int = 0,
+                 chromeless: bool = False):
         """
         Args:
             host:         The owning ``Host`` instance.
@@ -38,6 +39,11 @@ class DetachedWindow:
             y_root:       Screen y coordinate for positioning (or None for default).
             btn_offset_x: Cursor x offset within the original tab button.
             btn_offset_y: Cursor y offset within the original tab button.
+            chromeless:   When True, hide the tab bar and use the screen's
+                          own icon and name for the window — used by
+                          ``Host._open_standalone`` so non-tabbed screens
+                          appear as plain windows rather than single-tab
+                          windows.
         """
         from VIStk.Objects._Host import _HOST_INSTANCE
 
@@ -46,6 +52,9 @@ class DetachedWindow:
 
         self.host = host
         self._closing = False
+        self.chromeless: bool = chromeless
+        """When True the tab bar is hidden and the window adopts the
+        screen's own icon and name (set by ``Host._open_standalone``)."""
 
         # Toplevel on the hidden root
         self.win = Toplevel(host.root)
@@ -97,8 +106,14 @@ class DetachedWindow:
         self.InfoRow.pack(fill="x", side="bottom")
         host._fps_listeners.append(self.InfoRow.set_fps)
 
-        # Set window icon
-        self._load_icon()
+        # Hide the tab bar before laying out the window for chromeless mode
+        # so the geometry math sees the final content area.
+        if self.chromeless:
+            self.tab_manager.hide_tab_bar()
+
+        # Set window icon — chromeless windows use the screen's icon
+        # rather than the project default.
+        self._load_icon(screen_name if self.chromeless else None)
 
         # Bind focus tracking
         self.win.bind("<FocusIn>", self._on_window_focus)
@@ -177,17 +192,33 @@ class DetachedWindow:
         except Exception:
             pass
 
-    def _load_icon(self):
+    def _load_icon(self, screen_name: str | None = None):
+        """Set the window's taskbar icon.
+
+        When ``screen_name`` is provided and the screen has its own icon,
+        use it; otherwise fall back to the project default icon.  Used by
+        chromeless standalone windows to advertise the screen identity in
+        the taskbar instead of the project identity.
+        """
         try:
             import glob as _glob
             import PIL.Image
             import PIL.ImageTk
-            matches = _glob.glob(
-                self.host.Project.p_icons + "/" + self.host.Project.d_icon + ".*"
-            )
+
+            icon_name: str | None = None
+            if screen_name:
+                scr = self.host.Project.getScreen(screen_name)
+                if scr is not None and scr.icon:
+                    icon_name = scr.icon
+            if icon_name is None:
+                icon_name = self.host.Project.d_icon
+
+            matches = _glob.glob(self.host.Project.p_icons + "/" + icon_name + ".*")
             if matches:
                 img = PIL.Image.open(matches[0]).convert("RGBA").resize((32, 32))
-                self.win.iconphoto(True, PIL.ImageTk.PhotoImage(img))
+                # Hold a reference so Tk doesn't garbage-collect the image.
+                self._icon_ref = PIL.ImageTk.PhotoImage(img)
+                self.win.iconphoto(True, self._icon_ref)
         except Exception:
             pass
 
@@ -232,6 +263,12 @@ class DetachedWindow:
             self._set_title(entry.get("display_name", ""), info)
 
     def _set_title(self, screen: str, info: str = ""):
+        if self.chromeless:
+            # Standalone windows advertise the screen identity directly
+            # rather than the project: screen prefix used for the tabbed
+            # Host shell.
+            self.win.title(f"{screen} \u2014 {info}" if info else screen)
+            return
         base = self.host.Project.title
         if info:
             self.win.title(f"{base}: {screen} \u2014 {info}")

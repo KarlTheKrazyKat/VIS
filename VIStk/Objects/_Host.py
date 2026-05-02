@@ -240,12 +240,18 @@ class Host:
                         base_name=scr.name)
 
     def _open_standalone(self, scr):
-        """Open a standalone (tabbed=False) screen as a new DetachedWindow."""
+        """Open a standalone (tabbed=False) screen as a new DetachedWindow.
+
+        Standalone windows are chromeless: the tab bar is hidden and the
+        window adopts the screen's own icon and name, so a screen with
+        ``tabbed=False`` looks like a plain application window rather than
+        a single-tab Host shell.
+        """
         module = self._import_screen(scr)
         if module is None:
             return
         from VIStk.Objects._DetachedWindow import DetachedWindow
-        dw = DetachedWindow(self, module, scr.name)
+        dw = DetachedWindow(self, module, scr.name, chromeless=True)
 
     def _load_tab_icon(self, scr) -> "PIL.ImageTk.PhotoImage | None":
         if not scr.icon:
