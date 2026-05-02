@@ -83,6 +83,15 @@ class Screen(VINFO):
         """Whether this screen opens as a tab inside the Host window"""
         self.single_instance: bool = info[self.title]["Screens"][self.name].get("single_instance", False)
         """When True only one instance of this screen may be open at a time"""
+        self.host_menubar: bool = info[self.title]["Screens"][self.name].get("host_menubar", True)
+        """Whether the host File/Edit/View/Tools menubar should render when
+        this screen owns a chromeless ``DetachedWindow``.
+
+        Default ``True``.  Set to ``False`` for standalone screens that
+        already draw their own menubar inside their content (e.g.
+        AssetManager).  Ignored for tabbed screens — the host menubar is
+        window-level and shared across all tabs in a tabbed Host window.
+        """
         self.requires: list[str] = list(scr_data.get("requires", []))
         """Names of screens that must be installed alongside this one (hard dependency)."""
         self.suggests: list[str] = list(scr_data.get("suggests", []))
