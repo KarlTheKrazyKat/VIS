@@ -50,23 +50,33 @@ class InfoRow(Frame):
         except Exception:
             app_version = ""
 
+        # Project portion of the left label — held constant across screen
+        # changes so the user always sees what app they're in.  The screen
+        # portion is appended in :meth:`set_screen`.
+        self._project_label = (
+            f"{project.title} {app_version}" if app_version else project.title
+        )
+
         # ── Layout: screen label (left) | copyright (centre) | version+fps (right)
         self._screen_lbl = Label(
-            self, text="", bg=_BG, fg=_FG, anchor="w", padx=6
+            self, text=self._project_label, bg=_BG, fg=_FG, anchor="w", padx=6
         )
         self._screen_lbl.pack(side="left")
 
-        Label(self, text=copyright_text, bg=_BG, fg=_FG, anchor="center").pack(
-            side="left", expand=True
+        # Copyright is placed at the geometric centre of the row rather
+        # than packed between the side labels — packing with expand=True
+        # only centres within the gap, which drifts off-centre once the
+        # side labels have unequal widths (and the project + screen long-
+        # form left label makes that drift conspicuous).
+        Label(self, text=copyright_text, bg=_BG, fg=_FG).place(
+            relx=0.5, rely=0.5, anchor="center"
         )
 
+        # Right side shows just the FPS counter — the project version
+        # used to be duplicated here, but it now lives on the left in
+        # ``_project_label``.
         self._fps_lbl = Label(
-            self,
-            text=f"v{app_version}  |  0 fps" if app_version else "0 fps",
-            bg=_BG,
-            fg=_FG,
-            anchor="e",
-            padx=6,
+            self, text="0 fps", bg=_BG, fg=_FG, anchor="e", padx=6,
         )
         self._fps_lbl.pack(side="right")
         self._app_version = app_version
@@ -79,16 +89,23 @@ class InfoRow(Frame):
     # ── Public API ─────────────────────────────────────────────────────────────
 
     def set_screen(self, name: str, version: str = "") -> None:
-        """Update the screen label.  Pass empty strings to clear it."""
-        text = f"{name}  v{version}" if name and version else name
+        """Update the screen portion of the left label.
+
+        The project portion (``"<Project> <ver>"``) is held constant and
+        only the screen portion changes between tabs.  Passing empty
+        strings collapses the label back to just the project portion.
+        """
+        if name and version:
+            text = f"{self._project_label} — {name} {version}"
+        elif name:
+            text = f"{self._project_label} — {name}"
+        else:
+            text = self._project_label
         self._screen_lbl.config(text=text)
 
     def set_fps(self, fps: float) -> None:
         """Update the FPS counter."""
-        if self._app_version:
-            self._fps_lbl.config(text=f"v{self._app_version}  |  {fps:.1f} fps")
-        else:
-            self._fps_lbl.config(text=f"{fps:.1f} fps")
+        self._fps_lbl.config(text=f"{fps:.1f} fps")
 
     def show_banner(self, text: str, duration_ms: int = 5000,
                     level: str = "warn") -> None:
