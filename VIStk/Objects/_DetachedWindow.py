@@ -107,9 +107,13 @@ class DetachedWindow:
         host._fps_listeners.append(self.InfoRow.set_fps)
 
         # Hide the tab bar before laying out the window for chromeless mode
-        # so the geometry math sees the final content area.
+        # so the geometry math sees the final content area.  Lock the
+        # SplitView so the chromeless window stays single-pane — splits
+        # would re-introduce a tab strip in the new pane and defeat the
+        # standalone presentation.
         if self.chromeless:
             self.tab_manager.hide_tab_bar()
+            self._split_view.lock()
 
         # Set window icon — chromeless windows use the screen's icon
         # rather than the project default.
