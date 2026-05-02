@@ -72,13 +72,11 @@ class InfoRow(Frame):
             relx=0.5, rely=0.5, anchor="center"
         )
 
+        # Right side shows just the FPS counter — the project version
+        # used to be duplicated here, but it now lives on the left in
+        # ``_project_label``.
         self._fps_lbl = Label(
-            self,
-            text=f"v{app_version}  |  0 fps" if app_version else "0 fps",
-            bg=_BG,
-            fg=_FG,
-            anchor="e",
-            padx=6,
+            self, text="0 fps", bg=_BG, fg=_FG, anchor="e", padx=6,
         )
         self._fps_lbl.pack(side="right")
         self._app_version = app_version
@@ -107,10 +105,7 @@ class InfoRow(Frame):
 
     def set_fps(self, fps: float) -> None:
         """Update the FPS counter."""
-        if self._app_version:
-            self._fps_lbl.config(text=f"v{self._app_version}  |  {fps:.1f} fps")
-        else:
-            self._fps_lbl.config(text=f"{fps:.1f} fps")
+        self._fps_lbl.config(text=f"{fps:.1f} fps")
 
     def show_banner(self, text: str, duration_ms: int = 5000,
                     level: str = "warn") -> None:
