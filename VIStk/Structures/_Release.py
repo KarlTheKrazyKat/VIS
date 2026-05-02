@@ -156,6 +156,60 @@ class Release(Project):
         # Unknown platform — let Nuitka try and fail with its own message.
         return True
 
+    def _check_tools(self) -> bool:
+        """Verify required Python build tools are installed (#88).
+
+        Replaces the auto-upgrade pass that used to run on every release.
+        That pass was the trigger for the zig regression in #35 — a
+        Nuitka upgrade silently pulled in a broken toolchain.  Pinning
+        the toolchain in ``pyproject.toml`` and just *checking* that the
+        pinned tools are present here is the safer move.
+
+        On a missing tool, prints the exact ``pip install`` command the
+        user should run and returns ``False``.
+        """
+        # (module name passed to ``python -m``, pip distribution name)
+        tools = [
+            ("pip", "pip"),
+            ("nuitka", "nuitka"),
+            ("PyInstaller", "pyinstaller"),
+        ]
+        missing = []
+        for module_name, install_name in tools:
+            try:
+                result = subprocess.run(
+                    [sys.executable, "-m", module_name, "--version"],
+                    capture_output=True, timeout=15,
+                )
+                if result.returncode != 0:
+                    missing.append(install_name)
+            except (subprocess.TimeoutExpired, OSError):
+                missing.append(install_name)
+
+        if not missing:
+            return True
+
+        # pip itself missing — can't pip install pip.  Bootstrap via ensurepip.
+        if "pip" in missing:
+            print(
+                "\nVIS release requires pip but it is not available in this "
+                "Python interpreter.\n"
+                "Bootstrap it with:\n"
+                f"    {sys.executable} -m ensurepip --upgrade\n",
+                flush=True,
+            )
+            return False
+
+        names = ", ".join(missing)
+        cmd = f"{sys.executable} -m pip install {' '.join(missing)}"
+        print(
+            f"\nVIS release requires the following Python package(s): {names}\n"
+            f"Install with:\n"
+            f"    {cmd}\n",
+            flush=True,
+        )
+        return False
+
     @staticmethod
     def _print_msvc_missing():
         print(
@@ -576,8 +630,12 @@ class Release(Project):
 
     def release(self):
         """Releases a version of your project"""
-        #Check compiler — fail fast before pip updates / version bumps
+        #Pre-flight: compiler + required Python tools.
+        #Fail fast with actionable messages before any version bumps,
+        #user prompts, or compilation work.
         if not self._check_compiler():
+            return
+        if not self._check_tools():
             return
 
         #Ensure dist + build roots exist.  ``build_dir`` is intentionally
@@ -598,16 +656,6 @@ class Release(Project):
         if self.type != "":
             if not self.newVersion():
                 return
-
-        #Update Required Tools
-        print("Updating pip...", flush=True)
-        subprocess.call(f"python -m pip install --upgrade pip --quiet",shell=True)
-
-        print("Updating nuitka...", flush=True)
-        subprocess.call(f"python -m pip install --upgrade nuitka --quiet",shell=True)
-
-        print("Updating pyinstaller...", flush=True)
-        subprocess.call(f"python -m pip install --upgrade pyinstaller --quiet",shell=True)
 
         #Clean previous build output
         pendix = self.title if self.flag == "" else f"{self.title}-{self.flag}"
