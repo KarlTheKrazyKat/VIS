@@ -46,6 +46,12 @@ class SplitView(Frame):
         self._drop_overlay: Toplevel | None = None
         self._drop_zone_info: tuple | None = None  # (pane, direction)
 
+        # When locked, refuse all splits (right-click and drag-drop) so a
+        # chromeless DetachedWindow can stay single-pane.  Cross-window drag
+        # detection in :meth:`detect_any_drop_zone` skips locked views via
+        # :meth:`detect_drop_zone` returning None.
+        self._locked: bool = False
+
         SplitView._registry.append(self)
 
     def destroy(self):
@@ -240,13 +246,27 @@ class SplitView(Frame):
 
     _DROP_ZONE_RATIO = 0.25  # outer 25 % of the content area triggers a zone
 
+    def lock(self):
+        """Refuse all splits and drag-drop merges into this view.
+
+        Used by chromeless DetachedWindows so a standalone screen stays
+        single-pane.  Idempotent.
+        """
+        self._locked = True
+
+    def unlock(self):
+        """Re-enable splits and drag-drop merges."""
+        self._locked = False
+
     def detect_drop_zone(self, x_root: int, y_root: int):
         """Check if screen coords fall in a split drop zone.
 
         Returns ``(pane, direction)`` where *direction* is one of
         ``"right"``, ``"left"``, ``"down"``, ``"up"``; or ``None`` if the
-        cursor is not in any zone.
+        cursor is not in any zone.  Locked views always return ``None``.
         """
+        if self._locked:
+            return None
         for pane in self.all_tab_managers():
             content = pane._content
             try:
@@ -370,7 +390,14 @@ class SplitView(Frame):
         Returns:
             ``(left_pane, right_pane)`` — the two new ``TabManager`` instances.
             *left_pane* contains all tabs that were in *pane* minus *exclude*.
+
+        Raises:
+            RuntimeError: when the SplitView is locked (chromeless mode).
         """
+        if self._locked:
+            raise RuntimeError(
+                "SplitView is locked (chromeless window) — splits not permitted."
+            )
         from VIStk.Objects._TabManager import TabManager
 
         orient = "horizontal" if direction == "right" else "vertical"
