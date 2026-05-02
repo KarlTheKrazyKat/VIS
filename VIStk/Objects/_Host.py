@@ -6,6 +6,7 @@ import os
 import queue
 import sys
 import time
+from pathlib import Path
 from tkinter import Tk
 
 from VIStk.Structures._Project import Project
@@ -64,7 +65,31 @@ class Host:
 
         self._opened_default = False
 
+        # When invoked as ``VIS <Project> <ScreenName>`` the screen name is
+        # forwarded as ``sys.argv[1]`` (or ``argv[0]`` for a frozen Host
+        # exe).  Override the default screen so the requested screen opens
+        # at startup instead of the project default.
+        self._startup_screen: str | None = self._resolve_startup_screen()
+
         _HOST_INSTANCE = self
+
+    def _resolve_startup_screen(self) -> str | None:
+        """Return the screen name passed on the command line, or None.
+
+        Walks ``sys.argv[1:]`` (Python skips ``argv[0]`` = script path in
+        dev mode; frozen builds get the exe path as ``argv[0]``).  Only
+        returns a name that matches a registered screen — unknown args
+        fall through and the project's ``default_screen`` is used.
+        """
+        for arg in sys.argv[1:]:
+            if arg.startswith("-"):
+                continue
+            # Ignore the host script path itself if it appears in argv
+            if arg.endswith(".py") and Path(arg).name.lower() == "host.py":
+                continue
+            if self.Project.getScreen(arg) is not None:
+                return arg
+        return None
 
     # ── Navigation ─────────────────────────────────────────────────────────────
 
@@ -299,13 +324,16 @@ class Host:
     def update(self):
         """Process all pending Tk events for the root and its Toplevels.
 
-        On the first call, opens the default screen so that Host.py has
+        On the first call, opens the startup screen so that Host.py has
         time to configure ``default_menu_setup`` before any window is created.
+        Prefers the screen passed on the command line (``VIS <Project>
+        <ScreenName>``) and falls back to ``Project.default_screen``.
         """
         if not self._opened_default:
             self._opened_default = True
-            if self.Project.default_screen:
-                self.open(self.Project.default_screen)
+            startup = self._startup_screen or self.Project.default_screen
+            if startup:
+                self.open(startup)
         self.root.update()
 
     def quit_host(self):
