@@ -71,6 +71,23 @@ class HostMenu:
         self._parent.config(menu=self.menubar)
         self._build_base()
 
+    def detach(self):
+        """Remove this menu bar from the parent window without destroying it.
+
+        Counterpart to :meth:`attach`.  The underlying ``Menu`` widget and
+        all its cascades / state stay alive, so screen code that calls
+        ``set_screen_items`` / ``restore_defaults`` continues to work — the
+        mutations just aren't visible on the window.
+
+        Used by chromeless ``DetachedWindow`` instances whose active screen
+        opts out of the host menubar via ``host_menubar=False`` in
+        ``project.json``.
+        """
+        try:
+            self._parent.config(menu="")
+        except Exception:
+            pass
+
     def set_project_items(self, items: list[dict], label: str = "Project"):
         """Add one cascade to the project layer.
 

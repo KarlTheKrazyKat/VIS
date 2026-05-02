@@ -6,10 +6,10 @@ from VIStk.Structures._Screen import *
 
 _EDITABLE_SCREEN_ATTRS = {
     "script", "release", "icon", "desc", "tabbed",
-    "single_instance", "version", "current",
+    "single_instance", "host_menubar", "version", "current",
     "requires", "suggests", "warn_message", "docs",
 }
-_BOOL_ATTRS      = {"release", "tabbed", "single_instance"}
+_BOOL_ATTRS      = {"release", "tabbed", "single_instance", "host_menubar"}
 _NULLABLE_ATTRS  = {"icon", "current", "warn_message", "docs"}
 _VERSION_ATTRS   = {"version"}
 _LIST_ATTRS      = {"requires", "suggests"}
@@ -279,6 +279,7 @@ class Project(VINFO):
                 "desc":            lambda: setattr(scr, "desc", coerced),
                 "tabbed":          lambda: setattr(scr, "tabbed", coerced),
                 "single_instance": lambda: setattr(scr, "single_instance", coerced),
+                "host_menubar":    lambda: setattr(scr, "host_menubar", coerced),
                 "version":         lambda: setattr(scr, "s_version", Version(coerced)),
                 "current":         lambda: setattr(scr, "current", coerced),
                 "requires":        lambda: setattr(scr, "requires", list(coerced)),

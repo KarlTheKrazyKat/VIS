@@ -110,10 +110,17 @@ class DetachedWindow:
         # so the geometry math sees the final content area.  Lock the
         # SplitView so the chromeless window stays single-pane — splits
         # would re-introduce a tab strip in the new pane and defeat the
-        # standalone presentation.
+        # standalone presentation.  When the active screen opts out of the
+        # host menubar via ``host_menubar=False`` in project.json, detach
+        # the menubar from the window — the HostMenu object stays alive so
+        # screen code that calls ``set_screen_items`` etc. still works.
         if self.chromeless:
             self.tab_manager.hide_tab_bar()
             self._split_view.lock()
+            if screen_name:
+                _scr = host.Project.getScreen(screen_name)
+                if _scr is not None and not _scr.host_menubar:
+                    self.HostMenu.detach()
 
         # Set window icon — chromeless windows use the screen's icon
         # rather than the project default.
