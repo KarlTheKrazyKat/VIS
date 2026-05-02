@@ -17,9 +17,11 @@ class InfoRow(Frame):
     Shows the active screen name and version on the left, the project
     copyright string centred, and the app version + live FPS on the right.
 
-    The copyright string is normalised at construction time: if it does not
-    already contain the ``©`` symbol, the current year and ``©`` are
-    automatically prepended (e.g. ``"© 2026  bmi CAD Services"``).
+    The copyright string is normalised at construction time to match the
+    long-form ``Copyright © {year} by {owner}   All Rights Reserved.``
+    convention used by the legacy AssetManager footer.  When the project's
+    copyright field already contains the ``©`` symbol it is passed through
+    verbatim so devs can opt out by setting a fully-formatted string.
 
     Call :meth:`set_screen` whenever the active tab changes and
     :meth:`set_fps` once per FPS update (typically once per second).
@@ -33,7 +35,12 @@ class InfoRow(Frame):
         raw = (project.copyright or "").strip()
         if "©" not in raw:
             year = datetime.datetime.now().year
-            copyright_text = f"© {year}  {raw}" if raw else f"© {year}"
+            if raw:
+                copyright_text = (
+                    f"Copyright © {year} by {raw}   All Rights Reserved."
+                )
+            else:
+                copyright_text = f"Copyright © {year}   All Rights Reserved."
         else:
             copyright_text = raw
 
