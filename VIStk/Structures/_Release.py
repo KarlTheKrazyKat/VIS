@@ -31,12 +31,18 @@ class Release(Project):
         self.flag = flag
         self.note = note
 
-        loc = self.dist_location
-        if loc.startswith("./"):
-            loc = self.p_project + "/" + loc[2:]
-        elif not os.path.isabs(loc):
-            loc = self.p_project + "/" + loc
-        self.location = loc.rstrip("/") + "/"
+        # Deliverables (final dist folders, installers, zips) and Nuitka
+        # working dirs (per-flag caches) both live at the project root.
+        # release_info.location in project.json is ignored — kept readable
+        # for back-compat in case any old project.json still has it.
+        self.location = f"{self.p_project}/dist/"
+
+        # ``pendix`` is "<title>" with no flag, or "<title>-<flag>" with one.
+        # Used to suffix the final dist folder AND the per-flag Nuitka build
+        # cache so concurrent / cross-platform builds do not stomp each
+        # other's caches (#91).
+        self.pendix = self.title if flag == "" else f"{self.title}-{flag}"
+        self.build_dir = f"{self.p_project}/build/{self.pendix}/"
 
         self._subset_screens: set[str] | None = self._resolve_subset(
             subset_groups, subset_screens
@@ -267,7 +273,7 @@ class Release(Project):
 
         parts.append(f"--windows-product-version={self.Version}")
 
-        parts.append(f"--output-dir={self.location}")
+        parts.append(f"--output-dir={self.build_dir}")
         parts.append(f"--output-filename={self.title}.exe")
 
         if sys.platform == "win32":
@@ -289,7 +295,7 @@ class Release(Project):
 
         # Nuitka names the .dist folder after the entry script stem
         host_stem = os.path.splitext(os.path.basename(entry_script))[0]
-        nuitka_dist = f"{self.location}{host_stem}.dist"
+        nuitka_dist = f"{self.build_dir}{host_stem}.dist"
 
         _skip = {'.build', '_internal', '__pycache__'}
         if exists(nuitka_dist):
@@ -343,7 +349,7 @@ class Release(Project):
                 parts = [
                     sys.executable, "-m", "nuitka", "--module",
                     *self._compiler_args(),
-                    f"--output-dir={self.location}",
+                    f"--output-dir={self.build_dir}",
                     "--assume-yes-for-downloads",
                     scr.script,
                 ]
@@ -354,7 +360,7 @@ class Release(Project):
 
                 # Move .pyd to Screens/ with clean name (strip cpython tag)
                 import glob as _glob
-                built_pyds = _glob.glob(f"{self.location}{stem}*.pyd")
+                built_pyds = _glob.glob(f"{self.build_dir}{stem}*.pyd")
                 for bp in built_pyds:
                     shutil.move(bp, f"{final}/Screens/{stem}.pyd")
 
@@ -367,7 +373,7 @@ class Release(Project):
                     sys.executable, "-m", "nuitka", "--standalone",
                     *self._compiler_args(),
                     "--enable-plugin=tk-inter",
-                    f"--output-dir={self.location}",
+                    f"--output-dir={self.build_dir}",
                     f"--output-filename={scr.name}.exe",
                     "--assume-yes-for-downloads",
                 ]
@@ -394,7 +400,7 @@ class Release(Project):
 
                 # Merge standalone build into the shared dist folder
                 scr_stem = os.path.splitext(scr.script)[0]
-                scr_dist = f"{self.location}{scr_stem}.dist"
+                scr_dist = f"{self.build_dir}{scr_stem}.dist"
                 if exists(scr_dist):
                     _skip = {'.build', '_internal', '__pycache__'}
                     for dirpath, dirs, files in os.walk(scr_dist):
@@ -446,7 +452,7 @@ class Release(Project):
             parts = [
                 sys.executable, "-m", "nuitka", "--module",
                 *self._compiler_args(),
-                f"--output-dir={self.location}",
+                f"--output-dir={self.build_dir}",
                 "--assume-yes-for-downloads",
                 pkg_path,
             ]
@@ -457,7 +463,7 @@ class Release(Project):
 
             # Move .pyd to Shared/ directory — strip cpython tag
             import glob as _glob
-            built_pyds = _glob.glob(f"{self.location}{pkg}*.pyd")
+            built_pyds = _glob.glob(f"{self.build_dir}{pkg}*.pyd")
             for bp in built_pyds:
                 shutil.move(bp, f"{shared_dir}/{pkg}.pyd")
 
@@ -585,6 +591,12 @@ class Release(Project):
         #Check compiler — fail fast before pip updates / version bumps
         if not self._check_compiler():
             return
+
+        #Ensure dist + build roots exist.  ``build_dir`` is intentionally
+        #not wiped here — its .build/ subfolders are Nuitka's per-module
+        #cache and persist between runs (#91).
+        os.makedirs(self.location, exist_ok=True)
+        os.makedirs(self.build_dir, exist_ok=True)
 
         #Check default screen
         if self.default_screen is None:
