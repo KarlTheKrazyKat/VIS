@@ -101,6 +101,7 @@ class TabManager(Frame):
         self.tab_bar.owner = self
 
         self._content = Frame(self)
+        self._tab_bar_hidden: bool = False
         self._repack_layout()
 
         self.tab_bar.on_focus_change = self._on_focus_change
@@ -149,14 +150,22 @@ class TabManager(Frame):
     # ── Layout ─────────────────────────────────────────────────────────────────
 
     def _repack_layout(self):
-        """Pack tab_bar and _content based on the current position setting."""
+        """Pack tab_bar and _content based on the current position setting.
+
+        When ``_tab_bar_hidden`` is set the tab bar is omitted entirely and
+        the content frame fills the pane — used by chromeless standalone
+        DetachedWindows that host a single non-tabbed screen.
+        """
         self.tab_bar.pack_forget()
         self._content.pack_forget()
+        if not self._tab_bar_hidden:
+            if self._position in ("top", "bottom"):
+                self.tab_bar.pack(side=self._position, fill="x")
+            else:  # left or right
+                self.tab_bar.pack(side=self._position, fill="y")
         if self._position in ("top", "bottom"):
-            self.tab_bar.pack(side=self._position, fill="x")
             self._content.pack(side="top", fill="both", expand=True)
-        else:  # left or right
-            self.tab_bar.pack(side=self._position, fill="y")
+        else:
             self._content.pack(side="left", fill="both", expand=True)
 
     def set_position(self, position: str):
@@ -164,6 +173,18 @@ class TabManager(Frame):
         self._position = position
         self.tab_bar.set_position(position)
         self._repack_layout()
+
+    def hide_tab_bar(self):
+        """Hide the tab bar — used for chromeless standalone windows."""
+        if not self._tab_bar_hidden:
+            self._tab_bar_hidden = True
+            self._repack_layout()
+
+    def show_tab_bar(self):
+        """Restore the tab bar after :meth:`hide_tab_bar`."""
+        if self._tab_bar_hidden:
+            self._tab_bar_hidden = False
+            self._repack_layout()
 
     # ── Identity helpers ───────────────────────────────────────────────────────
 
