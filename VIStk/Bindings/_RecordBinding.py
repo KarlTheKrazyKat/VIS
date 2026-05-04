@@ -219,6 +219,13 @@ class RecordBinding:
     def __init__(self, record):
         self._record = record
         self._state = {}
+        # State-transition callback slots. Public registration methods
+        # (`on_modified` / `on_equal` / `on_diverged`) land in #76 and
+        # write to these slots. ``evaluate()`` and ``refresh()`` fire
+        # via ``_fire()``, which is a no-op when the slot is None.
+        self._on_modified = None
+        self._on_equal = None
+        self._on_diverged = None
 
     # ------------------------------------------------------------------ #
     # Registration                                                        #
@@ -343,6 +350,59 @@ class RecordBinding:
         """
         widget = self._state[key]["widget"]
         _resolve_readonly_setter(widget)(widget, self._is_readonly(key))
+
+    # ------------------------------------------------------------------ #
+    # State evaluation (#74)                                              #
+    # ------------------------------------------------------------------ #
+
+    def evaluate(self):
+        """Per-frame state check — cheap; safe to call from ``loop()``.
+
+        Walks every bound non-read-only key, compares the widget value
+        to the record value, and toggles the sparse ``edited`` flag.
+        Fires transition callbacks **once** per transition: an
+        equal -> modified flip fires ``on_modified``; modified -> equal
+        fires ``on_equal``. Steady-state frames do nothing.
+
+        Read-only keys are skipped entirely — a read-only field cannot
+        enter the modified state, so there is nothing to detect here.
+        Divergence on read-only fields (external mutation of the
+        record) is detected by ``refresh()`` instead (#75).
+
+        Callbacks raised exceptions are swallowed so a buggy handler
+        cannot crash the per-frame loop. (Logging lands with the public
+        registration API in #76.)
+        """
+        for key, s in self._state.items():
+            if self._is_readonly(key):
+                continue
+            same = self._get(key) == self._record[key]
+            was_edited = "edited" in s
+            if same and was_edited:
+                del s["edited"]
+                self._fire(self._on_equal, key, s["widget"])
+            elif not same and not was_edited:
+                s["edited"] = True
+                self._fire(self._on_modified, key, s["widget"])
+
+    # ------------------------------------------------------------------ #
+    # Callback firing (private; public registration lands in #76)        #
+    # ------------------------------------------------------------------ #
+
+    def _fire(self, callback, key, widget):
+        """Invoke *callback* with ``(key, widget)``; swallow exceptions.
+
+        No-op when ``callback`` is ``None``. Called from ``evaluate()``
+        and ``refresh()`` (#75). Per #76, exceptions raised inside a
+        handler are caught so a single buggy callback cannot crash
+        the loop; once a logger is in scope they will be logged.
+        """
+        if callback is None:
+            return
+        try:
+            callback(key, widget)
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------ #
     # Default registry (module-level, extensible)                         #
