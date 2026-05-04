@@ -5,12 +5,20 @@ import re as _re
 import subprocess
 import shutil
 import glob
+import sys
 from os.path import exists
 from zipfile import *
 import datetime
 import hashlib
 import json
 from VIStk.Structures._Version import Version
+
+# Nuitka writes ``.pyd`` on Windows and ``.so`` on Linux/macOS for both
+# ``--module`` outputs and the bundled extensions inside a standalone
+# ``.dist`` folder.  Globs and rename targets must match the platform —
+# hardcoding ``.pyd`` makes every Linux release fail at the first compile
+# step (#124).
+_MOD_EXT = ".pyd" if sys.platform == "win32" else ".so"
 
 
 class Release(Project):
@@ -440,19 +448,21 @@ class Release(Project):
                 if not ok:
                     return False
 
-                # Move .pyd to Screens/ with clean name (strip cpython tag)
+                # Move compiled module to Screens/ with clean name (strip
+                # the cpython tag that Nuitka appends).  Extension is
+                # platform-aware: .pyd on Windows, .so elsewhere.
                 import glob as _glob
-                built_pyds = _glob.glob(f"{self.build_dir}{stem}*.pyd")
-                if not built_pyds:
+                built_mods = _glob.glob(f"{self.build_dir}{stem}*{_MOD_EXT}")
+                if not built_mods:
                     self._status(
                         f"  [{self._step}/{self._total_steps}] {self._category} "
                         f"{self._cat_index}/{self._cat_count} - {scr.name} FAILED — "
-                        f"no .pyd produced at {self.build_dir}{stem}*.pyd",
+                        f"no {_MOD_EXT} produced at {self.build_dir}{stem}*{_MOD_EXT}",
                         newline=True,
                     )
                     return False
-                for bp in built_pyds:
-                    shutil.move(bp, f"{final}/Screens/{stem}.pyd")
+                for bp in built_mods:
+                    shutil.move(bp, f"{final}/Screens/{stem}{_MOD_EXT}")
 
             elif not scr.tabbed and scr.release and mode in ("all", "exe"):
                 # Standalone screen with release=true — compile as its own exe
@@ -578,19 +588,20 @@ class Release(Project):
             if not ok:
                 return False
 
-            # Move .pyd to Shared/ directory — strip cpython tag
+            # Move compiled module to Shared/ — strip the cpython tag.
+            # Extension is platform-aware: .pyd on Windows, .so elsewhere.
             import glob as _glob
-            built_pyds = _glob.glob(f"{self.build_dir}{pkg}*.pyd")
-            if not built_pyds:
+            built_mods = _glob.glob(f"{self.build_dir}{pkg}*{_MOD_EXT}")
+            if not built_mods:
                 self._status(
                     f"  [{self._step}/{self._total_steps}] {self._category} "
                     f"{self._cat_index}/{self._cat_count} - {pkg} FAILED — "
-                    f"no .pyd produced at {self.build_dir}{pkg}*.pyd",
+                    f"no {_MOD_EXT} produced at {self.build_dir}{pkg}*{_MOD_EXT}",
                     newline=True,
                 )
                 return False
-            for bp in built_pyds:
-                shutil.move(bp, f"{shared_dir}/{pkg}.pyd")
+            for bp in built_mods:
+                shutil.move(bp, f"{shared_dir}/{pkg}{_MOD_EXT}")
 
         return True
 
@@ -653,7 +664,7 @@ class Release(Project):
             for screen_name, screen_data in info[self.title]["Screens"].items():
                 if screen_data.get("tabbed", False):
                     stem = os.path.splitext(screen_data["script"])[0]
-                    screen_data["script"] = f"Screens/{stem}.pyd"
+                    screen_data["script"] = f"Screens/{stem}{_MOD_EXT}"
             with open(installed_json, "w") as f:
                 json.dump(info, f, indent=4)
 
