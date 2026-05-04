@@ -222,6 +222,34 @@ class Release(Project):
             flush=True,
         )
 
+    def _check_patchelf(self) -> bool:
+        """Verify ``patchelf`` is installed when releasing on Linux.
+
+        Nuitka's standalone mode on Linux requires ``patchelf`` to rewrite
+        ``RPATH`` / ``RUNPATH`` on every bundled ``.so``.  Without it Nuitka
+        aborts mid-build (often after many compilations have already
+        finished), so fail fast here with an actionable hint — same
+        treatment as the compiler check (#86).
+
+        macOS uses ``install_name_tool`` from the Xcode CLI tools; Windows
+        PE binaries import by base name and need nothing analogous.
+
+        Returns ``True`` when the prerequisite is satisfied (or when the
+        platform doesn't need it), ``False`` (with a printed message)
+        otherwise.
+        """
+        if sys.platform != "linux":
+            return True
+        if shutil.which("patchelf") is None:
+            print(
+                "\nVIS release requires patchelf on Linux.\n"
+                "Install via your package manager, e.g.:\n"
+                "    sudo apt install patchelf\n",
+                flush=True,
+            )
+            return False
+        return True
+
     def _status(self, text: str, newline: bool = False):
         """Overwrite the single progress line. Pads to _LINE_WIDTH."""
         end = "\n" if newline else ""
@@ -630,10 +658,12 @@ class Release(Project):
 
     def release(self):
         """Releases a version of your project"""
-        #Pre-flight: compiler + required Python tools.
+        #Pre-flight: compiler + patchelf (Linux) + required Python tools.
         #Fail fast with actionable messages before any version bumps,
         #user prompts, or compilation work.
         if not self._check_compiler():
+            return
+        if not self._check_patchelf():
             return
         if not self._check_tools():
             return
