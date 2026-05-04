@@ -254,15 +254,58 @@ def _kill_app_processes(location):
 
 
 def schedule_self_delete():
-    """Schedule deletion of this executable after exit (Windows only)."""
+    """Schedule recursive cleanup of the install directory after exit.
+
+    PyInstaller --onefile holds an exclusive lock on the user-facing
+    Uninstaller.exe while it is running, so the exe (and any DLLs that
+    happen to be locked at the moment of the call) cannot be removed
+    by the in-process Python cleanup.  We hand the recursive removal
+    off to a detached cmd batch that waits for this process to fully
+    exit, then sweeps the install root.
+
+    ``Settings/`` is intentionally preserved (see #34 — users always
+    expect their per-machine config to survive an uninstall).  If the
+    install directory becomes empty after Settings/ also goes (e.g.
+    Settings/ doesn't exist), the parent dir is removed too.
+    """
     if sys.platform != "win32" or not getattr(sys, "frozen", False):
         return
-    exe = sys.executable
-    # Use cmd to wait briefly then delete
+
+    install_dir = os.path.dirname(sys.executable)
+
+    # Build a self-deleting .bat in %TEMP% that does the recursive
+    # cleanup.  Quoting through subprocess.Popen with chained '&'
+    # commands gets hairy fast — a real .bat file is easier to read.
+    import tempfile
+    fd, bat_path = tempfile.mkstemp(suffix="_uninstall.bat")
+    bat_lines = [
+        "@echo off",
+        # Wait for the uninstaller process to fully exit.  ping is
+        # the standard "wait N seconds" idiom that ships on every
+        # Windows since XP without needing PowerShell.
+        "ping 127.0.0.1 -n 3 >NUL",
+        f'cd /d "{install_dir}" 2>NUL',
+        "if errorlevel 1 exit /b 1",
+        # Recursively remove every directory at the install root
+        # except Settings/.
+        'for /D %%i in (*) do if /I not "%%i"=="Settings" rmdir /s /q "%%i" 2>NUL',
+        # Remove every loose file at the install root.  At this point
+        # the uninstaller exe is no longer running and so unlocked.
+        'for %%i in (*) do del /f /q "%%i" 2>NUL',
+        # Step out before trying to remove the install dir itself.
+        'cd /d "%TEMP%"',
+        # rmdir without /s only succeeds when the dir is empty, so
+        # this is a no-op if Settings/ survived.  That's intentional.
+        f'rmdir /q "{install_dir}" 2>NUL',
+        # Self-delete this .bat.  The (goto) 2>NUL trick is the
+        # standard idiom for a Windows batch file that removes itself.
+        '(goto) 2>NUL & del "%~f0"',
+    ]
+    with os.fdopen(fd, "w", newline="\r\n") as f:
+        f.write("\r\n".join(bat_lines) + "\r\n")
+
     subprocess.Popen(
-        f'cmd /c ping 127.0.0.1 -n 3 > NUL & del /f /q "{exe}" & '
-        f'rmdir /q "{os.path.dirname(exe)}" 2>NUL',
-        shell=True,
+        ["cmd", "/c", bat_path],
         creationflags=subprocess.CREATE_NO_WINDOW
             if hasattr(subprocess, "CREATE_NO_WINDOW") else 0,
     )
@@ -533,11 +576,19 @@ def _do_uninstall():
 
     remove_installed_files(filtered_log, location, progress_fn=_gui_progress)
 
+    # Schedule deferred recursive cleanup as soon as the in-process
+    # work is done (#34).  Firing here -- not on Close click -- means
+    # cleanup runs even if the user dismisses the window with the X
+    # button or kills the process.  The deferred .bat waits 3s before
+    # sweeping, which is plenty of time for the GUI to close after
+    # whatever button the user chose.
+    if all_selected:
+        schedule_self_delete()
+
     progress_label.config(text="Uninstallation complete.")
     progress_bar.config(value=100)
     close_btn.state(["!disabled"])
-    close_btn.config(command=lambda: (schedule_self_delete() if all_selected else None, root.destroy())
-                     if all_selected else root.destroy())
+    close_btn.config(command=root.destroy)
     root.update()
 
 
