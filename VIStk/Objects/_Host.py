@@ -329,23 +329,20 @@ class Host:
 
     # ── Per-screen loop tick ──────────────────────────────────────────────────
 
-    _LOOP_TICK_MS = 50  # ~20 fps, matches the _schedule_loop pattern (#117)
-
     def _tick_screens(self):
         """Call ``loop()`` on every open tab's screen module (#117).
 
         Iterates each ``TabManager`` (main window + all DetachedWindows)
         and invokes the module-level ``loop()`` function on every open
-        tab whose module defines one.  Self-reschedules via ``tk.after``
-        until the Host shuts down.
+        tab whose module defines one.
 
-        Replaces the per-screen ``_schedule_loop`` boilerplate that
-        screens previously hand-rolled to bridge the gap between the
-        documented per-frame ``loop()`` contract and the Host's actual
-        update path (which only pumped Tk events).
+        Runs on every ``Host.update()`` call -- not on a ``tk.after``
+        timer -- so screens get the same per-frame cadence in the Host
+        that they get in the standalone driver.  Throttling here would
+        be inventing a frame-rate cap that the standalone path does not
+        impose; if a screen wants to throttle, it can do so inside its
+        own ``loop()``.
         """
-        if not self.Active:
-            return
         for tm in list(self.registered_tab_managers):
             for entry in tm._tabs.values():
                 module = entry.get("module")
@@ -356,11 +353,6 @@ class Host:
                     except Exception:
                         import traceback
                         traceback.print_exc()
-        try:
-            self.root.after(self._LOOP_TICK_MS, self._tick_screens)
-        except Exception:
-            # root may have been destroyed mid-tick during shutdown
-            pass
 
     def update(self):
         """Process all pending Tk events for the root and its Toplevels.
@@ -375,11 +367,7 @@ class Host:
             startup = self._startup_screen or self.Project.default_screen
             if startup:
                 self.open(startup)
-            # Kick off the screen-loop tick chain.  Doing this once here
-            # (rather than in ``__init__``) means it starts after the
-            # Tk root is fully ready and only lives as long as ``update``
-            # is being driven.
-            self.root.after(self._LOOP_TICK_MS, self._tick_screens)
+        self._tick_screens()
         self.root.update()
 
     def quit_host(self):
