@@ -20,6 +20,13 @@ from VIStk.Structures._Version import Version
 # step (#124).
 _MOD_EXT = ".pyd" if sys.platform == "win32" else ".so"
 
+# Executable extension passed to Nuitka's --output-filename and used
+# everywhere the install layer reasons about exe names.  Hardcoding
+# ``.exe`` produced files like ``AssetManager.exe`` on Linux that
+# disagreed with the install_log / is_screen_installed conventions
+# (#126).
+_EXE_EXT = ".exe" if sys.platform == "win32" else ""
+
 
 class Release(Project):
     """A VIS Release object"""
@@ -364,7 +371,7 @@ class Release(Project):
         parts.append(f"--windows-product-version={self.Version}")
 
         parts.append(f"--output-dir={self.build_dir}")
-        parts.append(f"--output-filename={self.title}.exe")
+        parts.append(f"--output-filename={self.title}{_EXE_EXT}")
 
         if sys.platform == "win32":
             parts.append("--windows-console-mode=disable")
@@ -474,7 +481,7 @@ class Release(Project):
                     *self._compiler_args(),
                     "--enable-plugin=tk-inter",
                     f"--output-dir={self.build_dir}",
-                    f"--output-filename={scr.name}.exe",
+                    f"--output-filename={scr.name}{_EXE_EXT}",
                     "--assume-yes-for-downloads",
                 ]
                 if icon_file and exists(icon_file):
@@ -530,8 +537,7 @@ class Release(Project):
                             shutil.copy2(os.path.join(dirpath, f), dest_file)
                 shutil.rmtree(scr_dist)
                 # Post-condition: the screen's exe must be at final root
-                exe_ext = ".exe" if sys.platform == "win32" else ""
-                expected_exe = os.path.join(final, f"{scr.name}{exe_ext}")
+                expected_exe = os.path.join(final, f"{scr.name}{_EXE_EXT}")
                 if not exists(expected_exe):
                     self._status(
                         f"  [{self._step}/{self._total_steps}] {self._category} "
@@ -820,14 +826,13 @@ class Release(Project):
         # have its exe present at the install root.  Catches silent
         # failures further upstream (issue #115) so we don't ship a
         # binaries.zip that's missing the screens the user paid to compile.
-        exe_ext = ".exe" if sys.platform == "win32" else ""
         missing_exes = []
         for scr in self.screenlist:
             if not self._screen_in_subset(scr):
                 continue
             if scr.tabbed or not scr.release:
                 continue
-            expected = os.path.join(final, f"{scr.name}{exe_ext}")
+            expected = os.path.join(final, f"{scr.name}{_EXE_EXT}")
             if not exists(expected):
                 missing_exes.append(scr.name)
         if missing_exes:
