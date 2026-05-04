@@ -29,8 +29,9 @@ def is_screen_installed(name: str, install_dir: Path | None = None) -> bool:
 
     Dev mode always returns True. For frozen builds the check prefers
     ``.VIS/install_log.json``; when the log is missing or stale the helper
-    falls back to a direct filesystem check for the tabbed ``Screens/<name>.pyd``
-    or standalone ``<name>.exe`` artifact at the install root (#105).
+    falls back to a direct filesystem check for the tabbed
+    ``Screens/<name>.pyd`` (``.so`` on Linux/macOS) or standalone
+    ``<name>.exe`` artifact at the install root (#105).
     The legacy ``.Runtime/<name>.exe`` location is also checked for
     back-compat with installations made before #105.
     """
@@ -50,9 +51,10 @@ def is_screen_installed(name: str, install_dir: Path | None = None) -> bool:
             pass  # fall through to filesystem check
 
     ext = ".exe" if sys.platform == "win32" else ""
+    mod_ext = ".pyd" if sys.platform == "win32" else ".so"
     if (root / (name + ext)).exists():
         return True
-    if (root / "Screens" / f"{name}.pyd").exists():
+    if (root / "Screens" / f"{name}{mod_ext}").exists():
         return True
     # Legacy layout (pre-#105): standalone exe in .Runtime/
     if (root / ".Runtime" / (name + ext)).exists():
