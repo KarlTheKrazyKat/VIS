@@ -1267,17 +1267,33 @@ def binstall(desktop:list[str], selected_screens:list[str]):
                 root.update()
                 return
 
-    # Build the full list of files to install and compute total size
-    _base_prefixes = (".VIS/", "Images/", "Icons/", ".Runtime/")
-    _host_prefixes = ("Screens/", "modules/", "Shared/")
+    # Build the full list of files to install and compute total size.
+    #
+    # The host group owns the entire shared Nuitka runtime — every top-
+    # level Python DLL, stdlib .pyd, third-party package directory, and
+    # Tcl/Tk asset that lives next to WOM.exe.  When the host is selected
+    # we install everything in the archive *except* files exclusively
+    # owned by other standalone screens that weren't selected.  This
+    # replaces the old prefix-list approach (#128) which was written for
+    # the pre-#106 layout where the runtime was hidden under .Runtime/
+    # and only Screens/ modules/ Shared/ at root needed explicit listing.
+    _base_prefixes = (".VIS/", "Images/", "Icons/")
+    _unselected_screens = _standalone_screens - set(selected_screens)
+    _excluded_files = set()
+    for sname in _unselected_screens:
+        for file in archive.namelist():
+            if (file == sname or file.startswith(sname + ".")
+                    or file.startswith(sname + "/")):
+                _excluded_files.add(file)
+
     install_files = []
     host_selected = title in selected_screens
     for file in archive.namelist():
+        if file in _excluded_files:
+            continue
         if file.startswith(_base_prefixes):
             install_files.append(file)
-        elif host_selected and file.startswith(_host_prefixes):
-            install_files.append(file)
-        elif host_selected and file.endswith(".py"):
+        elif host_selected:
             install_files.append(file)
         else:
             base = ".".join(file.split(".")[:-1]) if "." in file else file
