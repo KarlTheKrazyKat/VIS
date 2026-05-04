@@ -443,6 +443,14 @@ class Release(Project):
                 # Move .pyd to Screens/ with clean name (strip cpython tag)
                 import glob as _glob
                 built_pyds = _glob.glob(f"{self.build_dir}{stem}*.pyd")
+                if not built_pyds:
+                    self._status(
+                        f"  [{self._step}/{self._total_steps}] {self._category} "
+                        f"{self._cat_index}/{self._cat_count} - {scr.name} FAILED — "
+                        f"no .pyd produced at {self.build_dir}{stem}*.pyd",
+                        newline=True,
+                    )
+                    return False
                 for bp in built_pyds:
                     shutil.move(bp, f"{final}/Screens/{stem}.pyd")
 
@@ -484,18 +492,44 @@ class Release(Project):
                 # Merge standalone build into the shared dist folder
                 scr_stem = os.path.splitext(scr.script)[0]
                 scr_dist = f"{self.build_dir}{scr_stem}.dist"
-                if exists(scr_dist):
-                    _skip = {'.build', '_internal', '__pycache__'}
-                    for dirpath, dirs, files in os.walk(scr_dist):
-                        dirs[:] = [d for d in dirs if d not in _skip and not d.endswith('.build')]
-                        rel = os.path.relpath(dirpath, scr_dist)
-                        dest = os.path.join(final, rel)
-                        os.makedirs(dest, exist_ok=True)
-                        for f in files:
-                            dest_file = os.path.join(dest, f)
-                            if not exists(dest_file):
-                                shutil.copy2(os.path.join(dirpath, f), dest_file)
-                    shutil.rmtree(scr_dist)
+                if not exists(scr_dist):
+                    # Nuitka exited 0 but produced no .dist — fail loudly
+                    # rather than silently shipping an installer without
+                    # this screen's exe (issue #115).
+                    try:
+                        siblings = sorted(os.listdir(self.build_dir))
+                    except OSError:
+                        siblings = []
+                    self._status(
+                        f"  [{self._step}/{self._total_steps}] {self._category} "
+                        f"{self._cat_index}/{self._cat_count} - {scr.name} FAILED — "
+                        f"expected {scr_dist} not produced (build_dir contains: "
+                        f"{', '.join(siblings) or 'nothing'})",
+                        newline=True,
+                    )
+                    return False
+                _skip = {'.build', '_internal', '__pycache__'}
+                for dirpath, dirs, files in os.walk(scr_dist):
+                    dirs[:] = [d for d in dirs if d not in _skip and not d.endswith('.build')]
+                    rel = os.path.relpath(dirpath, scr_dist)
+                    dest = os.path.join(final, rel)
+                    os.makedirs(dest, exist_ok=True)
+                    for f in files:
+                        dest_file = os.path.join(dest, f)
+                        if not exists(dest_file):
+                            shutil.copy2(os.path.join(dirpath, f), dest_file)
+                shutil.rmtree(scr_dist)
+                # Post-condition: the screen's exe must be at final root
+                exe_ext = ".exe" if sys.platform == "win32" else ""
+                expected_exe = os.path.join(final, f"{scr.name}{exe_ext}")
+                if not exists(expected_exe):
+                    self._status(
+                        f"  [{self._step}/{self._total_steps}] {self._category} "
+                        f"{self._cat_index}/{self._cat_count} - {scr.name} FAILED — "
+                        f"expected {expected_exe} after merge but it is missing",
+                        newline=True,
+                    )
+                    return False
 
         return True
 
@@ -547,6 +581,14 @@ class Release(Project):
             # Move .pyd to Shared/ directory — strip cpython tag
             import glob as _glob
             built_pyds = _glob.glob(f"{self.build_dir}{pkg}*.pyd")
+            if not built_pyds:
+                self._status(
+                    f"  [{self._step}/{self._total_steps}] {self._category} "
+                    f"{self._cat_index}/{self._cat_count} - {pkg} FAILED — "
+                    f"no .pyd produced at {self.build_dir}{pkg}*.pyd",
+                    newline=True,
+                )
+                return False
             for bp in built_pyds:
                 shutil.move(bp, f"{shared_dir}/{pkg}.pyd")
 
@@ -762,6 +804,29 @@ class Release(Project):
         # No PyInstaller launcher shim, no .Runtime/ indirection — see #105.
         pendix = self.title if self.flag == "" else f"{self.title}-{self.flag}"
         final = f"{self.location}{pendix}"
+
+        # Post-condition: every standalone screen we said we'd build must
+        # have its exe present at the install root.  Catches silent
+        # failures further upstream (issue #115) so we don't ship a
+        # binaries.zip that's missing the screens the user paid to compile.
+        exe_ext = ".exe" if sys.platform == "win32" else ""
+        missing_exes = []
+        for scr in self.screenlist:
+            if not self._screen_in_subset(scr):
+                continue
+            if scr.tabbed or not scr.release:
+                continue
+            expected = os.path.join(final, f"{scr.name}{exe_ext}")
+            if not exists(expected):
+                missing_exes.append(scr.name)
+        if missing_exes:
+            print(
+                f"\nRelease FAILED: standalone exe(s) missing from {final}: "
+                f"{', '.join(missing_exes)}.  Inspect the build output above "
+                f"for the underlying failure.",
+                flush=True,
+            )
+            return
 
         #%Installer & Uninstaller Generation
         binaries_zip = f"{self.location}binaries.zip"
