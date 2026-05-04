@@ -785,6 +785,119 @@ The License/EULA page, `\r` quiet-mode progress bar, and
 
 ---
 
+### 0.5.1 Release Pipeline & Host Runtime
+
+**Released.**  Hardens the cross-platform release toolchain, flattens the install layout, and wires `loop()` straight into the Host's update path.
+
+**Per-platform C compiler selection** (#83):
+
+- New `Release._compiler_args()` returns `["--msvc=latest"]` on Windows and `[]` elsewhere; passed to every `compile_host` / `compile_screens` / `compile_shared` Nuitka invocation.
+- Sidesteps zig 0.15.2 + Nuitka 4.0.8 + Python 3.13 producing corrupt frozen bytecode (`Fatal Python error: init_fs_encoding` / `EOFError: marshal data too short`) — see #35.
+- On Linux and macOS, Nuitka's auto-detection picks gcc / clang as before — no flag needed.
+
+**Pre-flight checks** (#84, #88):
+
+- `Release._check_compiler()` runs at the top of `release()` and aborts before any compilation if the platform's required C compiler is missing.  Windows uses `vswhere.exe` directly (matches Nuitka's MSVC discovery; doesn't rely on `cl.exe` being on PATH inside a Developer Command Prompt).  Linux and macOS check `gcc` / `clang` via `shutil.which`.
+- `Release._check_tools()` verifies pip / nuitka / pyinstaller are importable.  Replaces the old auto-upgrade pass that ran `pip install --upgrade` on every release — that auto-upgrade was the trigger for the zig regression in #35 and added 30–60 s to every build.
+- Both helpers print the exact install command (`pip install ...`, `vs_BuildTools.exe`, `apt install build-essential`, `xcode-select --install`) when something is missing, so first-time users get an actionable error.
+
+**Per-flag Nuitka build cache** (#91):
+
+- New `Release.build_dir = f"{p_project}/build/{pendix}/"`.  Nuitka's working directory (`.build/`, transient `.dist/`) now lives under `<project>/build/<pendix>/` instead of `<project>/dist/`.
+- `<project>/dist/` becomes deliverables-only — final folders + installers + `binaries.zip`.
+- `VIS release -f Windows` and `VIS release -f Linux` get isolated caches (`build/WOM-Windows/`, `build/WOM-Linux/`) and stop stomping each other's per-module `.build/` hashes.
+- Eight Nuitka I/O sites in `_Release.py` swapped from `self.location` to `self.build_dir`.  The PyInstaller paths for the installer / uninstaller build are unchanged.
+
+**Drop the PyInstaller launcher shim layer** (#105, also closes #36, #37):
+
+- `compile_screens(mode="exe")` and `compile_host()` outputs now stay at the install root.  The `clean()` move-to-`.Runtime/` block and the entire `release()` launcher generation block are gone.
+- `VIStk/Structures/Launcher.py` (the source PyInstaller wrapped) is deleted as dead code.
+- Each project install loses ~30 MB (3 × ~10 MB PyInstaller `--onefile` shims on PYWOM) without changing the user-facing entry points — the Nuitka standalone exe already had the correct icon baked in; the shim was only doing cosmetic hiding of the runtime DLLs.
+- `_Install.py.is_screen_installed` checks `<root>/<name>.exe` first and falls back to the legacy `.Runtime/<name>.exe` path so installations made before this version still resolve.
+
+**Uninstaller: deferred recursive cleanup** (#34):
+
+- `Uninstaller.schedule_self_delete()` writes a self-deleting `.bat` to `%TEMP%` that waits 3 s for the uninstaller process to exit, then `rmdir /s /q`s every directory at the install root except `Settings/` and `del /f /q`s every loose file.  The uninstaller exe itself is unlocked and removed in the same sweep.
+- `Settings/` is preserved by design — per-machine config survives uninstall + reinstall.
+- The deferred cleanup now fires immediately after the in-process `remove_installed_files()` returns rather than waiting on a Close-button click.  Window-X dismissals trigger the sweep too.
+
+**Host drives `loop()` directly** (#117):
+
+- New `Host._tick_screens()` iterates every registered TabManager (main window + DetachedWindows) and calls `loop()` on each open tab's module.  Exceptions inside any one `loop()` are logged with a traceback but do not break the chain.
+- Called once per `Host.update()` invocation — same cadence as the standalone driver.  No `tk.after` throttle, no framework-imposed frame-rate cap.  If a screen wants to rate-limit its own `loop()`, it does so in its body via timestamp gating.
+- Replaces the `_schedule_loop` workaround that screens previously hand-rolled (PYWOM dropped its three copies in PYWOM #58).
+- Screen template's `loop()` docstring updated to spell out the new contract.
+
+**Closes**
+
+- #34 — Uninstaller leaves install directory intact
+- #35 — Nuitka silent crash (`init_fs_encoding`); verified end-to-end on Windows + Linux
+- #36 — Screen `.exe` files leak into `.Runtime/`
+- #37 — Rename `.Runtime\<exe>` to `VIStkHost.exe` (moot after the launcher-shim drop)
+- #83 — Per-platform C compiler selection
+- #84 — Pre-flight compiler check
+- #88 — Stop auto-upgrading pip / nuitka / pyinstaller
+- #91 — Per-flag Nuitka build cache
+- #105 — Drop PyInstaller launcher shims
+- #117 — Host drives `loop()` directly
+
+**Still deferred (carried forward from 0.5.0):**
+
+- **Color palette feature** — tracked for a later 0.5.x or 0.6.x.
+- **`is_dirty` auto-generated `on_quit`** — `confirm_discard` (0.5.0) covers the manual case; auto-wrapper can land later without an API break.
+
+---
+
+### 0.5.2 Screen Isolation
+
+*Upcoming.*
+
+Tabbed screens now own their `Screens/<screen>/` and `modules/<screen>/` trees in the compiled `.pyd`. The Host stops being a code-bundle for every screen in the project. Cross-screen imports between siblings become visible (linter warning) instead of silently working.
+
+**Per-screen package inclusion**
+
+- `compile_screens(mode="pyd")` adds `--include-package=Screens.<n>` and `--include-package=modules.<n>` for every tabbed screen.
+- `compile_host()` drops the unconditional `--include-package=modules` and `--include-package=Screens`. Host bundle shrinks accordingly.
+- Both screen and host builds gain `--nofollow-import-to=<pkg>` for every entry in `hidden_imports` so shared deps (`pywomlib`, `VIStk`, `shared`) aren't duplicated into each `.pyd`.
+
+`shared/` **convention**
+
+- New top-level `shared/` package alongside `modules/` and `Screens/`. Adding `"shared"` to `hidden_imports` gets it compiled to `Shared/shared.pyd` by `compile_shared()` — no `_Release.py` changes needed past the per-screen flags above; the existing hidden-imports loop handles it.
+- `VIS new` scaffolds an empty `shared/__init__.py` so the convention shows up in fresh projects.
+
+**Cross-screen import linter**
+
+- New `VIStk/Structures/_Lint.py` provides `lint_screen_imports(screen)`. Walks the screen's entry script + `Screens/<n>/` + `modules/<n>/`, parses with `ast`, flags imports of `modules.<other>` / `Screens.<other>` where `<other>` is not the current screen.
+- `VIS release` runs the linter for every screen before compilation. Warnings are printed; build continues. `--strict` upgrades to errors and aborts.
+- Standalone screens skip the lint — `--follow-imports` resolves their references statically at build time.
+
+**Subset releases now truly isolate**
+
+- `VIS release -Screens X` no longer bundles excluded screens' `modules/<other>/` and `Screens/<other>/` trees into the Host binary.
+- Bundle size shrinks proportionally to the number of screens excluded.
+- Per-customer or per-role installers can deliver genuinely different code surfaces, not just different visible tab lists.
+
+**Lazy screen loading**
+
+- A tabbed screen's code now enters memory only when the user opens the tab for the first time. Cold-start time and resident memory both drop in proportion to the number of unopened screens.
+- `modules.<screen>.m_<screen>` hook lookup ordering is unchanged — the Host still consults the screen's hooks module first and falls back to the screen script. The lookup just happens after the `.pyd` is loaded.
+
+**Compilation-order documentation update**
+
+- `docs/source/structures.rst` "Compilation order" section updated to reflect that `--include-package=modules` / `--include-package=Screens` are now per-screen, not Host-level.
+
+**Migration notes for existing projects**
+
+- Project-level shared files at `modules/<n>.py` or `Screens/<n>.py` (not under a screen subdirectory) need to move to `shared/<n>.py` and be re-imported as `shared.<n>`. PYWOM has four such files: `modules/menu.py`, `modules/config.py`, `Screens/styles.py`, `Screens/root.py`.
+- Cross-screen imports between sibling screens generate linter warnings; existing builds still succeed in default warn mode. PYWOM's AssetManagerManual is the only existing offender; it's standalone-mode so the linter exempts it.
+
+**Out of scope**
+
+- Auto-rewrite of cross-screen imports — linter flags only.
+- Per-screen access control on `shared/` — possible future addition.
+
+---
+
 ### 0.7.X Project Upgrade Tool *(moved from 0.5)*
 
 # this kinda seems like a bad idea looking at it now
