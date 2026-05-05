@@ -365,7 +365,37 @@ class TabManager(Frame):
             try:
                 module.setup(frame)
             except Exception:
-                pass
+                # Surface the failure: print a traceback to stderr (visible
+                # in dev runs and console-attached frozen builds) and
+                # render an inline error panel inside the otherwise-blank
+                # tab so windowed Windows installs (where stderr goes
+                # nowhere) still tell the user what failed (#131).
+                import traceback as _tb
+                import sys as _sys
+                err_text = _tb.format_exc()
+                try:
+                    _sys.stderr.write(
+                        f"\n[VIStk] setup() failed for tab "
+                        f"{name!r}:\n{err_text}\n"
+                    )
+                    _sys.stderr.flush()
+                except Exception:
+                    pass
+                try:
+                    from tkinter import Label
+                    Label(
+                        frame,
+                        text=(
+                            f"setup() raised an exception for "
+                            f"{name}:\n\n{err_text}"
+                        ),
+                        bg="#ffe5e5", fg="#600",
+                        justify="left", anchor="nw",
+                        wraplength=1100,
+                        font=("Consolas", 9),
+                    ).pack(fill="both", expand=True, padx=12, pady=12)
+                except Exception:
+                    pass
 
         self.tab_bar.open_tab(tab_id, name, icon=icon, insert_idx=insert_idx)
         return tab_id

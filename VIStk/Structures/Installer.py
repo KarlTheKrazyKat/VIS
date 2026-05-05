@@ -308,17 +308,38 @@ def write_install_log(location, selected_screens, desktop_shortcuts):
     """Write install_log.json recording what was installed."""
     directories = [".VIS", "Icons", "Images", ".Runtime"]
 
-    # Build screen list with versions
+    # Build screen list with versions.
+    #
+    # The GUI only exposes the host group + standalone screens as
+    # selectable, but the host bundle physically installs every tabbed
+    # screen's compiled .pyd alongside it.  Record those too — otherwise
+    # is_screen_installed("<tabbed name>") returns False against this log
+    # and Host.update silently refuses to open the default screen on
+    # startup (#130).
+    ext = ".exe" if sys.platform == "win32" else ""
+    mod_ext = ".pyd" if sys.platform == "win32" else ".so"
     screens = []
+    seen: set[str] = set()
     for name in selected_screens:
         scr_info = info[title]["Screens"].get(name, {})
-        ext = ".exe" if sys.platform == "win32" else ""
         screens.append({
             "name": name,
             "version": scr_info.get("version", ""),
             "executable": name + ext,
             "group": _group_of(name),
         })
+        seen.add(name)
+    if title in selected_screens:
+        for sname, scfg in info[title]["Screens"].items():
+            if sname in seen or not scfg.get("tabbed", False):
+                continue
+            screens.append({
+                "name": sname,
+                "version": scfg.get("version", ""),
+                "executable": "",  # tabbed screens have no exe; loaded by Host as .pyd
+                "group": _group_of(sname),
+            })
+            seen.add(sname)
 
     registry_key = ""
     if sys.platform == "win32":
