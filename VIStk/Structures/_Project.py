@@ -3,6 +3,7 @@ import os
 import re
 from VIStk.Structures._VINFO import *
 from VIStk.Structures._Screen import *
+from VIStk.Structures._Group import Group
 
 _EDITABLE_SCREEN_ATTRS = {
     "script", "release", "icon", "desc", "tabbed",
@@ -21,8 +22,10 @@ class Project(VINFO):
         """Initializes or load a VIS project
         """
         super().__init__()
-        self.screenlist:list[Screen]=[]
-        """A List of `Screen` Objects in the Project"""
+        self.Groups: dict[str, Group] = {Group.ALL: Group(self, Group.ALL)}
+        """Mapping of group name → :class:`Group`.  Always contains the
+        auto-managed ``"all"`` group, which mirrors every screen in the
+        project."""
         with open(self.p_sinfo,"r") as f:
             info = json.load(f)
 
@@ -32,7 +35,22 @@ class Project(VINFO):
                              info[self.title]["Screens"][screen]["release"],
                              info[self.title]["Screens"][screen].get("icon"),
                              exists=True)
-                self.screenlist.append(scr)
+                self.Groups[Group.ALL].screenlist.append(scr)
+
+            # Named groups under release_info.groups
+            for gname, gdata in info[self.title].get("release_info", {}).get("groups", {}).items():
+                g = Group(self, gname, gdata.get("description", ""))
+                screen_entries = gdata.get("screens", [])
+                # Backward-compat: legacy schema stored screens as a dict
+                # ({name: {default: bool}}); we now use a flat list.
+                if isinstance(screen_entries, dict):
+                    screen_entries = list(screen_entries.keys())
+                for sname in screen_entries:
+                    scr = self.getScreen(sname)
+                    if scr is not None:
+                        g.screenlist.append(scr)
+                self.Groups[gname] = g
+
             self.d_icon = info[self.title]["defaults"]["icon"]
 
             self.dist_location:str = info[self.title]["release_info"]["location"]
@@ -49,6 +67,72 @@ class Project(VINFO):
             """
         self.Screen: Screen = None
         """The Currently Running `Screen`"""
+
+    def _save_groups(self) -> None:
+        """Persist every non-``"all"`` Group back to ``release_info.groups``.
+
+        Called from :meth:`Group.add` / :meth:`Group.rem` and from
+        :meth:`add` / :meth:`rem` here on Project.  Rewrites the entire
+        ``release_info.groups`` dict from the current in-memory state so
+        adds, removals, and membership changes all flow through one path.
+        """
+        with open(self.p_sinfo, "r") as f:
+            info = json.load(f)
+        release_info = info[self.title].setdefault("release_info", {})
+        release_info["groups"] = {
+            g.name: g.to_json()
+            for g in self.Groups.values()
+            if not g.is_all
+        }
+        with open(self.p_sinfo, "w") as f:
+            json.dump(info, f, indent=4)
+
+    def add(self, kind, name: str, description: str = "") -> int:
+        """Create a new Group on this Project.
+
+        Dispatched on type so future entities (e.g. Screen) can hang off
+        the same verb.  Today only ``Group`` is supported.
+
+        Returns 1 on success, 0 on failure.
+        """
+        if kind is Group:
+            if not validName(name):
+                return 0
+            if name in _RESERVED_VIS_COMMANDS:
+                print(f"'{name}' is a reserved VIS command.")
+                return 0
+            if name == Group.ALL:
+                print(f"'{Group.ALL}' is reserved for the auto-managed group.")
+                return 0
+            if self.hasScreen(name):
+                print(f"'{name}' collides with a screen name.")
+                return 0
+            if name in self.Groups:
+                print(f"Group '{name}' already exists.")
+                return 0
+            self.Groups[name] = Group(self, name, description)
+            self._save_groups()
+            print(f"Created group '{name}'.")
+            return 1
+        raise TypeError(f"Project.add does not know how to create {kind!r}.")
+
+    def rem(self, group: Group) -> int:
+        """Delete an existing Group from this Project.
+
+        ``"all"`` cannot be removed.  Returns 1 on success, 0 on failure.
+        """
+        if not isinstance(group, Group):
+            raise TypeError(f"Project.rem expects a Group instance, got {type(group).__name__}.")
+        if group.is_all:
+            print(f"Cannot remove the auto-managed '{Group.ALL}' group.")
+            return 0
+        if group.name not in self.Groups or self.Groups[group.name] is not group:
+            print(f"Group '{group.name}' is not part of this project.")
+            return 0
+        del self.Groups[group.name]
+        self._save_groups()
+        print(f"Removed group '{group.name}'.")
+        return 1
 
     #Project Screen Methods
     def newScreen(self,screen:str) -> int:
@@ -90,7 +174,7 @@ class Project(VINFO):
                     tabbed = True
                 case _:
                     tabbed = False
-            self.screenlist.append(Screen(screen, script, release, icon, False, desc, tabbed))
+            self.Groups[Group.ALL].screenlist.append(Screen(screen, script, release, icon, False, desc, tabbed))
 
             if self.default_screen is None:
                 self.set_default_screen(screen)
@@ -194,7 +278,7 @@ class Project(VINFO):
                 f.write(text)
 
         # Update in-memory screenlist
-        for scr in self.screenlist:
+        for scr in self.Groups[Group.ALL].screenlist:
             if scr.name == old_name:
                 scr.name    = new_name
                 scr.script  = new_script
@@ -294,17 +378,12 @@ class Project(VINFO):
 
     def hasScreen(self, screen: str) -> bool:
         """Checks if the project has a screen with the given name."""
-        for i in self.screenlist:
-            if i.name == screen:
-                return True
-        return False
-    
+        return self.Groups[Group.ALL].get(screen) is not None
+
     def getScreen(self,screen:str) -> Screen:
         """Returns a screen object by its name
         """
-        for i in self.screenlist:
-            if i.name == screen:
-                return i
+        return self.Groups[Group.ALL].get(screen)
         return None
 
     def verScreen(self,screen:str) -> Screen:
@@ -441,7 +520,7 @@ class Project(VINFO):
                 return scr.docs
         return self.default_docs or None
 
-    # ── Screen group management (release_info.groups) ──────────────────────
+    # ── Internal JSON read/write helpers ───────────────────────────────────
 
     def _load_info(self) -> dict:
         with open(self.p_sinfo, "r") as f:
@@ -451,34 +530,6 @@ class Project(VINFO):
         with open(self.p_sinfo, "w") as f:
             json.dump(info, f, indent=4)
 
-    def groups(self) -> dict:
-        """Return the full ``release_info.groups`` dictionary (may be empty)."""
-        info = self._load_info()
-        return info[self.title].get("release_info", {}).get("groups", {})
-
-    def group_names(self) -> list[str]:
-        return list(self.groups().keys())
-
-    def group_info(self, group_name: str) -> dict | None:
-        return self.groups().get(group_name)
-
-    def screens_in_group(self, group_name: str) -> list[str]:
-        g = self.groups().get(group_name, {})
-        return list(g.get("screens", {}).keys())
-
-    def group_of(self, screen_name: str) -> str | None:
-        """Return the group containing ``screen_name``, or None if ungrouped."""
-        for gname, gdata in self.groups().items():
-            if screen_name in gdata.get("screens", {}):
-                return gname
-        return None
-
-    def group_default(self, group_name: str, screen_name: str) -> bool:
-        """Whether ``screen_name`` is default-selected within ``group_name``."""
-        g = self.groups().get(group_name, {})
-        s = g.get("screens", {}).get(screen_name, {})
-        return bool(s.get("default", True))
-
     def required_by(self, screen_name: str) -> list[str]:
         scr = self.getScreen(screen_name)
         return list(scr.requires) if scr else []
@@ -486,83 +537,6 @@ class Project(VINFO):
     def suggested_by(self, screen_name: str) -> list[str]:
         scr = self.getScreen(screen_name)
         return list(scr.suggests) if scr else []
-
-    def add_group(self, name: str, description: str = "") -> int:
-        if not validName(name):
-            return 0
-        if name in _RESERVED_VIS_COMMANDS:
-            print(f"'{name}' is a reserved VIS command.")
-            return 0
-        if self.hasScreen(name):
-            print(f"'{name}' collides with a screen name.")
-            return 0
-        info = self._load_info()
-        release_info = info[self.title].setdefault("release_info", {})
-        groups = release_info.setdefault("groups", {})
-        if name in groups:
-            print(f"Group '{name}' already exists.")
-            return 0
-        groups[name] = {"description": description, "screens": {}}
-        self._save_info(info)
-        print(f"Created group '{name}'.")
-        return 1
-
-    def remove_group(self, name: str) -> int:
-        info = self._load_info()
-        groups = info[self.title].get("release_info", {}).get("groups", {})
-        if name not in groups:
-            print(f"Group '{name}' does not exist.")
-            return 0
-        groups.pop(name)
-        self._save_info(info)
-        print(f"Removed group '{name}'.")
-        return 1
-
-    def assign_to_group(self, screen_name: str, group_name: str, default: bool = True) -> int:
-        if not self.hasScreen(screen_name):
-            print(f"Screen '{screen_name}' does not exist.")
-            return 0
-        info = self._load_info()
-        groups = info[self.title].get("release_info", {}).get("groups", {})
-        if group_name not in groups:
-            print(f"Group '{group_name}' does not exist.")
-            return 0
-        # A screen belongs to at most one group — strip it from any others.
-        for gname, gdata in groups.items():
-            if gname != group_name:
-                gdata.get("screens", {}).pop(screen_name, None)
-        groups[group_name].setdefault("screens", {})[screen_name] = {"default": default}
-        self._save_info(info)
-        print(f"Assigned '{screen_name}' to group '{group_name}' (default={default}).")
-        return 1
-
-    def unassign_from_group(self, screen_name: str) -> int:
-        info = self._load_info()
-        groups = info[self.title].get("release_info", {}).get("groups", {})
-        found_in = None
-        for gname, gdata in groups.items():
-            if screen_name in gdata.get("screens", {}):
-                del gdata["screens"][screen_name]
-                found_in = gname
-                break
-        if found_in is None:
-            print(f"Screen '{screen_name}' is not in any group.")
-            return 0
-        self._save_info(info)
-        print(f"Unassigned '{screen_name}' from group '{found_in}'.")
-        return 1
-
-    def set_group_default(self, screen_name: str, default: bool) -> int:
-        info = self._load_info()
-        groups = info[self.title].get("release_info", {}).get("groups", {})
-        for gname, gdata in groups.items():
-            if screen_name in gdata.get("screens", {}):
-                gdata["screens"][screen_name]["default"] = default
-                self._save_info(info)
-                print(f"Set default for '{screen_name}' in group '{gname}' to {default}.")
-                return 1
-        print(f"Screen '{screen_name}' is not in any group.")
-        return 0
 
     def getInfo(self) -> str:
         """Gets the `Project` and `Screen` Info"""

@@ -155,19 +155,31 @@ for name in _archive_binaries:
 # dropped from the GUI (they may still exist in project.json for release
 # subset purposes).
 _release_groups = info[title].get("release_info", {}).get("groups", {})
+
+
+def _group_screen_names(gdata: dict) -> list[str]:
+    """Return the list of screen names declared in a group entry.
+
+    Supports the new flat-list schema (``"screens": ["A", "B"]``) and the
+    legacy dict-of-dicts schema (``"screens": {"A": {...}}``) so installers
+    bundled with older archives continue to load.
+    """
+    raw = gdata.get("screens", [])
+    if isinstance(raw, dict):
+        return list(raw.keys())
+    return list(raw)
+
+
 _grouped_screen_names: set[str] = set()
 for _g_data in _release_groups.values():
-    _grouped_screen_names.update(_g_data.get("screens", {}).keys())
+    _grouped_screen_names.update(_group_screen_names(_g_data))
 
 _install_entries: list[dict] = [{"kind": "screen", "name": title}]
 for _gname, _gdata in _release_groups.items():
     _children = []
-    for _sname, _sdata in _gdata.get("screens", {}).items():
+    for _sname in _group_screen_names(_gdata):
         if _sname in _standalone_screens and _sname in _archive_binaries:
-            _children.append({
-                "name": _sname,
-                "default": bool(_sdata.get("default", True)),
-            })
+            _children.append({"name": _sname})
     if _children:
         _install_entries.append({
             "kind": "group",
@@ -298,9 +310,14 @@ def _kill_app_processes(location):
 
 def _group_of(screen_name: str) -> str | None:
     """Return the release group containing ``screen_name`` from the archive
-    project.json, or None if ungrouped."""
+    project.json, or None if ungrouped.
+
+    With multi-group membership now allowed, this returns the first group
+    that lists the screen.  install_log only records one group per screen
+    (used for display/uninstall ordering), and any choice is acceptable.
+    """
     for gname, gdata in _release_groups.items():
-        if screen_name in gdata.get("screens", {}):
+        if screen_name in _group_screen_names(gdata):
             return gname
     return None
 
@@ -509,31 +526,28 @@ if QUIET is True:
         cinstalls = list(installables)
         print(f"No screens specified — installing all {len(cinstalls)} screen(s).")
     else:
-        # Expand any group names to their default-selected member screens.
-        # A group containing tabbed screens implicitly pulls in the Host
-        # (tabbed screens ship inside the Host exe).
+        # Expand any group names to their member screens.  A group
+        # containing tabbed screens implicitly pulls in the Host (tabbed
+        # screens ship inside the Host exe).
         _expanded: list[str] = []
         for _tok in cinstalls:
             if _tok in _release_groups:
-                _members = _release_groups[_tok].get("screens", {})
                 _has_tabbed = False
                 _standalone_members: list[str] = []
-                for _sname, _sdata in _members.items():
-                    if not _sdata.get("default", True):
-                        continue
+                for _sname in _group_screen_names(_release_groups[_tok]):
                     if _sname in _tabbed_screens:
                         _has_tabbed = True
                     elif _sname in _standalone_screens:
                         _standalone_members.append(_sname)
                 _expand_to: list[str] = []
-                if _has_tabbed and title not in _expand_to:
+                if _has_tabbed:
                     _expand_to.append(title)
                 _expand_to.extend(_standalone_members)
                 if _expand_to:
                     _expanded.extend(s for s in _expand_to if s not in _expanded)
                     print(f"  Group '{_tok}' -> {', '.join(_expand_to)}")
                 else:
-                    print(f"  Warning: group '{_tok}' has no default-selected members.")
+                    print(f"  Warning: group '{_tok}' has no installable members.")
             else:
                 if _tok not in _expanded:
                     _expanded.append(_tok)
@@ -822,11 +836,9 @@ def makechecks(source:list[str], show_versions:bool=True):
 
 # ── Grouped installer page (0.4.6) ────────────────────────────────────────
 # The installables page shows groups as collapsible rows with a right-side
-# arrow; expanding a group reveals indented per-screen checkboxes whose
-# initial state honours the per-screen ``default`` flag from
-# ``release_info.groups``. Clicking a group's master checkbox toggles every
-# child on or every child off regardless of default (defaults only apply to
-# initial render).
+# arrow; expanding a group reveals indented per-screen checkboxes, all
+# selected by default.  Clicking a group's master checkbox toggles every
+# child on or every child off.
 _screen_vars: dict[str, tk.IntVar] = {}
 _group_vars: dict[str, tk.IntVar] = {}
 _group_expanded: dict[str, bool] = {}
@@ -1007,8 +1019,7 @@ def makechecks_grouped():
             _group_child_widgets[gname] = []
             for child in entry["children"]:
                 cname = child["name"]
-                cdefault = bool(child["default"])
-                cvar = tk.IntVar(value=1 if cdefault else 0)
+                cvar = tk.IntVar(value=1)  # all group members default-on
                 _screen_vars[cname] = cvar
                 cimg = _screen_icon(cname)
                 img_options.append(cimg)

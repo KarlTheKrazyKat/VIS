@@ -3,6 +3,7 @@ from tkinter import ttk
 import os
 import sys
 from VIStk.Structures._Project import *
+from VIStk.Structures._Group import Group
 
 class MenuItem(Button):
     """Each item in the menu is created from the corresponding .json file. Each path should be given relative to xyz/WOM/
@@ -26,12 +27,10 @@ class MenuItem(Button):
         self.bind("<Leave>", leave)
         #self.button.pack()
 
-        for i in Project().screenlist:
-            i:Screen
-            if self.path == i.name:
-                self.screen = i
-                """The `Screen` to load upon clicking"""
-                break
+        scr = Project().Groups[Group.ALL].get(self.path)
+        if scr is not None:
+            self.screen = scr
+            """The `Screen` to load upon clicking"""
         else:
             self.screen = None
             """The `Screen` to load upon clicking"""

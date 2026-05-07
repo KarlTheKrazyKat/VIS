@@ -89,7 +89,7 @@ def __main__():
 
         case "group" | "Group":
             if len(inp) < 3:
-                print("Usage: VIS group <add|remove|assign|unassign|default|list> ...")
+                print("Usage: VIS group <add|remove|assign|unassign|list> ...")
                 return
             project = Project()
             match inp[2]:
@@ -98,42 +98,58 @@ def __main__():
                         print("Usage: VIS group add <group_name> [description]")
                         return
                     desc = " ".join(inp[4:]) if len(inp) > 4 else ""
-                    project.add_group(inp[3], desc)
+                    project.add(Group, inp[3], desc)
                 case "remove":
                     if len(inp) < 4:
                         print("Usage: VIS group remove <group_name>")
                         return
-                    project.remove_group(inp[3])
+                    g = project.Groups.get(inp[3])
+                    if g is None:
+                        print(f"Group '{inp[3]}' does not exist.")
+                    else:
+                        project.rem(g)
                 case "assign":
                     if len(inp) < 5:
-                        print("Usage: VIS group assign <screen> <group> [true|false]")
+                        print("Usage: VIS group assign <screen> <group>")
                         return
-                    default = True
-                    if len(inp) >= 6:
-                        default = inp[5].lower() in ("true", "yes", "1")
-                    project.assign_to_group(inp[3], inp[4], default)
+                    scr = project.getScreen(inp[3])
+                    g = project.Groups.get(inp[4])
+                    if scr is None:
+                        print(f"Screen '{inp[3]}' does not exist.")
+                    elif g is None:
+                        print(f"Group '{inp[4]}' does not exist.")
+                    elif g.is_all:
+                        print(f"'{Group.ALL}' is auto-managed; cannot assign directly.")
+                    else:
+                        g.add(scr)
+                        print(f"Assigned '{scr.name}' to group '{g.name}'.")
                 case "unassign":
-                    if len(inp) < 4:
-                        print("Usage: VIS group unassign <screen>")
-                        return
-                    project.unassign_from_group(inp[3])
-                case "default":
                     if len(inp) < 5:
-                        print("Usage: VIS group default <screen> <true|false>")
+                        print("Usage: VIS group unassign <screen> <group>")
                         return
-                    d = inp[4].lower() in ("true", "yes", "1")
-                    project.set_group_default(inp[3], d)
+                    scr = project.getScreen(inp[3])
+                    g = project.Groups.get(inp[4])
+                    if scr is None:
+                        print(f"Screen '{inp[3]}' does not exist.")
+                    elif g is None:
+                        print(f"Group '{inp[4]}' does not exist.")
+                    elif g.is_all:
+                        print(f"'{Group.ALL}' is auto-managed; cannot unassign directly.")
+                    elif scr not in g:
+                        print(f"Screen '{scr.name}' is not in group '{g.name}'.")
+                    else:
+                        g.rem(scr)
+                        print(f"Unassigned '{scr.name}' from group '{g.name}'.")
                 case "list":
-                    groups = project.groups()
-                    if not groups:
+                    named = [g for g in project.Groups.values() if not g.is_all]
+                    if not named:
                         print("No groups defined.")
                     else:
-                        for gname, gdata in groups.items():
-                            desc = gdata.get("description", "")
-                            print(f"  {gname}" + (f" — {desc}" if desc else ""))
-                            for sname, sdata in gdata.get("screens", {}).items():
-                                d_mark = "" if sdata.get("default", True) else "  [off by default]"
-                                print(f"      - {sname}{d_mark}")
+                        for g in named:
+                            tag = f" — {g.description}" if g.description else ""
+                            print(f"  {g.name}{tag}")
+                            for sname in g.names():
+                                print(f"      - {sname}")
                 case _:
                     print(f"Unknown group subcommand: {inp[2]!r}")
 
@@ -167,7 +183,7 @@ def __main__():
                 case "list":
                     default = project.default_docs or "(none)"
                     print(f"  --default: {default}")
-                    for scr in project.screenlist:
+                    for scr in project.Groups[Group.ALL].screenlist:
                         url = scr.docs or "(falls through to default)"
                         print(f"  {scr.name}: {url}")
                 case _:
@@ -178,8 +194,8 @@ def __main__():
             flag:str=""
             type:str=""
             note:str=""
-            subset_groups:list[str]=[]
-            subset_screens:list[str]=[]
+            release_groups:list[str]=[]
+            release_screens:list[str]=[]
             argstart = 2
 
             if len(inp) >= 3:
@@ -222,21 +238,21 @@ def __main__():
                             if i + 1 >= len(args):
                                 print(f"Missing value for {args[i]}")
                                 return None
-                            subset_groups = [g.strip() for g in args[i+1].split(",") if g.strip()]
+                            release_groups = [g.strip() for g in args[i+1].split(",") if g.strip()]
                             i += 2
                         case "Screens" | "screens":
                             if i + 1 >= len(args):
                                 print(f"Missing value for {args[i]}")
                                 return None
-                            subset_screens = [s.strip() for s in args[i+1].split(",") if s.strip()]
+                            release_screens = [s.strip() for s in args[i+1].split(",") if s.strip()]
                             i += 2
                         case _:
                             print(f"Unknown Argument \"{args[i]}\"")
                             return None
 
             rel = Release(flag, type, note,
-                          subset_groups=subset_groups or None,
-                          subset_screens=subset_screens or None)
+                          release_groups=release_groups or None,
+                          release_screens=release_screens or None)
             rel.release()
             rel.restoreAll()
 
