@@ -1,0 +1,12 @@
+{
+    "button1": {
+        "path": "test.py",
+        "nav": "T",
+        "text": "Test Window Again"
+    },
+    "button2": {
+        "path": "notepad.exe",
+        "nav": "N",
+        "text": "Open Notepad"
+    }
+}

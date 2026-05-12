@@ -1,0 +1,135 @@
+0.4.7 --- Tab Identity Refactor
+===============================
+
+*Released --- current version*
+
+Every tab, pane, and window now carries a stable integer ID allocated at
+creation time from a single process-wide counter. Internal operations
+that previously looked up tabs by display label now key off ``tab_id``,
+so multi-split layouts with duplicate screen names no longer confuse
+focus restoration, merge, or refresh.
+
+Identity Module
+---------------
+
+- New ``VIStk.Objects._Identity.new_id()`` returns a fresh,
+  strictly-increasing ``int``; thread-safe.
+- IDs are unique for the lifetime of the Python process but **not**
+  persisted across runs. Persistence (for "remember open tabs") will use
+  UUIDs when it lands in 0.6.X settings.
+
+Tab IDs
+-------
+
+- ``TabManager.open_tab(name, module, ...)`` now returns the new
+  ``tab_id: int`` (was ``bool``). Hold the ID to address a specific
+  tab instance.
+- ``TabManager._tabs`` is keyed by ``tab_id`` (was the display label).
+  Each entry carries its own ``display_name``, ``base_name``, and
+  ``tab_id``.
+- Public methods — ``close_tab``, ``focus_tab``, ``has_tab``,
+  ``force_refresh_tab``, ``set_tab_info`` — accept **either** a
+  ``tab_id`` (``int``) or a display label (``str``). Label lookups
+  return the first match; prefer the ``tab_id`` returned by
+  ``open_tab``.
+- ``TabManager.active`` is now ``int | None`` (was ``str | None``). Use
+  ``TabManager.display_name(tab_id)`` to resolve back to a label.
+- Callbacks now pass ``tab_id`` first::
+
+      manager.on_tab_activate    = lambda tab_id, module: ...
+      manager.on_tab_deactivate  = lambda tab_id | None: ...
+      manager.on_tab_popout      = lambda tab_id: ...
+      manager.on_tab_detach      = lambda tab_id: ...
+      manager.on_tab_refresh     = lambda tab_id: ...
+      manager.on_tab_info_change = lambda tab_id, info: ...
+      manager.on_tab_split       = lambda tab_id, direction, pane: ...
+
+- ``TabBar._tabs`` is keyed by ``tab_id`` with the label in
+  ``entry["label"]``. ``TabBar.update_tab_label(tab_id, new_label)``
+  replaces it.
+
+Pane and Window IDs
+-------------------
+
+- ``TabManager`` gains ``self.id: int``.
+- ``_SplitNode`` gains ``self.id: int``; ``SplitView._pane_parents``
+  is now keyed by ``.id`` rather than ``id(object)``, avoiding any
+  theoretical memory-address reuse collisions.
+- ``DetachedWindow`` gains ``self.id: int`` (attribute only — no
+  lookups are keyed off it yet; future "remember open windows" will
+  consume it).
+
+``SplitView.remove_pane`` --- Focus Restore Fix
+-----------------------------------------------
+
+This is the primary bug fix for 0.4.7.
+
+Previously, when a pane was removed the SplitView rebuilt the surviving
+subtree under a fresh Tk parent (because ``ttk.PanedWindow`` requires
+direct Tk children). After the rebuild, focus fell back to
+``panes[0]`` — the first pane in left-to-right order. In multi-split
+layouts where multiple panes contained tabs with the same base name
+(for example two ``Dashboard`` tabs), the user's focused pane could be
+silently lost.
+
+Now:
+
+- Before destroying the old subtree, the SplitView records the
+  ``tab_id`` of the currently active tab inside the surviving pane.
+- ``_snapshot_subtree`` captures each tab's ``tab_id`` alongside its
+  module, hooks, icon and info.
+- ``_rebuild_from_snapshot`` passes ``tab_id=...`` to
+  ``TabManager.open_tab``, so the reopened tabs keep their identities.
+- After rebuild, the SplitView finds whichever new pane now owns the
+  recorded ``tab_id`` and restores focus there. If the focused pane
+  was the one removed (or the ID could not be recovered), it falls
+  back to the first surviving pane as before.
+
+``SplitView.find_pane_for_tab(tab_id)`` replaces the former name-based
+lookup.
+
+Host
+----
+
+- ``_find_tab_by_base(base_name)`` now returns ``(tab_manager, tab_id)``
+  instead of ``(tab_manager, display_name)``.
+- ``_get_all_tab_names`` is renamed ``_get_all_tab_labels``; it still
+  collects display labels for ``_unique_display_name`` only.
+- ``_open_counts`` is retired — tab IDs make multi-instance tracking
+  trivial, label uniqueness is purely a UX concern handled by
+  ``_unique_display_name``.
+- ``Screen.close()`` routes through the ID-based
+  ``close_tab(tab_id)``.
+
+IPC
+---
+
+IPC is **not** being reintroduced. The draft 0.4.7 spec in the
+changelog mentioned ``__VIS_CLOSE__`` but the in-process
+``_HOST_INSTANCE`` singleton remains the sole navigation path. If IPC
+is added later it will use tab IDs natively.
+
+Backward Compatibility
+----------------------
+
+- ``TabManager`` public methods still accept display labels (``str``)
+  as the ``key`` argument, so existing screen code calling
+  ``tm.close_tab("Work Orders")`` continues to work. Prefer holding
+  the ``tab_id`` returned by ``open_tab`` for deterministic lookup in
+  the presence of duplicates.
+- The ``TabManager.open_tab`` return type changed from ``bool`` to
+  ``int | None``. Falsy ``None`` still indicates failure (tab already
+  exists); non-``None`` truthy ``int`` still indicates success — the
+  ``if tm.open_tab(...):`` idiom keeps working.
+- ``TabManager.active`` is now ``int | None``. Code comparing
+  ``tm.active == "ScreenName"`` will need to call
+  ``tm.display_name(tm.active)`` for the label.
+
+Out of Scope
+------------
+
+- Persistent (UUID / cross-process) IDs — deferred to 0.6.X.
+- Deregistering stale ``TabManager`` references from
+  ``Host.registered_tab_managers`` and ``DetachedWindow.tab_managers``
+  after ``remove_pane`` — pre-existing bookkeeping leak, orthogonal to
+  this refactor.

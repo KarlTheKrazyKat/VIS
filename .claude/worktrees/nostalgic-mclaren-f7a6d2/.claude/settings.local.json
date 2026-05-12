@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(xargs grep:*)",
+      "Bash(python -m py_compile VIStk/Widgets/_SplitView.py)",
+      "Bash(python -m py_compile VIStk/Widgets/_TabBar.py)",
+      "Bash(python -m py_compile VIStk/Objects/_TabManager.py)",
+      "Bash(python -m py_compile VIStk/Objects/_Host.py)",
+      "Bash(python -m py_compile VIStk/Widgets/__init__.py)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git tag:*)",
+      "Bash(git push:*)",
+      "Bash(pip show:*)",
+      "Bash(pip install:*)",
+      "Bash(gh run:*)",
+      "Bash(VIS PYWOM:*)",
+      "Bash(echo \"Host launched, PID: $!\")",
+      "Bash(grep -r \"SplitView\\\\|HostMenu\\\\|DetachedWindow\\\\|TabBar\\\\|Host\" /c/Users/elija/Documents/VIStk/docs/source/*.rst)",
+      "Bash(ls -1 /c/Users/elija/Documents/VIStk/docs/source/changelog/*.rst)",
+      "Bash(make html:*)",
+      "Bash(find C:\\\\Users\\\\elija\\\\documents\\\\VIStk:*)",
+      "Read(//l/WOM/PYWOM/**)",
+      "Bash(vis PYWOM)"
+    ]
+  }
+}

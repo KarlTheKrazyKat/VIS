@@ -1,0 +1,63 @@
+
+#%Default Imports
+from tkinter import *
+from tkinter import ttk
+import sys
+#%File Specific Imports
+
+#%Handle Arguments
+
+#%Screen Modules
+
+#%Define Loop Modules
+def loop():
+    #screen modules run here
+    1+1
+
+# ── Host hooks ────────────────────────────────────────────────────────────────
+# These are called by the Host in addition to setup().
+# They are ignored in standalone mode.
+
+def configure_menu(menubar):
+    """Contribute menu items to the Host's persistent menu bar.
+    Called each time this tab is focused; items are cleared on unfocus."""
+    pass
+
+def on_focused():
+    """Called when this tab gains focus inside the Host."""
+    pass
+
+def on_unfocused():
+    """Called when this tab loses focus or is closed inside the Host."""
+    pass
+
+def setup(parent):
+    """Build this screen's UI into parent.
+
+    Called by the Host with the tab frame when running as a tab, or by
+    the standalone entry point with the project frame.  All widget creation
+    must be done here so the screen can be safely imported without side-effects.
+    """
+    #%Screen Grid
+
+    #%Screen Elements
+#%Update Loop
+# ── Standalone entry point ────────────────────────────────────────────────────
+if __name__ == "__main__":
+    from Screens.root import root, frame
+    setup(frame)
+    root.Active = True
+    root.WindowGeometry.setGeometry(width=66,height=66,align="center",size_style="screen_relative")
+    root.screenTitle("<title>")
+    root.setIcon("<icon>")
+
+    while True:
+        try:
+            if root.Active:
+                try: loop()
+                except: pass
+                root.update()
+            else:
+                break
+        except:
+            break

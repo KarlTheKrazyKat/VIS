@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools","setuptools-scm"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "VIStk"
+version = "0.5.1"
+license = {file="LICENSE"}
+dependencies = [
+  "pyinstaller",
+  "pystray",
+  "notify-py"
+]
+description = "Visual Interfacing Structure for python using tkinter"
+requires-python = ">=3.10"
+authors = [
+  {name = "Elijah Love", email = "elijah2005l@gmail.com"},
+]
+maintainers = [
+  {name = "Elijah Love", email = "elijah2005l@gmail.com"},
+]
+readme = "README.md"
+keywords = ["python","gui"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Programming Language :: Python"
+]
+[project.urls]
+Homepage = "https://github.com/KarlTheKrazyKat/VIS/blob/master/README.md"
+Documentation = "https://karlthekrazykat.github.io/VIS/"
+Repository = "https://github.com/KarlTheKrazyKat/VIS/"
+"Bug Tracker" = "https://github.com/KarlTheKrazyKat/VIS/blob/master/knownissues.md"
+Changelog = "https://github.com/KarlTheKrazyKat/VIS/blob/master/changelog.md"
+[project.scripts]
+VIS = "VIStk.VIS:__main__"
+[tool.setuptools]
+packages = ["VIStk","VIStk.Widgets","VIStk.Objects","VIStk.Structures","VIStk.Bindings"]
+ext-modules = []
+
+[tool.setuptools.package-data]
+VIStk = [
+  "Form.zip",
+  "Templates/*.txt",
+  "Templates/Widgets/*.txt",
+  "Templates/Widgets/THE_PLAN",
+]

@@ -1,0 +1,38 @@
+$name$_a = Analysis(
+    ['../$file$'],
+    pathex=[],
+    binaries=[],
+    datas=[],
+    hiddenimports=[],
+    hookspath=[],
+    hooksconfig={},
+    runtime_hooks=[],
+    excludes=[],
+    noarchive=False,
+    optimize=0,
+)
+$name$_pyz = PYZ($name$_a.pure)
+
+$name$_exe = EXE(
+    $name$_pyz,
+    $name$_a.scripts,
+    $name$_a.binaries,
+    $name$_a.datas,
+    [],
+    exclude_binaries=True,
+    name='$name$',
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    uac_admin=True,
+    console=False,
+    disable_windowed_traceback=False,
+    argv_emulation=False,
+    target_arch=None,
+    codesign_identity=None,
+    entitlements_file=None,
+    icon=['../Icons/$icon$'],
+    version='$meta$'
+)

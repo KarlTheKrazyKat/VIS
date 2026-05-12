@@ -1195,11 +1195,8 @@ class Release(Project):
 
         self._status("", newline=True)
 
-        #Clean Environment — copies Images/, Icons/, and .VIS/project.json
-        #into self.final so they end up in binaries.zip.  Without this the
-        #installer's appended-archive load raises KeyError on .VIS/project.json
-        #and the --windowed exe dies before any window appears.
-        self.clean()
+        #Clean Environment
+        #self.clean()
 
         # Nuitka exes live at the install root and are launched directly.
         # No PyInstaller launcher shim, no .Runtime/ indirection — see #105.

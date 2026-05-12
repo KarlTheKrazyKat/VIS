@@ -1,0 +1,159 @@
+from tkinter import *
+from typing import Literal
+
+class WindowGeometry():
+    """Handles geometry relations and sizing/resizing for windows"""
+    def __init__(self,window:Tk|Toplevel):
+        """Creates a window geometry object and automatically extracts the size and location
+        
+        Args:
+            window (Tk|Toplevel): The window to access geometry of
+        """
+        self.window:Tk|Toplevel = window
+        self.getGeometry()
+        window.WindowGeometry = self
+
+    def getGeometry(self, respect_size:bool=False):
+        """Sets the internal geometry of object to match the window"""
+        geo_str = self.window.geometry()
+        geo_list = geo_str.split("x")
+        ng_list = [int(geo_list[0])]
+        for i in geo_list[1].split("+"):
+            ng_list.append(int(i))
+        
+        if respect_size:
+            self.geometry = [self.window.winfo_width(), self.window.winfo_height(), ng_list[2], ng_list[3]]
+        else:
+            self.geometry = ng_list
+
+    def stripGeometry(self,objects:tuple[Literal["w","h","x","y"]]|Literal["all"]):
+        """Returns integer values of the requested items"""
+        geo_str = self.window.geometry()
+        geo_list = geo_str.split("x")
+        ng_list = [int(geo_list[0])]
+        for i in geo_list[1].split("+"):
+            ng_list.append(int(i))
+        
+        geo_list = []
+        if objects == "all":
+            geo_list = ng_list
+        else:
+            if "w" in objects: geo_list.append(ng_list[0])
+            if "h" in objects: geo_list.append(ng_list[1])
+            if "x" in objects: geo_list.append(ng_list[2])
+            if "y" in objects: geo_list.append(ng_list[3])
+
+        return geo_list
+
+
+    def setGeometry(self,width:int=None,height:int=None,x:int=None,y:int=None,align:Literal["center","n","ne","e","se","s","sw","w","nw"]=None,size_style:Literal["pixels","screen_relative","window_relative"]=None,window_ref:Tk|Toplevel=None):
+        """Sets the geometry of the window"""
+        ws = self.window.winfo_screenwidth() - 2
+        hs = self.window.winfo_screenheight() - 9
+        ox, oy = 0, 0
+
+        if width is None: width = self.geometry[0]
+        if height is None: height = self.geometry[1]
+
+        #Check if aligning or using coordinates
+        if align is None:
+            if x is None: x = self.geometry[2]
+            if y is None: y = self.geometry[3]
+        else:
+            x = None
+            y = None
+        
+        #No adjustment needs to be made if pixels are given
+
+        if size_style == "window_relative":
+            if window_ref is not None:
+                _ws = window_ref.winfo_width()
+                _hs = window_ref.winfo_height()
+
+                if _ws is not None: ws = _ws
+                if _hs is not None: hs = _hs
+
+                if isinstance(window_ref, (Tk, Toplevel)):
+                    geo_ref = WindowGeometry(window_ref).stripGeometry(("x","y"))
+                    ox = geo_ref[0]
+                    oy = geo_ref[1]
+                else:
+                    ox = window_ref.winfo_rootx()
+                    oy = window_ref.winfo_rooty()
+
+            #Will always hand over relative sizing to screen relative
+            size_style = "screen_relative"
+
+        if size_style == "screen_relative":
+            if not width == self.geometry[0]:
+                width = ws*width/100
+                
+            if not height == self.geometry[1]:
+                height = hs*height/100
+
+        if not align is None:
+            match align:
+                case "center":
+                    x = ws/2 - width/2 + ox
+                    y = hs/2 - height/2 + oy
+                case "n":
+                    x = ws/2 - width/2 + ox
+                    y = 0 + oy
+                case "ne":
+                    x = ws - width + ox
+                    y = 0 + oy
+                case "e":
+                    x = ws - width + ox
+                    y = hs/2 - height/2 + oy
+                case "se":
+                    x = ws - width + ox
+                    y = hs - height + oy
+                case "s":
+                    x = ws/2 - width/2 + ox
+                    y = hs - height + oy
+                case "sw":
+                    x = 0 + ox
+                    y = hs - height + oy
+                case "w":
+                    x = 0 + ox
+                    y = hs/2 - height/2 + oy
+                case "nw":
+                    x = 0 + ox
+                    y = 0 + oy
+
+        self.geometry = [int(width), int(height), int(x-7), int(y)]
+        self.window.geometry('%dx%d+%d+%d' % tuple(self.geometry))
+
+    def center_on(self, window_ref: "Tk|Toplevel") -> None:
+        """Center this window on *window_ref* without a visible flicker.
+
+        The canonical *update + getGeometry + setGeometry* pattern makes the
+        popup visible at the OS default position (top-left of screen) before
+        ``setGeometry`` repositions it — a brief but noticeable flash on
+        every open.  ``center_on`` performs the same math inside a
+        ``withdraw()`` / ``deiconify()`` wrap and uses
+        ``update_idletasks()`` (layout-only) instead of ``update()`` (which
+        also processes the map request), so the window is never drawn at
+        its default position.
+
+        Safe to call on a freshly-constructed ``Toplevel`` before any
+        widgets are packed; call it *after* all child widgets are built so
+        that ``winfo_width`` / ``winfo_height`` reflect the final size.
+
+        Not intended for root ``Tk()`` windows — calling ``withdraw()`` on
+        the main application window hides it entirely.
+
+        Args:
+            window_ref: The ``Tk`` or ``Toplevel`` to center on.
+        """
+        self.window.withdraw()
+        self.window.update_idletasks()
+        self.getGeometry(True)
+        self.setGeometry(
+            width=self.window.winfo_width(),
+            height=self.window.winfo_height(),
+            align="center",
+            size_style="window_relative",
+            window_ref=window_ref,
+        )
+        self.window.deiconify()

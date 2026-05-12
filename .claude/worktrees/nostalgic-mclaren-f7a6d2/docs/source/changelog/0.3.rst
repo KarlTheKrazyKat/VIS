@@ -1,0 +1,50 @@
+0.3 --- Release
+===============
+
+*Released*
+
+The 0.3 release introduced the release pipeline, the installer, and the first set of
+core widgets and objects.
+
+Changes
+-------
+
+Releasing
+~~~~~~~~~
+
+- Added ``VIS release`` command to build and release a version of the project
+- Uses ``project.json`` to generate a PyInstaller spec file for compilation
+- Can switch from screen to screen using internal methods (``os.execl``)
+- Can release a single screen (``VIS release Screen <name>``)
+- Releasing creates installers for the project
+
+Screen Functionality
+~~~~~~~~~~~~~~~~~~~~
+
+- Default form changed
+- Currently active screen is tracked in ``Project``
+- Screens can load with args
+
+Objects
+-------
+
+- ``VIMG`` can bind image path resizing to a widget
+
+New Widgets
+-----------
+
+- ``Window`` --- mixin class for fullscreen control and icon loading
+- ``Root`` (Tk, Window) --- main application window
+- ``SubRoot`` (Toplevel, Window) --- popup/secondary window
+- ``WindowGeometry`` --- window sizing and positioning helper
+- ``LayoutFrame`` (ttk.Frame) --- frame with a ``Layout`` object pre-attached
+- ``QuestionWindow`` (SubRoot) --- configurable dialog with response buttons
+- ``ScrollableFrame`` (ttk.Frame) --- frame with vertical scrollbar
+- ``ScrollMenu`` (ScrollableFrame) --- scrollable VISMenu
+
+Updated Widgets
+---------------
+
+- **Menu** --- buttons highlight on hover; can provide screen names instead of paths
+- **MenuItem** (Button) --- now the button itself with auto-sized text; uses
+  ``screen.load()`` when provided with a screen name

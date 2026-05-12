@@ -90,66 +90,24 @@ if not QUIET and (dinstalls or custom_path):
 
 #%Installer Code
 #Load .VIS project info
-#Try self-contained mode: binaries.zip appended to the executable itself.
-#
-#PyInstaller --windowed strips stdout/stderr, so any failure here is
-#invisible.  Write a startup log to %TEMP% (or /tmp) so a silent exit
-#leaves a forensic trail; without it a malformed appended archive
-#produces "no window, no output" with no way to diagnose.
-_log_path = os.path.join(tempfile.gettempdir(), "vis_installer.log")
-try:
-    _log = open(_log_path, "w", encoding="utf-8")
-    _log.write(f"sys.executable={sys.executable!r}\n")
-    _log.write(f"frozen={getattr(sys, 'frozen', False)}\n")
-    _log.flush()
-except Exception:
-    _log = None
-
-def _log_write(msg: str):
-    if _log is not None:
-        try:
-            _log.write(msg + "\n")
-            _log.flush()
-        except Exception:
-            pass
-
+#Try self-contained mode: binaries.zip appended to the executable itself
 archive = None
 if getattr(sys, 'frozen', False):
     try:
         test = ZipFile(sys.executable, 'r')
-        if ".VIS/project.json" not in test.namelist():
-            raise KeyError(
-                "appended archive is missing '.VIS/project.json' — the "
-                "release pipeline did not copy Images/Icons/.VIS into the "
-                "dist folder before zipping (Release.clean() not called)"
-            )
         test.open(".VIS/project.json").close()
         test.close()
         archive = ZipFile(sys.executable, 'r')
-    except Exception as e:
-        _log_write(f"appended-zip load failed: {type(e).__name__}: {e}")
+    except Exception:
+        pass
 
 #Fall back to external binaries.zip
 if archive is None:
     root_location = Path(__file__).parent
     archive_path = os.path.join(root_location, 'binaries.zip')
     if not os.path.exists(archive_path):
-        msg = (f"Error: Could not find binaries.zip "
-               f"(looked beside {root_location} and inside {sys.executable}). "
-               f"The installer archive is missing or malformed. "
-               f"See {_log_path} for details.")
-        print(msg)
-        _log_write(msg)
-        # Surface a GUI dialog when running --windowed so the user sees
-        # *something* instead of a silent exit.
-        try:
-            import tkinter as _tk
-            from tkinter import messagebox as _mb
-            _r = _tk.Tk(); _r.withdraw()
-            _mb.showerror("Installer failed to start", msg)
-            _r.destroy()
-        except Exception:
-            pass
+        print(f"Error: Could not find binaries.zip")
+        print("The installer archive is missing or was not bundled correctly.")
         sys.exit(1)
     archive = ZipFile(archive_path, 'r')
 pfile = archive.open(".VIS/project.json")

@@ -1,0 +1,11 @@
+0.7 --- Defaults, Navigation, and Updating Tools
+=================================================
+
+*Upcoming*
+
+- Modify default imports
+- Default templates
+- Enable/disable keyboard navigation
+- Additional navigation tools
+- Update tools to ensure that updating VIS will not break code
+- Tools to update created binaries
