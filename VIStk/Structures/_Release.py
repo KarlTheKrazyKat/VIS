@@ -76,7 +76,7 @@ class Release(Project):
 
         # Top-level packages that compile_shared ships as standalone
         # ``<pkg>.pyd`` files at the install root.  Every other phase
-        # adds ``--no-follow-import-to={pkg}`` for each of these so its
+        # adds ``--nofollow-import-to={pkg}`` for each of these so its
         # build doesn't bundle a duplicate copy.
         self.shared_pkg_names: list[str] = [
             imp for imp in self.hidden_imports if "." not in imp
@@ -91,6 +91,21 @@ class Release(Project):
         """Screens to compile this build, in project (screenlist) order.
 
         ``None`` indicates a validation failure — :meth:`release` aborts."""
+
+        # Project-level Nuitka config.  ``onefile`` applies to every
+        # entry-script compile (Host + standalones); when true, each
+        # produces a single self-contained .exe instead of a .dist
+        # folder.  Onefile entries also get a build-time bootstrap
+        # wrapper prepended (see :meth:`_make_bootstrap_wrapper`) so
+        # external Screens / modules / shared packages still resolve at
+        # runtime — Python in onefile mode runs from a temp unpack dir,
+        # not the install root, so we have to re-add the install root
+        # to ``sys.path`` ourselves.
+        with open(self.p_sinfo, "r") as f:
+            _info = json.load(f)
+        _nuitka_cfg = _info[self.title].get("release_info", {}).get("nuitka", {})
+        self.onefile: bool = _nuitka_cfg.get("onefile", False)
+        self.extra_nuitka_args: list[str] = _nuitka_cfg.get("extra_args", [])
 
     def _resolve_release_targets(self) -> list[Screen] | None:
         all_group = self.Groups[Group.ALL]
@@ -389,53 +404,39 @@ class Release(Project):
         return True
 
     def compile_host(self):
-        """Compile the Host as a standalone Nuitka executable.
+        """Compile the Host as a Nuitka executable.
 
-        Nuitka names the output folder after the entry script stem
-        (e.g. ``Host.dist``).  After compilation the contents are merged
-        into the final distribution folder (e.g. ``dist/PYWOM/``).
+        Standalone mode produces a ``.dist`` folder which is merged into
+        ``self.final``.  Onefile mode produces a single self-contained
+        ``.exe`` which is moved to ``self.final``.  In onefile mode the
+        entry script is wrapped with a sys.path bootstrap so external
+        compile targets resolve from the install root (see
+        :meth:`_make_bootstrap_wrapper`).
         """
         ixt = ".ico" if sys.platform == "win32" else ".xbm"
         icon_file = f"{self.p_project}/Icons/{self.d_icon}{ixt}"
 
-        # Read nuitka config from project.json
-        with open(self.p_sinfo, "r") as f:
-            info = json.load(f)
-        nuitka_cfg = info[self.title].get("release_info", {}).get("nuitka", {})
-        onefile = nuitka_cfg.get("onefile", False)
-        extra_args = nuitka_cfg.get("extra_args", [])
-
-        mode = "--onefile" if onefile else "--standalone"
+        mode = "--onefile" if self.onefile else "--standalone"
 
         parts = [sys.executable, "-m", "nuitka", mode]
         parts.extend(self._compiler_args())
         parts.append("--follow-imports")
         parts.append("--enable-plugin=tk-inter")
 
-        # Hidden imports.  Top-level packages already ship as their own
-        # ``<pkg>.pyd`` at install root (compile_shared) — bundling them
-        # again here would create duplicate copies that diverge from the
-        # external one.  So we add ``--no-follow-import-to`` instead.
-        # Dotted names (e.g. ``PIL._tkinter_finder``) are module-level
-        # hints and stay as ``--include-module``.
+        # Dotted hidden_imports (e.g. ``PIL._tkinter_finder``) are
+        # module-level hints — keep them as ``--include-module``.
+        # Top-level shared packages, Screens, and modules sub-packages
+        # are all external compile targets and get blanket nofollow via
+        # _nofollow_flags() below.
         for imp in self.hidden_imports:
-            if "." not in imp:
-                parts.append(f"--no-follow-import-to={imp}")
-            else:
+            if "." in imp:
                 parts.append(f"--include-module={imp}")
 
-        # Tabbed screens ship as standalone ``Screens/<name>.pyd`` files
-        # and per-screen logic ships as ``modules/<name>.pyd`` — both are
-        # external so replacing one .pyd updates that screen without
-        # rebuilding the Host.  Don't bundle either.
-        parts.append("--no-follow-import-to=Screens")
-        parts.append("--no-follow-import-to=modules")
+        parts.extend(self._nofollow_flags())
 
-        # Icon
         if icon_file and exists(icon_file):
             parts.append(f"--windows-icon-from-ico={icon_file}")
 
-        # Company and product info
         if self.company:
             parts.append(f"--windows-company-name={self.company}")
             parts.append(f"--windows-product-name={self.title}")
@@ -444,7 +445,6 @@ class Release(Project):
             parts.append(f"--copyright=Copyright {year} {self.company}")
 
         parts.append(f"--windows-product-version={self.Version}")
-
         parts.append(f"--output-dir={self.build_dir}")
         parts.append(f"--output-filename={self.title}{_EXE_EXT}")
 
@@ -452,27 +452,46 @@ class Release(Project):
             parts.append("--windows-console-mode=disable")
 
         parts.append("--assume-yes-for-downloads")
+        parts.extend(self.extra_nuitka_args)
 
-        # Extra args from project.json
-        parts.extend(extra_args)
-
-        # Entry script is the Host
-        entry_script = self.host_script
+        entry_script = self._entry_for_compile(self.host_script)
         parts.append(entry_script)
 
         ok = self._run_nuitka(parts, self.title, self.p_project)
-
         if not ok:
             return False
 
-        # Nuitka names the .dist folder after the entry script stem
-        host_stem = os.path.splitext(os.path.basename(entry_script))[0]
-        nuitka_dist = f"{self.build_dir}{host_stem}.dist"
+        return self._place_exe_output(entry_script, self.title)
 
+    def _place_exe_output(self, entry_script: str, exe_basename: str) -> bool:
+        """Move/merge a Nuitka build's output into ``self.final``.
+
+        Onefile mode produces ``<build_dir>/<exe_basename>.exe`` directly
+        — just move it.  Standalone mode produces a ``<stem>.dist/``
+        folder (where stem is the entry script's basename minus
+        extension); the .dist contents are merged into ``self.final``,
+        with host-style overwrite semantics (host runtime wins).
+        """
+        if self.onefile:
+            produced = f"{self.build_dir}{exe_basename}{_EXE_EXT}"
+            if not exists(produced):
+                self._status(
+                    f"  Onefile build produced no exe at {produced}",
+                    newline=True,
+                )
+                return False
+            os.makedirs(self.final, exist_ok=True)
+            target = os.path.join(self.final, f"{exe_basename}{_EXE_EXT}")
+            if exists(target):
+                os.remove(target)
+            shutil.move(produced, target)
+            return True
+
+        stem = os.path.splitext(os.path.basename(entry_script))[0]
+        nuitka_dist = f"{self.build_dir}{stem}.dist"
         _skip = {'.build', '_internal', '__pycache__'}
         if exists(nuitka_dist):
             if exists(self.final):
-                # Merge new build into existing folder (preserves screen exes etc.)
                 for dirpath, dirs, files in os.walk(nuitka_dist):
                     dirs[:] = [d for d in dirs if d not in _skip and not d.endswith('.build')]
                     rel = os.path.relpath(dirpath, nuitka_dist)
@@ -484,7 +503,6 @@ class Release(Project):
                 shutil.rmtree(nuitka_dist)
             else:
                 os.rename(nuitka_dist, self.final)
-
         return True
 
     def compile_screens(self, mode="all"):
@@ -551,6 +569,82 @@ class Release(Project):
                 out.append((scr.name, path))
         return out
 
+    # ── Onefile bootstrap injection ───────────────────────────────────────
+
+    _BOOTSTRAP_BANNER = (
+        "# AUTO-GENERATED by VIS release.  Prepended to entry scripts in\n"
+        "# onefile mode so external Screens/, modules/, and shared\n"
+        "# package .pyd files resolve at runtime.  Python in onefile\n"
+        "# runs from a temp unpack dir, not the install root, so the\n"
+        "# install root must be added to sys.path explicitly.\n"
+        "import sys as _vis_sys, os as _vis_os\n"
+        "_vis_install_dir = _vis_os.path.dirname(_vis_sys.executable)\n"
+        "if _vis_install_dir not in _vis_sys.path:\n"
+        "    _vis_sys.path.insert(0, _vis_install_dir)\n"
+        "del _vis_sys, _vis_os, _vis_install_dir\n"
+        "\n"
+    )
+
+    def _make_bootstrap_wrapper(self, script_path: str) -> str:
+        """Write a wrapper script that prepends the install-root sys.path
+        bootstrap to ``script_path`` and return the wrapper's path.
+
+        Used only for onefile builds.  The wrapper lives inside
+        ``self.build_dir`` so it gets picked up by Nuitka at compile
+        time without touching the user's source files.
+        """
+        os.makedirs(self.build_dir, exist_ok=True)
+        stem = os.path.splitext(os.path.basename(script_path))[0]
+        wrapper_path = f"{self.build_dir}{stem}_bootstrap.py"
+        with open(script_path, "r", encoding="utf-8") as f:
+            original = f.read()
+        with open(wrapper_path, "w", encoding="utf-8") as f:
+            f.write(self._BOOTSTRAP_BANNER + original)
+        return wrapper_path
+
+    def _entry_for_compile(self, script_path: str) -> str:
+        """Return the script path Nuitka should compile.
+
+        For standalone builds the install root is already on sys.path
+        (Python runs from there), so the original script works as-is.
+        For onefile builds we emit a bootstrap wrapper that prepends the
+        sys.path setup.
+        """
+        if self.onefile:
+            return self._make_bootstrap_wrapper(script_path)
+        return script_path
+
+    def _compile_targets(self) -> list[str]:
+        """Every external compile target this release will produce.
+
+        Used by each phase to construct ``--nofollow-import-to`` flags
+        for every target except the one *this* compile is building.  The
+        universal rule: every member must be either ``--include-package``
+        (or an entry script) or ``--nofollow-import-to`` for every
+        Nuitka invocation — never both, never neither.
+
+        Members:
+          * Every shared package (``compile_shared`` ships these)
+          * ``Screens`` — every tabbed screen .pyd lands under here
+          * ``modules.<screen>`` for every release-target screen with a
+            ``modules/<screen>/`` directory
+        """
+        targets = list(self.shared_pkg_names)
+        targets.append("Screens")
+        for name, _path in self._modules_for_release():
+            targets.append(f"modules.{name}")
+        return targets
+
+    def _nofollow_flags(self, exclude_self: str | None = None) -> list[str]:
+        """Build ``--nofollow-import-to=X`` for every compile target,
+        skipping ``exclude_self`` if given (the thing this compile is
+        building)."""
+        out: list[str] = []
+        for t in self._compile_targets():
+            if t != exclude_self:
+                out.append(f"--nofollow-import-to={t}")
+        return out
+
     def _compile_screen_pyd(self, scr) -> tuple[bool, str]:
         """Compile one tabbed screen → ``final/Screens/<stem>.pyd``.
 
@@ -561,19 +655,14 @@ class Release(Project):
         parts = [
             sys.executable, "-m", "nuitka", "--module",
             *self._compiler_args(),
-            # Cross-screen imports stay runtime-resolved.  Shared packages
-            # and other-screen modules ship as their own .pyds at install
-            # root / modules/ and are excluded so they aren't bundled
-            # (would create duplicate-module hazards like mismatched
-            # isinstance across copies).
-            "--no-follow-import-to=Screens",
-            "--no-follow-import-to=modules",
             f"--output-dir={self.build_dir}",
             "--assume-yes-for-downloads",
+            # The entry script isn't itself a compile target — every
+            # external target gets nofollow.  Cross-screen and shared-
+            # package imports stay runtime-resolved.
+            *self._nofollow_flags(),
+            scr.script,
         ]
-        for pkg in self.shared_pkg_names:
-            parts.append(f"--no-follow-import-to={pkg}")
-        parts.append(scr.script)
 
         ok, err = self._run_nuitka_silent(parts, self.p_project)
         if not ok:
@@ -664,17 +753,20 @@ class Release(Project):
         """
         out_dir = f"{self.build_dir}modules_{screen_name}/"
         os.makedirs(out_dir, exist_ok=True)
+        self_target = f"modules.{screen_name}"
         parts = [
             sys.executable, "-m", "nuitka", "--module",
             *self._compiler_args(),
-            f"--include-package=modules.{screen_name}",
+            f"--include-package={self_target}",
             f"--output-dir={out_dir}",
             "--assume-yes-for-downloads",
-            "--no-follow-import-to=Screens",
+            # Self gets --include-package; every other compile target
+            # (other modules siblings, Screens, shared packages) gets
+            # --nofollow-import-to so we don't bundle anything that
+            # ships as its own .pyd.
+            *self._nofollow_flags(exclude_self=self_target),
+            mod_path,
         ]
-        for pkg in self.shared_pkg_names:
-            parts.append(f"--no-follow-import-to={pkg}")
-        parts.append(mod_path)
 
         ok, err = self._run_nuitka_silent(parts, self.p_project)
         if not ok:
@@ -714,7 +806,7 @@ class Release(Project):
         file at runtime — no path injection needed in entry scripts.
 
         Peer shared packages (everything else in ``shared_pkg_names``) are
-        excluded with ``--no-follow-import-to`` so this build doesn't end
+        excluded with ``--nofollow-import-to`` so this build doesn't end
         up containing a copy of, say, VIStk inside pywomlib.pyd.
 
         Threadsafe — uses :meth:`_run_nuitka_silent`.
@@ -726,11 +818,11 @@ class Release(Project):
             f"--include-package={pkg}",
             f"--output-dir={self.build_dir}",
             "--assume-yes-for-downloads",
+            # Self gets --include-package; every other compile target
+            # gets --nofollow-import-to.
+            *self._nofollow_flags(exclude_self=pkg),
+            pkg_path,
         ]
-        for peer in self.shared_pkg_names:
-            if peer != pkg:
-                parts.append(f"--no-follow-import-to={peer}")
-        parts.append(pkg_path)
 
         ok, err = self._run_nuitka_silent(parts, self.p_project)
         if not ok:
@@ -746,15 +838,19 @@ class Release(Project):
     def _compile_screen_exe(self, scr, ixt: str) -> bool:
         """Compile one standalone screen → ``final/<scr.name>.exe``.
 
-        Kept serial because each ``--standalone`` build merges its
-        ``.dist/`` into ``self.final`` and concurrent merges would race
-        on common runtime files.
+        Honors the project-level ``onefile`` flag: standalone produces a
+        ``.dist`` that gets merged into ``self.final``, onefile produces
+        a single ``.exe`` that gets moved.  Kept serial in standalone
+        mode because concurrent ``.dist`` merges would race on common
+        runtime files; in onefile mode the merge is trivial and serial
+        execution is just inherited from the surrounding orchestrator.
         """
         icon = (scr.icon if scr.icon else self.d_icon) + ixt
         icon_file = f"{self.p_project}/Icons/{icon}"
 
+        mode = "--onefile" if self.onefile else "--standalone"
         parts = [
-            sys.executable, "-m", "nuitka", "--standalone",
+            sys.executable, "-m", "nuitka", mode,
             *self._compiler_args(),
             "--enable-plugin=tk-inter",
             f"--output-dir={self.build_dir}",
@@ -774,50 +870,23 @@ class Release(Project):
             parts.append("--windows-console-mode=disable")
         # Standalone screens share the Host runtime at the install root
         # (python3xx.dll, .pyd, third-party packages).  Follow direct
-        # imports only — shared packages, other screens, and per-screen
-        # modules live alongside as their own .pyds and must not be
-        # bundled in.
+        # imports for everything except other compile targets — those
+        # ship as their own .pyds and must not be bundled in.
         parts.append("--follow-imports")
-        parts.append("--no-follow-import-to=Screens")
-        parts.append("--no-follow-import-to=modules")
-        for pkg in self.shared_pkg_names:
-            parts.append(f"--no-follow-import-to={pkg}")
-        parts.append(scr.script)
+        parts.extend(self._nofollow_flags())
+        parts.extend(self.extra_nuitka_args)
+
+        entry_script = self._entry_for_compile(scr.script)
+        parts.append(entry_script)
 
         ok = self._run_nuitka(parts, scr.name, self.p_project)
         if not ok:
             return False
 
-        scr_stem = os.path.splitext(scr.script)[0]
-        scr_dist = f"{self.build_dir}{scr_stem}.dist"
-        if not exists(scr_dist):
-            # Nuitka exited 0 but produced no .dist — fail loudly rather
-            # than silently shipping an installer without this screen's
-            # exe (issue #115).
-            try:
-                siblings = sorted(os.listdir(self.build_dir))
-            except OSError:
-                siblings = []
-            self._status(
-                f"  [{self._step}/{self._total_steps}] {self._category} "
-                f"{self._cat_index}/{self._cat_count} - {scr.name} FAILED — "
-                f"expected {scr_dist} not produced (build_dir contains: "
-                f"{', '.join(siblings) or 'nothing'})",
-                newline=True,
-            )
+        if not self._place_exe_output(entry_script, scr.name):
             return False
-        _skip = {'.build', '_internal', '__pycache__'}
-        for dirpath, dirs, files in os.walk(scr_dist):
-            dirs[:] = [d for d in dirs if d not in _skip and not d.endswith('.build')]
-            rel = os.path.relpath(dirpath, scr_dist)
-            dest = os.path.join(self.final, rel)
-            os.makedirs(dest, exist_ok=True)
-            for f in files:
-                dest_file = os.path.join(dest, f)
-                if not exists(dest_file):
-                    shutil.copy2(os.path.join(dirpath, f), dest_file)
-        shutil.rmtree(scr_dist)
 
+        # Post-condition: the screen's exe is at the install root.
         expected_exe = os.path.join(self.final, f"{scr.name}{_EXE_EXT}")
         if not exists(expected_exe):
             self._status(
