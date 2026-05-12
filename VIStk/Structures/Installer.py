@@ -1318,6 +1318,9 @@ def binstall(desktop:list[str], selected_screens:list[str]):
     existing_log_path = os.path.join(location, ".VIS", "install_log.json")
     is_update = os.path.exists(existing_log_path)
 
+    _log_write(f"binstall: location={location} is_update={is_update} "
+               f"selected={selected_screens}")
+
     # Check for running application processes before proceeding
     if is_update:
         running = _find_running_processes(location)
@@ -1430,6 +1433,9 @@ def binstall(desktop:list[str], selected_screens:list[str]):
     total_size = sum(archive.getinfo(f).file_size for f in files_to_extract)
     installed_size = 0
 
+    _log_write(f"scan done: {len(files_to_extract)} to extract, "
+               f"{skipped} unchanged, total_size={total_size}")
+
     # Compute proportional phase ranges for the remaining bar space
     n_backup = len(files_to_extract) if (is_update and files_to_extract) else 0
     n_extract = len(files_to_extract)
@@ -1460,13 +1466,14 @@ def binstall(desktop:list[str], selected_screens:list[str]):
     if n_backup > 0:
         backup_dir = tempfile.mkdtemp(prefix="vis_backup_")
         for idx, file in enumerate(files_to_extract):
+            file_label.config(text=f"Backing up: {os.path.basename(file)}")
+            root.update()
             dest = Path(location) / file
             if dest.exists():
                 backup_path = Path(backup_dir) / file
                 backup_path.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(dest, backup_path)
             pct = scan_end + int((idx + 1) / n_backup * (backup_end - scan_end))
-            file_label.config(text=f"Backing up: {os.path.basename(file)}")
             progress_bar.config(value=pct)
             pct_label.config(text=f"{pct}%")
             root.update()
@@ -1476,6 +1483,7 @@ def binstall(desktop:list[str], selected_screens:list[str]):
         extract_range = 100 - backup_end
         for file in files_to_extract:
             file_label.config(text=file)
+            root.update()
             if file.startswith(_dir_prefixes) or file.endswith(".py"):
                 archive.extract(file, location)
             else:
@@ -1488,6 +1496,8 @@ def binstall(desktop:list[str], selected_screens:list[str]):
             pct_label.config(text=f"{pct}%")
             root.update()
     except Exception as exc:
+        import traceback
+        _log_write(f"extract failed: {traceback.format_exc()}")
         # Restore backed-up files and abort
         if backup_dir and os.path.exists(backup_dir):
             file_label.config(text="Extraction failed — restoring backup...")
@@ -1525,6 +1535,9 @@ def binstall(desktop:list[str], selected_screens:list[str]):
     root.update()
     write_install_log(location, selected_screens, actual_shortcuts)
     register_uninstall(location)
+
+    _log_write(f"install complete: {len(files_to_extract)} files, "
+               f"{fmt_size(installed_size)} extracted")
 
     file_label.config(text="Installation complete.")
     progress_bar.config(value=100)
