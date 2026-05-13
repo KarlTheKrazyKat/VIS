@@ -896,8 +896,8 @@ class Release(Project):
         if not self._place_exe_output(entry_script, scr.name):
             return False
 
-        # Post-condition: the screen's exe is at the install root.
-        expected_exe = os.path.join(self.final, f"{scr.name}{_EXE_EXT}")
+        # Post-condition: the screen's exe is inside runtime/.
+        expected_exe = os.path.join(self.runtime, f"{scr.name}{_EXE_EXT}")
         if not exists(expected_exe):
             self._status(
                 f"  [{self._step}/{self._total_steps}] {self._category} "
@@ -1220,19 +1220,19 @@ class Release(Project):
         # No PyInstaller launcher shim, no .Runtime/ indirection — see #105.
 
         # Post-condition: every standalone screen we said we'd build must
-        # have its exe present at the install root.  Catches silent
-        # failures further upstream (issue #115) so we don't ship a
-        # binaries.zip that's missing the screens the user paid to compile.
+        # have its exe present inside runtime/.  Catches silent failures
+        # further upstream (issue #115) so we don't ship a binaries.zip
+        # that's missing the screens the user paid to compile.
         missing_exes = []
         for scr in self.release_targets:
             if scr.tabbed:
                 continue
-            expected = os.path.join(self.final, f"{scr.name}{_EXE_EXT}")
+            expected = os.path.join(self.runtime, f"{scr.name}{_EXE_EXT}")
             if not exists(expected):
                 missing_exes.append(scr.name)
         if missing_exes:
             print(
-                f"\nRelease FAILED: standalone exe(s) missing from {self.final}: "
+                f"\nRelease FAILED: standalone exe(s) missing from {self.runtime}: "
                 f"{', '.join(missing_exes)}.  Inspect the build output above "
                 f"for the underlying failure.",
                 flush=True,
