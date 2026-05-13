@@ -491,18 +491,20 @@ class Release(Project):
         nuitka_dist = f"{self.build_dir}{stem}.dist"
         _skip = {'.build', '_internal', '__pycache__'}
         if exists(nuitka_dist):
-            if exists(self.final):
-                for dirpath, dirs, files in os.walk(nuitka_dist):
-                    dirs[:] = [d for d in dirs if d not in _skip and not d.endswith('.build')]
-                    rel = os.path.relpath(dirpath, nuitka_dist)
-                    dest = os.path.join(self.final, rel)
-                    os.makedirs(dest, exist_ok=True)
-                    for f in files:
-                        src = os.path.join(dirpath, f)
-                        shutil.copy2(src, os.path.join(dest, f))
-                shutil.rmtree(nuitka_dist)
-            else:
-                os.rename(nuitka_dist, self.final)
+            # No rmtree, no rename: preserve <stem>.dist/ in build_dir
+            # for debugging and byte-comparison audits between Host and
+            # screen builds.  Subsequent builds overwrite their own
+            # .dist/ in place; adds a ~80 MB/screen fixed footprint to
+            # build_dir, doesn't accumulate.
+            os.makedirs(self.final, exist_ok=True)
+            for dirpath, dirs, files in os.walk(nuitka_dist):
+                dirs[:] = [d for d in dirs if d not in _skip and not d.endswith('.build')]
+                rel = os.path.relpath(dirpath, nuitka_dist)
+                dest = os.path.join(self.final, rel)
+                os.makedirs(dest, exist_ok=True)
+                for f in files:
+                    src = os.path.join(dirpath, f)
+                    shutil.copy2(src, os.path.join(dest, f))
         return True
 
     def compile_screens(self, mode="all"):
@@ -1318,8 +1320,8 @@ class Release(Project):
             with open(binaries_zip, "rb") as data:
                 out.write(data.read())
 
-        #Clean up temporary binaries.zip
-        os.remove(binaries_zip)
+        # Preserve binaries.zip for debugging archive issues; next release
+        # overwrites it via shutil.make_archive(), so it doesn't accumulate.
 
         #Move installer to Downloads folder
         from pathlib import Path as _Path
