@@ -274,8 +274,17 @@ def shortcut(name:str, location:Path):
 
         subprocess.call(f"chmod +x {os.path.join(platformdirs.user_desktop_path(),name+'.desktop')}", shell=True)
 
-# Prefixes for files that keep their directory structure during extraction
-_dir_prefixes = (".VIS/", "Images/", "Icons/", "Screens/", "modules/", ".Runtime/", "Shared/")
+# Directory prefixes inside runtime/ that hold non-binary assets.  Files
+# matching these prefixes skip extal()'s chmod logic (no Linux exes live
+# in these subdirs).  Files at runtime/ root (WOM, AssetManager,
+# python313.dll, etc.) and at the install root (Uninstaller, LICENSE) go
+# through extal(), which conditionally chmods extensionless Linux files.
+_dir_prefixes = (
+    "runtime/.VIS/", "runtime/Images/", "runtime/Icons/",
+    "runtime/Screens/", "runtime/modules/", "runtime/.Runtime/",
+    "runtime/Shared/",
+    "runtime/tcl/", "runtime/tcl8/", "runtime/tk/",
+)
 
 def extal(file, location):
     """Extracts file to the location. Only chmod binaries on Linux."""
@@ -287,17 +296,24 @@ def extal(file, location):
             subprocess.call(f"chmod +x {os.path.join(location,file)}", shell=True)
 
 def adjacents(location):
-    """Installs adjacent files from .VIS, Images, Icons, .Runtime"""
-    vis_dir = os.path.join(location, ".VIS")
-    runtime_dir = os.path.join(location, ".Runtime")
+    """Pre-create dot-dirs inside runtime/ with hidden attribute on Windows.
+
+    .VIS and .Runtime are hidden so Explorer doesn't show them by default.
+    Images and Icons get pre-created for parity; archive.extract() would
+    auto-create them anyway.  All four live under runtime/ now (the new
+    layout); Uninstaller.exe and LICENSE remain at the install root.
+    """
+    runtime_root = os.path.join(location, "runtime")
+    vis_dir = os.path.join(runtime_root, ".VIS")
+    dot_runtime = os.path.join(runtime_root, ".Runtime")
     os.makedirs(vis_dir, exist_ok=True)
-    os.makedirs(os.path.join(location, "Images"), exist_ok=True)
-    os.makedirs(os.path.join(location, "Icons"), exist_ok=True)
-    os.makedirs(runtime_dir, exist_ok=True)
+    os.makedirs(os.path.join(runtime_root, "Images"), exist_ok=True)
+    os.makedirs(os.path.join(runtime_root, "Icons"), exist_ok=True)
+    os.makedirs(dot_runtime, exist_ok=True)
     if sys.platform == "win32":
         subprocess.call(["attrib", "+h", vis_dir],
                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        subprocess.call(["attrib", "+h", runtime_dir],
+        subprocess.call(["attrib", "+h", dot_runtime],
                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
@@ -416,7 +432,7 @@ def write_install_log(location, selected_screens, desktop_shortcuts):
         "registry_key": registry_key,
     }
 
-    log_path = os.path.join(location, ".VIS", "install_log.json")
+    log_path = os.path.join(location, "runtime", ".VIS", "install_log.json")
     with open(log_path, "w") as f:
         json.dump(log, f, indent=2)
 
@@ -473,7 +489,7 @@ def verify_installation(location, arc) -> list[str]:
     """
     if arc is None:
         return ["Archive not available — cannot verify."]
-    log_path = os.path.join(location, ".VIS", "install_log.json")
+    log_path = os.path.join(location, "runtime", ".VIS", "install_log.json")
     if not os.path.exists(log_path):
         return ["install_log.json not found — cannot verify."]
     try:
@@ -490,29 +506,34 @@ def verify_installation(location, arc) -> list[str]:
         archive_sizes = {f: arc.getinfo(f).file_size for f in arc.namelist()}
     except Exception as e:
         return [f"Could not read archive: {e}"]
+    # Screen exes and adjacent dirs live under runtime/ in the new layout.
+    runtime_dir = install_dir / "runtime"
     for scr in log.get("screens", []):
         exe = scr["executable"]
-        exe_path = install_dir / exe
+        if not exe:
+            continue  # tabbed screens have empty 'executable' — skip
+        exe_path = runtime_dir / exe
         if not exe_path.exists():
-            issues.append(f"Missing: {exe}")
+            issues.append(f"Missing: runtime/{exe}")
         else:
-            # Find corresponding archive entry (strip .exe on Windows)
-            base = exe.rsplit(".", 1)[0] if "." in exe else exe
+            # Archive entry for runtime/<exe> (strip .exe on Windows)
+            arc_name = f"runtime/{exe}"
+            base = arc_name.rsplit(".", 1)[0] if "." in arc_name else arc_name
             arc_entry = next(
-                (f for f in archive_sizes if f == exe or f.startswith(base + ".")),
+                (f for f in archive_sizes if f == arc_name or f.startswith(base + ".")),
                 None,
             )
             if arc_entry and exe_path.stat().st_size != archive_sizes[arc_entry]:
                 issues.append(
-                    f"Size mismatch: {exe} "
+                    f"Size mismatch: runtime/{exe} "
                     f"(archive {archive_sizes[arc_entry]}B, "
                     f"installed {exe_path.stat().st_size}B)"
                 )
 
-    # Check adjacent directories
+    # Check adjacent directories — now under runtime/
     for d in log.get("directories", []):
-        if not (install_dir / d).exists():
-            issues.append(f"Missing directory: {d}")
+        if not (runtime_dir / d).exists():
+            issues.append(f"Missing directory: runtime/{d}")
 
     return issues
 
@@ -595,7 +616,7 @@ if QUIET is True:
                     _expanded.append(_tok)
         cinstalls = _expanded
 
-    is_update_quiet = os.path.exists(os.path.join(location, ".VIS", "install_log.json"))
+    is_update_quiet = os.path.exists(os.path.join(location, "runtime", ".VIS", "install_log.json"))
 
     # Check for running processes in quiet mode
     if is_update_quiet:
@@ -616,9 +637,11 @@ if QUIET is True:
     print(f"{'Updating' if is_update_quiet else 'Installing'} {title} v{app_version} to {location}")
     adjacents(location)
 
-    # Collect files to install
-    _base_prefixes_q = (".VIS/", "Images/", "Icons/", ".Runtime/")
-    _host_prefixes_q = ("Screens/", "modules/", "Shared/")
+    # Collect files to install.  Archive entries now use the runtime/
+    # layout: all .exes and shared runtime files live under runtime/,
+    # only Uninstaller.exe and LICENSE sit at archive root.
+    _base_prefixes_q = ("runtime/.VIS/", "runtime/Images/", "runtime/Icons/", "runtime/.Runtime/")
+    _host_prefixes_q = ("runtime/Screens/", "runtime/modules/", "runtime/Shared/")
     # In quiet mode with no screens specified, install everything
     host_selected_q = (not cinstalls) or (title in cinstalls)
     quiet_install_files = []
@@ -630,18 +653,29 @@ if QUIET is True:
         elif host_selected_q and f.endswith(".py"):
             quiet_install_files.append(f)
         else:
-            base = ".".join(f.split(".")[:-1]) if "." in f else f
+            # Strip any "runtime/" prefix when matching _ALWAYS_INSTALL
+            # so Uninstaller (at root) and runtime/Uninstaller (if it
+            # ever moves) both qualify by base name.
+            stem = f[len("runtime/"):] if f.startswith("runtime/") else f
+            base = ".".join(stem.split(".")[:-1]) if "." in stem else stem
             if base in _ALWAYS_INSTALL and f not in quiet_install_files:
                 quiet_install_files.append(f)
-    # If no screens specified in quiet mode, include the Host exe
+    # If no screens specified in quiet mode, include the Host exe (lives
+    # in runtime/ now, e.g. runtime/WOM.exe).
     if host_selected_q:
+        host_runtime = f"runtime/{title}"
         for f in archive.namelist():
-            if (f == title or f.startswith(title + ".")) and f not in quiet_install_files:
+            if (f == host_runtime or f.startswith(host_runtime + ".")) \
+                    and f not in quiet_install_files:
                 quiet_install_files.append(f)
     for i in cinstalls:
         matched = False
+        # Standalone screen exes live in runtime/; match runtime/<name>...
+        screen_runtime = f"runtime/{i}"
         for file in archive.namelist():
-            if (file == i or file.startswith(i + ".") or file.startswith(i + "/")) \
+            if (file == screen_runtime
+                    or file.startswith(screen_runtime + ".")
+                    or file.startswith(screen_runtime + "/")) \
                     and file not in quiet_install_files:
                 quiet_install_files.append(file)
                 matched = True
@@ -1315,7 +1349,7 @@ def binstall(desktop:list[str], selected_screens:list[str]):
     adjacents(location)#Install adjacent files
 
     # Detect existing installation for update-in-place
-    existing_log_path = os.path.join(location, ".VIS", "install_log.json")
+    existing_log_path = os.path.join(location, "runtime", ".VIS", "install_log.json")
     is_update = os.path.exists(existing_log_path)
 
     _log_write(f"binstall: location={location} is_update={is_update} "
@@ -1346,21 +1380,22 @@ def binstall(desktop:list[str], selected_screens:list[str]):
 
     # Build the full list of files to install and compute total size.
     #
-    # The host group owns the entire shared Nuitka runtime — every top-
-    # level Python DLL, stdlib .pyd, third-party package directory, and
-    # Tcl/Tk asset that lives next to WOM.exe.  When the host is selected
-    # we install everything in the archive *except* files exclusively
-    # owned by other standalone screens that weren't selected.  This
-    # replaces the old prefix-list approach (#128) which was written for
-    # the pre-#106 layout where the runtime was hidden under .Runtime/
-    # and only Screens/ modules/ Shared/ at root needed explicit listing.
-    _base_prefixes = (".VIS/", "Images/", "Icons/")
+    # The host group owns the entire shared Nuitka runtime — every Python
+    # DLL, stdlib .pyd, third-party package directory, and Tcl/Tk asset
+    # next to WOM.exe.  When the host is selected we install everything
+    # in the archive *except* files exclusively owned by other standalone
+    # screens that weren't selected.  Archive entries now use the
+    # runtime/ layout (#2a): all .exes and shared runtime live under
+    # runtime/, only Uninstaller.exe and LICENSE sit at archive root.
+    _base_prefixes = ("runtime/.VIS/", "runtime/Images/", "runtime/Icons/")
     _unselected_screens = _standalone_screens - set(selected_screens)
     _excluded_files = set()
     for sname in _unselected_screens:
+        sname_runtime = f"runtime/{sname}"
         for file in archive.namelist():
-            if (file == sname or file.startswith(sname + ".")
-                    or file.startswith(sname + "/")):
+            if (file == sname_runtime
+                    or file.startswith(sname_runtime + ".")
+                    or file.startswith(sname_runtime + "/")):
                 _excluded_files.add(file)
 
     install_files = []
@@ -1373,12 +1408,21 @@ def binstall(desktop:list[str], selected_screens:list[str]):
         elif host_selected:
             install_files.append(file)
         else:
-            base = ".".join(file.split(".")[:-1]) if "." in file else file
+            # Strip any "runtime/" prefix when matching _ALWAYS_INSTALL
+            # by base name so root-level Uninstaller and a hypothetical
+            # runtime/Uninstaller both qualify.
+            stem = file[len("runtime/"):] if file.startswith("runtime/") else file
+            base = ".".join(stem.split(".")[:-1]) if "." in stem else stem
             if base in _ALWAYS_INSTALL and file not in install_files:
                 install_files.append(file)
     for i in selected_screens:
+        # Standalone screen exes live in runtime/; match runtime/<name>...
+        i_runtime = f"runtime/{i}"
         for file in archive.namelist():
-            if (file == i or file.startswith(i + ".") or file.startswith(i + "/")) and file not in install_files:
+            if (file == i_runtime
+                    or file.startswith(i_runtime + ".")
+                    or file.startswith(i_runtime + "/")) \
+                    and file not in install_files:
                 install_files.append(file)
 
     def fmt_size(b):
@@ -1620,7 +1664,7 @@ def _run_uninstaller():
         inst_dir = Path(loc)
     else:
         inst_dir = Path(loc, title)
-    log_path = inst_dir / ".VIS" / "install_log.json"
+    log_path = inst_dir / "runtime" / ".VIS" / "install_log.json"
     if log_path.exists():
         try:
             with open(log_path) as f:

@@ -73,6 +73,14 @@ class Release(Project):
         self.pendix = self.title if flag == "" else f"{self.title}-{flag}"
         self.build_dir = f"{self.p_project}/build/{self.pendix}/"
         self.final = f"{self.location}{self.pendix}"
+        self.runtime = f"{self.final}/runtime"
+        """Subdirectory of ``self.final`` where every Nuitka build merges.
+
+        Holds all .exes, the shared Python runtime (``python3xx.dll`` +
+        ``.pyd`` extensions), Tcl/Tk runtime, plus ``Screens/``, ``modules/``,
+        ``Icons/``, ``Images/``, ``.VIS/``.  Only ``Uninstaller.exe``
+        (PyInstaller --onefile, self-contained) and ``LICENSE`` live at
+        ``self.final`` root."""
 
         # Top-level packages that compile_shared ships as standalone
         # ``<pkg>.pyd`` files at the install root.  Every other phase
@@ -480,8 +488,8 @@ class Release(Project):
                     newline=True,
                 )
                 return False
-            os.makedirs(self.final, exist_ok=True)
-            target = os.path.join(self.final, f"{exe_basename}{_EXE_EXT}")
+            os.makedirs(self.runtime, exist_ok=True)
+            target = os.path.join(self.runtime, f"{exe_basename}{_EXE_EXT}")
             if exists(target):
                 os.remove(target)
             shutil.move(produced, target)
@@ -496,11 +504,11 @@ class Release(Project):
             # screen builds.  Subsequent builds overwrite their own
             # .dist/ in place; adds a ~80 MB/screen fixed footprint to
             # build_dir, doesn't accumulate.
-            os.makedirs(self.final, exist_ok=True)
+            os.makedirs(self.runtime, exist_ok=True)
             for dirpath, dirs, files in os.walk(nuitka_dist):
                 dirs[:] = [d for d in dirs if d not in _skip and not d.endswith('.build')]
                 rel = os.path.relpath(dirpath, nuitka_dist)
-                dest = os.path.join(self.final, rel)
+                dest = os.path.join(self.runtime, rel)
                 os.makedirs(dest, exist_ok=True)
                 for f in files:
                     src = os.path.join(dirpath, f)
@@ -539,9 +547,9 @@ class Release(Project):
             modules = self._modules_for_release()
             if tabbed or modules:
                 if tabbed:
-                    os.makedirs(f"{self.final}/Screens", exist_ok=True)
+                    os.makedirs(f"{self.runtime}/Screens", exist_ok=True)
                 if modules:
-                    os.makedirs(f"{self.final}/modules", exist_ok=True)
+                    os.makedirs(f"{self.runtime}/modules", exist_ok=True)
                 if not self._compile_pyds_parallel(tabbed, modules):
                     return False
 
@@ -674,7 +682,7 @@ class Release(Project):
         if not built_mods:
             return False, f"no {_MOD_EXT} produced at {self.build_dir}{stem}*{_MOD_EXT}"
         for bp in built_mods:
-            shutil.move(bp, f"{self.final}/Screens/{stem}{_MOD_EXT}")
+            shutil.move(bp, f"{self.runtime}/Screens/{stem}{_MOD_EXT}")
         return True, ""
 
     def _run_parallel(self, jobs: list, label: str, max_workers: int) -> bool:
@@ -777,7 +785,7 @@ class Release(Project):
         built = glob.glob(f"{out_dir}*{_MOD_EXT}")
         if not built:
             return False, f"no {_MOD_EXT} produced for modules.{screen_name}"
-        target = f"{self.final}/modules/{screen_name}{_MOD_EXT}"
+        target = f"{self.runtime}/modules/{screen_name}{_MOD_EXT}"
         # If multiple .pyds came out, pick the one that matches the leaf
         # (Nuitka may emit a cpython-tagged sibling).  Prefer exact stem.
         primary = next((bp for bp in built
@@ -834,7 +842,7 @@ class Release(Project):
         if not built:
             return False, f"no {_MOD_EXT} produced at {self.build_dir}{pkg}*{_MOD_EXT}"
         for bp in built:
-            shutil.move(bp, f"{self.final}/{pkg}{_MOD_EXT}")
+            shutil.move(bp, f"{self.runtime}/{pkg}{_MOD_EXT}")
         return True, ""
 
     def _compile_screen_exe(self, scr, ixt: str) -> bool:
@@ -935,7 +943,7 @@ class Release(Project):
         if not resolved:
             return True
 
-        os.makedirs(self.final, exist_ok=True)
+        os.makedirs(self.runtime, exist_ok=True)
         return self._compile_shared_parallel(resolved)
 
     def clean(self):
@@ -949,25 +957,28 @@ class Release(Project):
 
         out_dir = self.final
 
-        # Copy Images
+        # Copy Images into runtime/ (alongside the .exes that consume them)
         src = f"{self.p_project}/Images/"
         if exists(src):
-            shutil.copytree(src, f"{out_dir}/Images/", dirs_exist_ok=True)
+            shutil.copytree(src, f"{self.runtime}/Images/", dirs_exist_ok=True)
 
-        # Copy Icons
+        # Copy Icons into runtime/
         src = f"{self.p_project}/Icons/"
         if exists(src):
-            shutil.copytree(src, f"{out_dir}/Icons/", dirs_exist_ok=True)
+            shutil.copytree(src, f"{self.runtime}/Icons/", dirs_exist_ok=True)
 
-        # Copy license file if present
+        # Copy license file if present.  Stays at the install root (NOT in
+        # runtime/) so it's the first thing a user sees when they open
+        # the install folder.
         for name in ("LICENSE", "LICENSE.txt", "EULA.txt", "EULA.md"):
             src = f"{self.p_project}/{name}"
             if exists(src):
                 shutil.copy2(src, f"{out_dir}/{name}")
                 break
 
-        # Copy project.json only (Host.py is compiled into the exe)
-        vis_dest = f"{out_dir}/.VIS"
+        # Copy project.json into runtime/.VIS/ so getPath()'s walk-up
+        # from the running .exe (which now lives in runtime/) finds it.
+        vis_dest = f"{self.runtime}/.VIS"
         os.makedirs(vis_dest, exist_ok=True)
         src = f"{self.p_vinfo}/project.json"
         if exists(src):
@@ -1013,9 +1024,11 @@ class Release(Project):
         if os.path.exists(stale_host):
             os.remove(stale_host)
 
-        # The Nuitka standalone exes live at the install root alongside
-        # their python313.dll / .pyd / package dependencies.  No .Runtime/
-        # indirection layer, no launcher shim — see #105.
+        # Layout: every Nuitka standalone build (Host + standalone screens)
+        # merges into self.runtime, so all .exes share one copy of the
+        # Python runtime (python3xx.dll, .pyd extensions, Tcl/Tk).
+        # Uninstaller (PyInstaller --onefile, self-contained) ships at
+        # the install root for user-facing accessibility.
 
         print(f"\n\nReleased a new{' '+self.flag+' ' if self.flag else ' '}build of {self.title}!", flush=True)
 
