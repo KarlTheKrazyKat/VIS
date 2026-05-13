@@ -442,6 +442,11 @@ class Release(Project):
                 parts.append(f"--include-module={imp}")
 
         parts.extend(self._nofollow_flags())
+        # Bundle full stdlib so any shared .pyd loaded at runtime by
+        # this Host .exe can reach stdlib (asyncio, logging,
+        # multiprocessing, socket, _overlapped, ...) via the frozen
+        # host's import system.  See _stdlib_includes() docstring.
+        parts.extend(self._stdlib_includes())
 
         if icon_file and exists(icon_file):
             parts.append(f"--windows-icon-from-ico={icon_file}")
@@ -678,19 +683,55 @@ class Release(Project):
     })
 
     def _stdlib_hints_for_shared(self) -> list[str]:
-        """Every top-level stdlib module Nuitka should follow when
-        bundling third-party deps into shared .pyd files, minus the
-        ``_STDLIB_HINT_EXCLUDE`` set.
+        """Every top-level stdlib module Nuitka should bundle into the
+        entry-script .exes so any shared .pyd loaded at runtime can
+        reach stdlib via the frozen host's import system.
 
         Uses :data:`sys.stdlib_module_names` (Python 3.10+) so the list
         adapts to whichever Python version is running the release —
         when the user upgrades Python and a new stdlib module appears,
-        it shows up here automatically.  No more whack-a-mole appending
-        to a hand-maintained list when a new third-party dep transitively
-        imports yet another stdlib module.
+        it shows up here automatically.
+
+        Filters out ``_STDLIB_HINT_EXCLUDE``.
+
+        Note: ``--follow-import-to`` of stdlib names is a no-op for
+        Nuitka ``--module`` mode — it silently doesn't bundle the
+        stdlib module into the .pyd.  The same names DO get bundled
+        when passed as ``--include-module`` / ``--include-package`` to
+        a ``--standalone`` build, so we apply them to the entry-script
+        compiles (Host + standalone screens) instead.  Shared .pyds
+        loaded by those .exes resolve stdlib through the host runtime.
         """
         return sorted(m for m in sys.stdlib_module_names
                       if m not in self._STDLIB_HINT_EXCLUDE)
+
+    def _stdlib_includes(self) -> list[str]:
+        """Build the list of ``--include-module=<name>`` /
+        ``--include-package=<name>`` flags for stdlib bundling into an
+        entry-script (--standalone) compile.
+
+        Detects packages vs single-file modules using
+        :func:`importlib.util.find_spec` — packages get
+        ``--include-package`` so all their submodules ship (e.g. asyncio
+        needs windows_events which pulls _overlapped), single modules
+        get ``--include-module``.  Names that fail to resolve in the
+        current Python (e.g. platform-specific stdlib that's absent on
+        this OS) are skipped silently.
+        """
+        import importlib.util
+        flags: list[str] = []
+        for name in self._stdlib_hints_for_shared():
+            try:
+                spec = importlib.util.find_spec(name)
+            except (ImportError, ValueError, AttributeError):
+                continue
+            if spec is None:
+                continue
+            if spec.submodule_search_locations is not None:
+                flags.append(f"--include-package={name}")
+            else:
+                flags.append(f"--include-module={name}")
+        return flags
 
     def _dist_to_top_levels(self, dist_name: str) -> list[str]:
         """Map a pip distribution name to its importable top-level name(s).
@@ -958,10 +999,12 @@ class Release(Project):
         # ModuleNotFoundError.
         runtime_deps = self._resolve_runtime_deps(pkg)
         follow_flags = [f"--follow-import-to={d}" for d in runtime_deps]
-        # Every stdlib top-level module (filtered) so transitive stdlib
-        # imports inside bundled deps resolve.  See
-        # _stdlib_hints_for_shared() docstring.
-        follow_flags += [f"--follow-import-to={m}" for m in self._stdlib_hints_for_shared()]
+        # Stdlib transitively used by bundled deps (logging, asyncio,
+        # multiprocessing, etc.) is NOT bundled here — Nuitka --module
+        # silently skips stdlib for --follow-import-to.  It IS bundled
+        # into the entry-script .exes via _stdlib_includes(), so when
+        # this shared .pyd is loaded by a .exe at runtime, stdlib
+        # resolves through the .exe's frozen host.
 
         parts = [
             sys.executable, "-m", "nuitka", "--module",
@@ -1029,6 +1072,9 @@ class Release(Project):
         # ship as their own .pyds and must not be bundled in.
         parts.append("--follow-imports")
         parts.extend(self._nofollow_flags())
+        # Same stdlib bundling as compile_host so standalone screens
+        # also expose the full stdlib to shared .pyds loaded at runtime.
+        parts.extend(self._stdlib_includes())
         parts.extend(self.extra_nuitka_args)
 
         entry_script = self._entry_for_compile(scr.script)
