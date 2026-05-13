@@ -842,6 +842,15 @@ class Release(Project):
             f"--include-package={pkg}",
             f"--output-dir={self.build_dir}",
             "--assume-yes-for-downloads",
+            # --follow-imports bundles transitive third-party deps
+            # (e.g. VIStk pulls in notifypy + loguru; pywomlib pulls
+            # in platformdirs etc.) into <pkg>.pyd so the running .exe
+            # doesn't hit ModuleNotFoundError at startup.  Default
+            # --module behavior leaves these as runtime imports, which
+            # fails because the install dir has no sys.path entry for
+            # them.  Peer compile targets stay nofollow'd below, so
+            # this doesn't bundle VIStk inside pywomlib.pyd, etc.
+            "--follow-imports",
             # Self gets --include-package; every other compile target
             # gets --nofollow-import-to.
             *self._nofollow_flags(exclude_self=pkg),
