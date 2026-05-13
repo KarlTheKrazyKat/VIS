@@ -117,13 +117,13 @@ archive = None
 if getattr(sys, 'frozen', False):
     try:
         test = ZipFile(sys.executable, 'r')
-        if ".VIS/project.json" not in test.namelist():
+        if "runtime/.VIS/project.json" not in test.namelist():
             raise KeyError(
-                "appended archive is missing '.VIS/project.json' — the "
-                "release pipeline did not copy Images/Icons/.VIS into the "
-                "dist folder before zipping (Release.clean() not called)"
+                "appended archive is missing 'runtime/.VIS/project.json' "
+                "— the release pipeline did not copy Images/Icons/.VIS "
+                "into runtime/ before zipping (Release.clean() not called)"
             )
-        test.open(".VIS/project.json").close()
+        test.open("runtime/.VIS/project.json").close()
         test.close()
         archive = ZipFile(sys.executable, 'r')
     except Exception as e:
@@ -152,7 +152,7 @@ if archive is None:
             pass
         sys.exit(1)
     archive = ZipFile(archive_path, 'r')
-pfile = archive.open(".VIS/project.json")
+pfile = archive.open("runtime/.VIS/project.json")
 info = json.load(pfile)
 pfile.close()
 
@@ -176,14 +176,21 @@ for sname, scfg in info[title]["Screens"].items():
 # - One entry per standalone screen
 installables = [title]  # Host group is always first
 _archive_binaries = set()
+# Screen exes live at runtime/<name>.exe after #2a; Uninstaller stays
+# at archive root.  Treat both as "binaries" by stem.
 for i in archive.namelist():
-    if not any(breaker in i for breaker in ["Icons/","Images/",".VIS/","Screens/","modules/",".Runtime/","Shared/"]):
-        if "." in i:
-            name = ".".join(i.split(".")[:-1])
-        else:
-            name = i
-        if name:
-            _archive_binaries.add(name)
+    if i.startswith("runtime/") and i.count("/") == 1:
+        leaf = i[len("runtime/"):]
+    elif "/" not in i:
+        leaf = i  # archive-root file (Uninstaller.exe, LICENSE)
+    else:
+        continue  # anything deeper (runtime/Screens/..., runtime/Icons/..., etc.) isn't a binary
+    if "." in leaf:
+        name = ".".join(leaf.split(".")[:-1])
+    else:
+        name = leaf
+    if name:
+        _archive_binaries.add(name)
 
 for name in _archive_binaries:
     if name in _standalone_screens and name not in installables:
@@ -770,7 +777,7 @@ if sys.platform == "win32":
 else:
     icon_file = icon_file + ".xbm"
 
-i_file = archive.open("Icons/"+icon_file)
+i_file = archive.open("runtime/Icons/"+icon_file)
 d_icon = Image.open(i_file)
 icon = PIL.ImageTk.PhotoImage(d_icon)
 i_file.close()
@@ -889,7 +896,7 @@ def makechecks(source:list[str], show_versions:bool=True):
                     scr_icon = scr_icon + ".ico"
                 else:
                     scr_icon = scr_icon + ".XBM"
-                scr_icon_file = archive.open("Icons/"+scr_icon)
+                scr_icon_file = archive.open("runtime/Icons/"+scr_icon)
                 img_options.append(PIL.ImageTk.PhotoImage(Image.open(scr_icon_file).resize((16,16))))
                 scr_icon_file.close()
             scr_ver = scr_info.get("version", "")
@@ -929,7 +936,7 @@ def _screen_icon(name: str):
     if icon_name:
         ext = ".ico" if sys.platform == "win32" else ".XBM"
         try:
-            with archive.open("Icons/" + icon_name + ext) as f:
+            with archive.open("runtime/Icons/" + icon_name + ext) as f:
                 return PIL.ImageTk.PhotoImage(Image.open(f).resize((16, 16)))
         except Exception:
             pass
