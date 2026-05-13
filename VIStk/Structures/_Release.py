@@ -657,6 +657,26 @@ class Release(Project):
         "pip", "setuptools", "wheel", "build",
     })
 
+    # Stdlib modules that bundled third-party deps frequently import
+    # but Nuitka's --module mode doesn't auto-follow.  Each gets passed
+    # as --follow-import-to to the shared .pyd compile so it bundles
+    # alongside the dep that needs it (e.g. loguru pulls in logging,
+    # threading, queue).  Extend this list if a release fails at
+    # startup with ModuleNotFoundError for a stdlib module.
+    _STDLIB_HINTS_FOR_SHARED = (
+        "logging",      # loguru, structlog, many libs
+        "threading",    # loguru, concurrent libs
+        "queue",        # loguru
+        "concurrent",   # loguru, futures
+        "asyncio",      # async libs
+        "traceback",    # loguru, error handlers
+        "warnings",     # loguru, many libs
+        "multiprocessing",  # libs that fork for IPC
+        "contextlib",   # generic
+        "functools",    # generic
+        "weakref",      # generic
+    )
+
     def _dist_to_top_levels(self, dist_name: str) -> list[str]:
         """Map a pip distribution name to its importable top-level name(s).
 
@@ -923,6 +943,9 @@ class Release(Project):
         # ModuleNotFoundError.
         runtime_deps = self._resolve_runtime_deps(pkg)
         follow_flags = [f"--follow-import-to={d}" for d in runtime_deps]
+        # Common stdlib hints — see _STDLIB_HINTS_FOR_SHARED docstring
+        # for why each pip dep's transitive stdlib needs help.
+        follow_flags += [f"--follow-import-to={m}" for m in self._STDLIB_HINTS_FOR_SHARED]
 
         parts = [
             sys.executable, "-m", "nuitka", "--module",
