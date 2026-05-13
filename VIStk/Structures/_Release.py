@@ -456,8 +456,10 @@ class Release(Project):
         parts.append(f"--output-dir={self.build_dir}")
         parts.append(f"--output-filename={self.title}{_EXE_EXT}")
 
-        if sys.platform == "win32":
-            parts.append("--windows-console-mode=disable")
+        # TEMP DEBUG: console disabled so startup errors are visible.
+        # Revert before shipping.
+        # if sys.platform == "win32":
+        #     parts.append("--windows-console-mode=disable")
 
         parts.append("--assume-yes-for-downloads")
         parts.extend(self.extra_nuitka_args)
@@ -876,8 +878,10 @@ class Release(Project):
             parts.append(f"--windows-file-description={scr.name}")
             parts.append(f"--copyright=Copyright {year} {self.company}")
         parts.append(f"--windows-product-version={self.Version}")
-        if sys.platform == "win32":
-            parts.append("--windows-console-mode=disable")
+        # TEMP DEBUG: console disabled so startup errors are visible.
+        # Revert before shipping.
+        # if sys.platform == "win32":
+        #     parts.append("--windows-console-mode=disable")
         # Standalone screens share the Host runtime at the install root
         # (python3xx.dll, .pyd, third-party packages).  Follow direct
         # imports for everything except other compile targets — those
