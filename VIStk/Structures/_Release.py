@@ -657,25 +657,40 @@ class Release(Project):
         "pip", "setuptools", "wheel", "build",
     })
 
-    # Stdlib modules that bundled third-party deps frequently import
-    # but Nuitka's --module mode doesn't auto-follow.  Each gets passed
-    # as --follow-import-to to the shared .pyd compile so it bundles
-    # alongside the dep that needs it (e.g. loguru pulls in logging,
-    # threading, queue).  Extend this list if a release fails at
-    # startup with ModuleNotFoundError for a stdlib module.
-    _STDLIB_HINTS_FOR_SHARED = (
-        "logging",      # loguru, structlog, many libs
-        "threading",    # loguru, concurrent libs
-        "queue",        # loguru
-        "concurrent",   # loguru, futures
-        "asyncio",      # async libs
-        "traceback",    # loguru, error handlers
-        "warnings",     # loguru, many libs
-        "multiprocessing",  # libs that fork for IPC
-        "contextlib",   # generic
-        "functools",    # generic
-        "weakref",      # generic
-    )
+    # Stdlib top-level modules that Nuitka's --module mode shouldn't
+    # be told to follow.  Everything else from sys.stdlib_module_names
+    # gets passed as --follow-import-to to shared .pyd compiles so any
+    # stdlib transitively used by bundled third-party deps is bundled
+    # alongside them.
+    #
+    # - tkinter / _tkinter / idlelib / turtle*: handled by the
+    #   tk-inter Nuitka plugin in entry-script compiles; double-
+    #   handling at the .pyd level conflicts with the plugin.
+    # - antigravity, this: easter eggs, never useful.
+    # - __main__ / __hello__ / __phello__: special entries.
+    # - test / unittest / doctest: test infrastructure, ships its own
+    #   data files Nuitka can't always locate.
+    _STDLIB_HINT_EXCLUDE = frozenset({
+        "tkinter", "_tkinter", "idlelib", "turtle", "turtledemo",
+        "antigravity", "this",
+        "__main__", "__hello__", "__phello__",
+        "test", "unittest", "doctest",
+    })
+
+    def _stdlib_hints_for_shared(self) -> list[str]:
+        """Every top-level stdlib module Nuitka should follow when
+        bundling third-party deps into shared .pyd files, minus the
+        ``_STDLIB_HINT_EXCLUDE`` set.
+
+        Uses :data:`sys.stdlib_module_names` (Python 3.10+) so the list
+        adapts to whichever Python version is running the release —
+        when the user upgrades Python and a new stdlib module appears,
+        it shows up here automatically.  No more whack-a-mole appending
+        to a hand-maintained list when a new third-party dep transitively
+        imports yet another stdlib module.
+        """
+        return sorted(m for m in sys.stdlib_module_names
+                      if m not in self._STDLIB_HINT_EXCLUDE)
 
     def _dist_to_top_levels(self, dist_name: str) -> list[str]:
         """Map a pip distribution name to its importable top-level name(s).
@@ -943,9 +958,10 @@ class Release(Project):
         # ModuleNotFoundError.
         runtime_deps = self._resolve_runtime_deps(pkg)
         follow_flags = [f"--follow-import-to={d}" for d in runtime_deps]
-        # Common stdlib hints — see _STDLIB_HINTS_FOR_SHARED docstring
-        # for why each pip dep's transitive stdlib needs help.
-        follow_flags += [f"--follow-import-to={m}" for m in self._STDLIB_HINTS_FOR_SHARED]
+        # Every stdlib top-level module (filtered) so transitive stdlib
+        # imports inside bundled deps resolve.  See
+        # _stdlib_hints_for_shared() docstring.
+        follow_flags += [f"--follow-import-to={m}" for m in self._stdlib_hints_for_shared()]
 
         parts = [
             sys.executable, "-m", "nuitka", "--module",
