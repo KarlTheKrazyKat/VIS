@@ -650,11 +650,23 @@ class Release(Project):
     def _nofollow_flags(self, exclude_self: str | None = None) -> list[str]:
         """Build ``--nofollow-import-to=X`` for every compile target,
         skipping ``exclude_self`` if given (the thing this compile is
-        building)."""
+        building).
+
+        Also adds ``--no-deployment-flag=excluded-module-usage``: by
+        default Nuitka treats any runtime ``import`` of a module that
+        was nofollow'd as an error at startup ("Module 'X' was actively
+        excluded from Nuitka compilation").  Our architecture
+        deliberately ships those modules as external ``.pyd`` files
+        next to the .exe and imports them at runtime — that's the whole
+        point of the multi-target build.  Disabling this deployment
+        flag tells Nuitka to allow the runtime import (#105).
+        """
         out: list[str] = []
         for t in self._compile_targets():
             if t != exclude_self:
                 out.append(f"--nofollow-import-to={t}")
+        if out:
+            out.append("--no-deployment-flag=excluded-module-usage")
         return out
 
     def _compile_screen_pyd(self, scr) -> tuple[bool, str]:
