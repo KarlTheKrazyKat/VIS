@@ -14,6 +14,7 @@ from os.path import exists
 from zipfile import *
 import datetime
 import hashlib
+import importlib.metadata
 import json
 from VIStk.Structures._Version import Version
 
@@ -647,6 +648,81 @@ class Release(Project):
             targets.append(f"modules.{name}")
         return targets
 
+    # Runtime-only filter: distribution names of build/dev tools we
+    # never want to bundle into a shipped .pyd.  Normalized to lower-case
+    # with dashes (PEP 503-ish).
+    _BUILDTIME_DEPS = frozenset({
+        "pyinstaller", "pyinstaller-hooks-contrib",
+        "nuitka",
+        "pip", "setuptools", "wheel", "build",
+    })
+
+    def _dist_to_top_levels(self, dist_name: str) -> list[str]:
+        """Map a pip distribution name to its importable top-level name(s).
+
+        Prefers ``top_level.txt`` (present on most installed dists).  Falls
+        back to scanning ``dist.files`` for top-level packages.  Returns
+        ``[]`` if the distribution isn't installed.
+        """
+        try:
+            dist = importlib.metadata.distribution(dist_name)
+        except importlib.metadata.PackageNotFoundError:
+            return []
+        top_text = dist.read_text("top_level.txt")
+        if top_text:
+            return [ln.strip() for ln in top_text.splitlines() if ln.strip()]
+        names: set[str] = set()
+        for f in (dist.files or []):
+            head = str(f).replace("\\", "/").split("/", 1)[0]
+            if head.endswith(".dist-info") or head.endswith(".egg-info"):
+                continue
+            if head.endswith(".py") and "/" not in head:
+                names.add(head[:-3])           # single-file module
+            elif "." not in head:
+                names.add(head)                # package directory
+        return sorted(names)
+
+    def _resolve_runtime_deps(self, pkg: str) -> list[str]:
+        """Walk ``pkg``'s transitive runtime dep graph via pip metadata
+        and return unique top-level import names to bundle into
+        ``<pkg>.pyd``.
+
+        Skips build-tool deps (pyinstaller, nuitka, pip, etc.) and
+        optional/extras deps (those gated on ``extra == 'foo'`` markers).
+        Resolved entirely at release-run time, so it adapts to whatever
+        the project has installed in its build env — a project that adds
+        a new package to its install will pick up that package's deps
+        automatically on the next release without changes here.
+        """
+        seen_dists: set[str] = {pkg.lower().replace("_", "-")}
+        top_levels: list[str] = []
+        seen_tops: set[str] = set()
+        queue: list[str] = [pkg]
+        while queue:
+            current = queue.pop(0)
+            try:
+                dist = importlib.metadata.distribution(current)
+            except importlib.metadata.PackageNotFoundError:
+                continue
+            for req in (dist.requires or []):
+                # "notify-py" / "loguru (>=0.5)" / "foo; extra == 'docs'"
+                head, _, marker = req.partition(";")
+                if "extra ==" in marker:
+                    continue   # extras-only dep; not a runtime requirement
+                dep_name = head.split("[")[0].split("(")[0].split()[0].strip()
+                if not dep_name:
+                    continue
+                norm = dep_name.lower().replace("_", "-")
+                if norm in seen_dists or norm in self._BUILDTIME_DEPS:
+                    continue
+                seen_dists.add(norm)
+                queue.append(dep_name)
+                for top in self._dist_to_top_levels(dep_name):
+                    if top not in seen_tops:
+                        seen_tops.add(top)
+                        top_levels.append(top)
+        return top_levels
+
     def _nofollow_flags(self, exclude_self: str | None = None) -> list[str]:
         """Build ``--nofollow-import-to=X`` for every compile target,
         skipping ``exclude_self`` if given (the thing this compile is
@@ -835,6 +911,19 @@ class Release(Project):
 
         Threadsafe — uses :meth:`_run_nuitka_silent`.
         """
+        # Nuitka's --module mode rejects --follow-imports (the "follow
+        # everything" flag) and requires selective follow via
+        # --follow-import-to=<name>.  Resolve the package's transitive
+        # runtime dep graph via pip metadata and emit one
+        # --follow-import-to per top-level import name so deps like
+        # notifypy + loguru (for VIStk) or platformdirs (for pywomlib)
+        # get bundled into <pkg>.pyd.  Without this, the running .exe
+        # imports VIStk.pyd which then tries to import notifypy from a
+        # sys.path that doesn't have it, and dies at startup with
+        # ModuleNotFoundError.
+        runtime_deps = self._resolve_runtime_deps(pkg)
+        follow_flags = [f"--follow-import-to={d}" for d in runtime_deps]
+
         parts = [
             sys.executable, "-m", "nuitka", "--module",
             *self._compiler_args(),
@@ -842,15 +931,7 @@ class Release(Project):
             f"--include-package={pkg}",
             f"--output-dir={self.build_dir}",
             "--assume-yes-for-downloads",
-            # --follow-imports bundles transitive third-party deps
-            # (e.g. VIStk pulls in notifypy + loguru; pywomlib pulls
-            # in platformdirs etc.) into <pkg>.pyd so the running .exe
-            # doesn't hit ModuleNotFoundError at startup.  Default
-            # --module behavior leaves these as runtime imports, which
-            # fails because the install dir has no sys.path entry for
-            # them.  Peer compile targets stay nofollow'd below, so
-            # this doesn't bundle VIStk inside pywomlib.pyd, etc.
-            "--follow-imports",
+            *follow_flags,
             # Self gets --include-package; every other compile target
             # gets --nofollow-import-to.
             *self._nofollow_flags(exclude_self=pkg),
