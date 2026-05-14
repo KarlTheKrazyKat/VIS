@@ -854,10 +854,19 @@ class Release(Project):
                         top_levels.append(top)
         return top_levels
 
-    def _nofollow_flags(self, exclude_self: str | None = None) -> list[str]:
+    def _nofollow_flags(
+        self,
+        exclude_self: str | set[str] | None = None,
+    ) -> list[str]:
         """Build ``--nofollow-import-to=X`` for every compile target,
-        skipping ``exclude_self`` if given (the thing this compile is
-        building).
+        skipping any name in ``exclude_self`` (the thing(s) this compile
+        is building or wants to follow itself).
+
+        Accepts either a single string or a set/iterable of strings so
+        a single build can exempt multiple targets — e.g. a standalone
+        screen .exe needs to follow both its own ``Screens.<name>`` and
+        ``modules.<name>`` so they get bundled with all their f_*/m_*
+        submodules, while still nofollowing every other screen.
 
         Also adds ``--no-deployment-flag=excluded-module-usage``: by
         default Nuitka treats any runtime ``import`` of a module that
@@ -868,9 +877,15 @@ class Release(Project):
         point of the multi-target build.  Disabling this deployment
         flag tells Nuitka to allow the runtime import (#105).
         """
+        if exclude_self is None:
+            excludes: set[str] = set()
+        elif isinstance(exclude_self, str):
+            excludes = {exclude_self}
+        else:
+            excludes = set(exclude_self)
         out: list[str] = []
         for t in self._compile_targets():
-            if t != exclude_self:
+            if t not in excludes:
                 out.append(f"--nofollow-import-to={t}")
         if out:
             out.append("--no-deployment-flag=excluded-module-usage")
@@ -1194,8 +1209,20 @@ class Release(Project):
         # (python3xx.dll, .pyd, third-party packages).  Follow direct
         # imports for everything except other compile targets — those
         # ship as their own .pyds and must not be bundled in.
+        #
+        # Exception: this screen's own ``Screens.<name>`` and
+        # ``modules.<name>`` sub-packages are NOT nofollow'd, so Nuitka
+        # bundles them (with every f_*/m_* sibling) directly into this
+        # .exe.  Without that, Nuitka emits a stub Screens.<name> just
+        # for the import statement to resolve against — and that stub
+        # has no f_* siblings, so `from Screens.<name> import f_xxx`
+        # raises ImportError despite the on-disk .pyd being present
+        # (frozen importer wins over filesystem).  Letting the .exe
+        # bundle the subpackages directly makes it self-contained for
+        # those imports.  Other screens' subpackages stay nofollow'd.
+        own_subpkgs = {f"Screens.{scr.name}", f"modules.{scr.name}"}
         parts.append("--follow-imports")
-        parts.extend(self._nofollow_flags())
+        parts.extend(self._nofollow_flags(exclude_self=own_subpkgs))
         # Same stdlib bundling as compile_host so standalone screens
         # also expose the full stdlib to shared .pyds loaded at runtime.
         parts.extend(self._stdlib_includes())
