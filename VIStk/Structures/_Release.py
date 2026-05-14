@@ -559,12 +559,15 @@ class Release(Project):
         if mode in ("all", "pyd"):
             tabbed = [s for s in self.release_targets if s.tabbed]
             modules = self._modules_for_release()
-            if tabbed or modules:
-                if tabbed:
-                    os.makedirs(f"{self.runtime}/Screens", exist_ok=True)
+            screens_pkgs = self._screens_for_release()
+            if tabbed or modules or screens_pkgs:
+                # Tabbed entry .pyds now go to runtime root (was Screens/);
+                # runtime dir already exists from earlier phases.
                 if modules:
                     os.makedirs(f"{self.runtime}/modules", exist_ok=True)
-                if not self._compile_pyds_parallel(tabbed, modules):
+                if screens_pkgs:
+                    os.makedirs(f"{self.runtime}/Screens", exist_ok=True)
+                if not self._compile_pyds_parallel(tabbed, modules, screens_pkgs):
                     return False
 
         if mode in ("all", "exe"):
@@ -589,6 +592,22 @@ class Release(Project):
         out: list[tuple[str, str]] = []
         for scr in self.release_targets:
             path = os.path.join(modules_root, scr.name)
+            if os.path.isdir(path):
+                out.append((scr.name, path))
+        return out
+
+    def _screens_for_release(self) -> list[tuple[str, str]]:
+        """Return ``[(screen_name, screens_subdir_path), ...]`` for every
+        release-targeted screen that has a ``Screens/<screen>/`` UI
+        sub-package holding f_* section files.  Screens without one
+        (single-file lrfEditor-style screens) contribute nothing.
+        """
+        screens_root = os.path.join(self.p_project, "Screens")
+        if not os.path.isdir(screens_root):
+            return []
+        out: list[tuple[str, str]] = []
+        for scr in self.release_targets:
+            path = os.path.join(screens_root, scr.name)
             if os.path.isdir(path):
                 out.append((scr.name, path))
         return out
@@ -826,7 +845,14 @@ class Release(Project):
         return out
 
     def _compile_screen_pyd(self, scr) -> tuple[bool, str]:
-        """Compile one tabbed screen → ``final/Screens/<stem>.pyd``.
+        """Compile one tabbed screen entry script → ``runtime/<stem>.pyd``.
+
+        Lives at the runtime root (not inside ``Screens/``) because that
+        slot is now occupied by the per-screen UI sub-package compile
+        (``Screens/<name>/`` → ``runtime/Screens/<name>.pyd``, see
+        :meth:`_compile_one_screen_package`).  Co-locating with a
+        same-named standalone .exe is fine — Python only resolves the
+        .pyd for imports.
 
         Threadsafe — uses :meth:`_run_nuitka_silent` so concurrent calls
         don't fight over the progress display.  Returns ``(ok, error)``.
@@ -852,7 +878,7 @@ class Release(Project):
         if not built_mods:
             return False, f"no {_MOD_EXT} produced at {self.build_dir}{stem}*{_MOD_EXT}"
         for bp in built_mods:
-            shutil.move(bp, f"{self.runtime}/Screens/{stem}{_MOD_EXT}")
+            shutil.move(bp, f"{self.runtime}/{stem}{_MOD_EXT}")
         return True, ""
 
     def _run_parallel(self, jobs: list, label: str, max_workers: int) -> bool:
@@ -905,10 +931,12 @@ class Release(Project):
                                 f.cancel()
         return all_ok
 
-    def _compile_pyds_parallel(self, screens: list, modules: list) -> bool:
-        """Compile screens and their modules sub-packages concurrently.
+    def _compile_pyds_parallel(self, screens: list, modules: list,
+                               screens_pkgs: list) -> bool:
+        """Compile screens, their modules sub-packages, and their Screens
+        UI sub-packages concurrently.
 
-        Both job kinds run in the same ``ThreadPoolExecutor`` so workers
+        All job kinds run in the same ``ThreadPoolExecutor`` so workers
         stay busy.  Workers default to ``cpu_count // 2`` to leave
         headroom for Nuitka's per-process C compiler subprocesses.
         """
@@ -919,6 +947,9 @@ class Release(Project):
         for name, path in modules:
             jobs.append((f"modules.{name}",
                          lambda n=name, p=path: self._compile_one_module(n, p)))
+        for name, path in screens_pkgs:
+            jobs.append((f"Screens.{name}",
+                         lambda n=name, p=path: self._compile_one_screen_package(n, p)))
         return self._run_parallel(jobs, "module", max_workers)
 
     def _compile_one_module(self, screen_name: str, mod_path: str) -> tuple[bool, str]:
@@ -958,6 +989,46 @@ class Release(Project):
         target = f"{self.runtime}/modules/{screen_name}{_MOD_EXT}"
         # If multiple .pyds came out, pick the one that matches the leaf
         # (Nuitka may emit a cpython-tagged sibling).  Prefer exact stem.
+        primary = next((bp for bp in built
+                        if os.path.basename(bp).startswith(f"{screen_name}.")
+                        or os.path.basename(bp).startswith(f"{screen_name}{_MOD_EXT}")),
+                       built[0])
+        shutil.move(primary, target)
+        return True, ""
+
+    def _compile_one_screen_package(self, screen_name: str, src_path: str) -> tuple[bool, str]:
+        """Compile ``Screens/<screen>/`` → ``runtime/Screens/<screen>.pyd``.
+
+        Same shape as :meth:`_compile_one_module` but for the per-screen
+        UI sub-package.  Exposes ``f_*`` section files as submodules
+        accessible via ``from Screens.<screen> import f_xxx`` at runtime.
+        The runtime/Screens/<name>.pyd slot was freed by moving the
+        entry-script compile to runtime/<name>.pyd (see
+        :meth:`_compile_screen_pyd`).
+
+        Threadsafe — uses :meth:`_run_nuitka_silent`.
+        """
+        out_dir = f"{self.build_dir}screens_{screen_name}/"
+        os.makedirs(out_dir, exist_ok=True)
+        self_target = f"Screens.{screen_name}"
+        parts = [
+            sys.executable, "-m", "nuitka", "--module",
+            *self._compiler_args(),
+            f"--include-package={self_target}",
+            f"--output-dir={out_dir}",
+            "--assume-yes-for-downloads",
+            *self._nofollow_flags(exclude_self=self_target),
+            src_path,
+        ]
+
+        ok, err = self._run_nuitka_silent(parts, self.p_project)
+        if not ok:
+            return False, err or "nuitka returned non-zero"
+
+        built = glob.glob(f"{out_dir}*{_MOD_EXT}")
+        if not built:
+            return False, f"no {_MOD_EXT} produced for Screens.{screen_name}"
+        target = f"{self.runtime}/Screens/{screen_name}{_MOD_EXT}"
         primary = next((bp for bp in built
                         if os.path.basename(bp).startswith(f"{screen_name}.")
                         or os.path.basename(bp).startswith(f"{screen_name}{_MOD_EXT}")),
@@ -1283,7 +1354,7 @@ class Release(Project):
             for screen_name, screen_data in info[self.title]["Screens"].items():
                 if screen_data.get("tabbed", False):
                     stem = os.path.splitext(screen_data["script"])[0]
-                    screen_data["script"] = f"Screens/{stem}{_MOD_EXT}"
+                    screen_data["script"] = f"{stem}{_MOD_EXT}"
             with open(installed_json, "w") as f:
                 json.dump(info, f, indent=4)
 
@@ -1439,6 +1510,7 @@ class Release(Project):
 
         screen_count = sum(1 for s in self.release_targets if s.tabbed)
         module_count = len(self._modules_for_release())
+        screen_pkg_count = len(self._screens_for_release())
         binary_count = sum(1 for s in self.release_targets if not s.tabbed) + 1  # +1 = Host
 
         all_screens = self.Groups[Group.ALL].screenlist
@@ -1446,7 +1518,7 @@ class Release(Project):
             print(f"Partial release: {len(self.release_targets)} screen(s) included.",
                   flush=True)
 
-        total = pkg_count + screen_count + module_count + binary_count
+        total = pkg_count + screen_count + module_count + screen_pkg_count + binary_count
         self._step = 0
         self._total_steps = total
         print(f"\n{self.title} Release - {total} Compilations", flush=True)
@@ -1463,7 +1535,7 @@ class Release(Project):
         # Screens + Modules (.pyd) — same parallel call
         self._category = "Modules"
         self._cat_index = 0
-        self._cat_count = screen_count + module_count
+        self._cat_count = screen_count + module_count + screen_pkg_count
         if not self.compile_screens(mode="pyd"):
             self._status("", newline=True)
             print(f"\nRelease FAILED during Screen/Module compilation.", flush=True)
