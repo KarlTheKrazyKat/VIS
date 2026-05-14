@@ -41,6 +41,5 @@ ext-modules = []
 VIStk = [
   "Form.zip",
   "Templates/*.txt",
-  "Templates/Widgets/*.txt",
-  "Templates/Widgets/THE_PLAN",
+  "Templates/Widgets/*.txt"
 ]
