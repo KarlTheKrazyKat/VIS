@@ -116,6 +116,11 @@ class Release(Project):
         self.onefile: bool = _nuitka_cfg.get("onefile", False)
         self.extra_nuitka_args: list[str] = _nuitka_cfg.get("extra_args", [])
 
+        # Serializes the .dist → runtime/ merge step inside
+        # _compile_screen_exe / compile_host so parallel binary compiles
+        # don't race on shared runtime files (python313.dll, tcl/, ...).
+        self._merge_lock = threading.Lock()
+
     def _resolve_release_targets(self) -> list[Screen] | None:
         all_group = self.Groups[Group.ALL]
         # No filter → every releasable screen (tabbed always count;
@@ -417,7 +422,7 @@ class Release(Project):
         self._status(f"{prefix} done ({elapsed:.1f}s)", newline=True)
         return True
 
-    def compile_host(self):
+    def compile_host(self) -> tuple[bool, str]:
         """Compile the Host as a Nuitka executable.
 
         Standalone mode produces a ``.dist`` folder which is merged into
@@ -426,6 +431,12 @@ class Release(Project):
         entry script is wrapped with a sys.path bootstrap so external
         compile targets resolve from the install root (see
         :meth:`_make_bootstrap_wrapper`).
+
+        Parallel-safe: uses ``_run_nuitka_silent`` so concurrent binary
+        compiles don't fight over the progress line, and the .dist →
+        runtime/ merge is wrapped in ``self._merge_lock`` so concurrent
+        merges don't race on shared runtime files (python313.dll,
+        tcl/, ...).  Returns ``(ok, err)``.
         """
         ixt = ".ico" if sys.platform == "win32" else ".xbm"
         icon_file = f"{self.p_project}/Icons/{self.d_icon}{ixt}"
@@ -484,11 +495,14 @@ class Release(Project):
         entry_script = self._entry_for_compile(self.host_script)
         parts.append(entry_script)
 
-        ok = self._run_nuitka(parts, self.title, self.p_project)
+        ok, err = self._run_nuitka_silent(parts, self.p_project)
         if not ok:
-            return False
+            return False, err or "nuitka returned non-zero"
 
-        return self._place_exe_output(entry_script, self.title)
+        with self._merge_lock:
+            if not self._place_exe_output(entry_script, self.title):
+                return False, "merge into runtime/ failed"
+        return True, ""
 
     def _place_exe_output(self, entry_script: str, exe_basename: str) -> bool:
         """Move/merge a Nuitka build's output into ``self.final``.
@@ -576,11 +590,12 @@ class Release(Project):
                     return False
 
         if mode in ("all", "exe"):
-            for scr in self.release_targets:
-                if scr.tabbed:
-                    continue
-                if not self._compile_screen_exe(scr, ixt):
-                    return False
+            # Parallel: every standalone screen .exe + the Host .exe.
+            # Each job acquires self._merge_lock around its .dist →
+            # runtime/ merge so concurrent compiles don't race on
+            # shared runtime files (python313.dll, tcl/, ...).
+            if not self._compile_binaries_parallel():
+                return False
 
         return True
 
@@ -1136,15 +1151,17 @@ class Release(Project):
             shutil.move(bp, f"{self.runtime}/{pkg}{_MOD_EXT}")
         return True, ""
 
-    def _compile_screen_exe(self, scr, ixt: str) -> bool:
+    def _compile_screen_exe(self, scr, ixt: str) -> tuple[bool, str]:
         """Compile one standalone screen → ``final/<scr.name>.exe``.
 
         Honors the project-level ``onefile`` flag: standalone produces a
-        ``.dist`` that gets merged into ``self.final``, onefile produces
-        a single ``.exe`` that gets moved.  Kept serial in standalone
-        mode because concurrent ``.dist`` merges would race on common
-        runtime files; in onefile mode the merge is trivial and serial
-        execution is just inherited from the surrounding orchestrator.
+        ``.dist`` that gets merged into ``self.runtime``, onefile produces
+        a single ``.exe`` that gets moved.
+
+        Parallel-safe: uses ``_run_nuitka_silent`` and wraps the
+        ``.dist`` → ``runtime/`` merge in ``self._merge_lock`` so
+        concurrent binary compiles don't race on shared runtime files.
+        Returns ``(ok, err)``.
         """
         icon = (scr.icon if scr.icon else self.d_icon) + ixt
         icon_file = f"{self.p_project}/Icons/{icon}"
@@ -1187,24 +1204,43 @@ class Release(Project):
         entry_script = self._entry_for_compile(scr.script)
         parts.append(entry_script)
 
-        ok = self._run_nuitka(parts, scr.name, self.p_project)
+        ok, err = self._run_nuitka_silent(parts, self.p_project)
         if not ok:
-            return False
+            return False, err or "nuitka returned non-zero"
 
-        if not self._place_exe_output(entry_script, scr.name):
-            return False
+        with self._merge_lock:
+            if not self._place_exe_output(entry_script, scr.name):
+                return False, "merge into runtime/ failed"
+            # Post-condition: the screen's exe is inside runtime/.
+            expected_exe = os.path.join(self.runtime, f"{scr.name}{_EXE_EXT}")
+            if not exists(expected_exe):
+                return False, (
+                    f"expected {expected_exe} after merge but it is missing"
+                )
+        return True, ""
 
-        # Post-condition: the screen's exe is inside runtime/.
-        expected_exe = os.path.join(self.runtime, f"{scr.name}{_EXE_EXT}")
-        if not exists(expected_exe):
-            self._status(
-                f"  [{self._step}/{self._total_steps}] {self._category} "
-                f"{self._cat_index}/{self._cat_count} - {scr.name} FAILED — "
-                f"expected {expected_exe} after merge but it is missing",
-                newline=True,
-            )
-            return False
-        return True
+    def _compile_binaries_parallel(self) -> bool:
+        """Compile every standalone screen .exe and the Host .exe in
+        parallel.
+
+        Each job runs Nuitka silently and acquires ``self._merge_lock``
+        around its ``.dist`` → ``runtime/`` merge so concurrent compiles
+        don't race on shared runtime files (python313.dll, tcl/, ...).
+        Workers default to ``min(n_jobs, cpu_count // 2)`` — same
+        heuristic as the Modules phase, capped at the job count so we
+        don't spin up more threads than there is work.
+        """
+        ixt = ".ico" if sys.platform == "win32" else ".xbm"
+        jobs = []
+        for scr in self.release_targets:
+            if scr.tabbed:
+                continue
+            jobs.append((scr.name,
+                         lambda s=scr: self._compile_screen_exe(s, ixt)))
+        jobs.append((self.title, self.compile_host))
+
+        max_workers = min(len(jobs), max(1, (os.cpu_count() or 4) // 2))
+        return self._run_parallel(jobs, "binary", max_workers)
 
     @staticmethod
     def _has_binary_extensions(pkg_dir: str) -> bool:
@@ -1621,13 +1657,14 @@ class Release(Project):
         self._cat_index = 0
         self._cat_count = binary_count
         t0 = time.monotonic()
+        # compile_screens(mode="exe") now bundles every standalone
+        # screen .exe AND the Host .exe into a single parallel pool —
+        # _compile_binaries_parallel orchestrates the merge under
+        # self._merge_lock so concurrent .dist merges into runtime/
+        # don't clobber each other.
         if not self.compile_screens(mode="exe"):
             self._status("", newline=True)
             print(f"\nRelease FAILED during Binary compilation.", flush=True)
-            return
-        if not self.compile_host():
-            self._status("", newline=True)
-            print(f"\nRelease FAILED during Host compilation.", flush=True)
             return
 
         self._status("", newline=True)
