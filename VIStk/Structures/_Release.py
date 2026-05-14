@@ -378,6 +378,7 @@ class Release(Project):
         prefix = f"  [{self._step}/{self._total_steps}] {self._category} {self._cat_index}/{self._cat_count} - {name}"
         self._status(prefix + " ...")
 
+        start = time.monotonic()
         proc = subprocess.Popen(
             parts, cwd=cwd,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -403,6 +404,7 @@ class Release(Project):
                     last_error = segment
 
         proc.wait()
+        elapsed = time.monotonic() - start
         if proc.returncode != 0:
             # Print failure on its own line so it stays visible
             msg = f"{prefix} FAILED"
@@ -410,6 +412,9 @@ class Release(Project):
                 msg += f" — {last_error[:60]}"
             self._status(msg, newline=True)
             return False
+        # Emit a permanent per-binary line so successive binaries don't
+        # overwrite each other on a single \r-terminated row (#136).
+        self._status(f"{prefix} done ({elapsed:.1f}s)", newline=True)
         return True
 
     def compile_host(self):
@@ -1375,7 +1380,9 @@ class Release(Project):
         # Uninstaller (PyInstaller --onefile, self-contained) ships at
         # the install root for user-facing accessibility.
 
-        print(f"\n\nReleased a new{' '+self.flag+' ' if self.flag else ' '}build of {self.title}!", flush=True)
+        # "Released a new ..." banner + timing summary print at the end
+        # of release() instead of here so they land after the installer
+        # is actually assembled (#137).
 
     def newVersion(self):
         """Updates the project version, PERMANENT, cannot be undone"""
@@ -1466,11 +1473,50 @@ class Release(Project):
         print(f"{label} cached for future releases", flush=True)
         return cache_exe
 
+    @staticmethod
+    def _fmt_hms(seconds: float) -> str:
+        """Format ``seconds`` as ``Nh Nm Ns`` dropping leading zero
+        units.  ``10s`` / ``8m 12s`` / ``1h 0m 0s``."""
+        s = int(round(seconds))
+        h, rem = divmod(s, 3600)
+        m, s = divmod(rem, 60)
+        if h:
+            return f"{h}h {m}m {s}s"
+        if m:
+            return f"{m}m {s}s"
+        return f"{s}s"
+
+    def _print_release_summary(self, total: float,
+                               phases: dict[str, float]) -> None:
+        """Print the release-time summary table (#137).
+
+        Times are right-padded with leading spaces to the longest
+        formatted width so the unit suffixes (h / m / s) line up
+        across rows.  ``Total`` uses a 2-space indent and its label
+        is widened by the indent delta so its time column ends at
+        the same character position as the 4-space-indented phase
+        rows below it.
+        """
+        phase_label_w = max(len(name) + 1 for name in phases) if phases else 1
+        all_times = [self._fmt_hms(total),
+                     *(self._fmt_hms(t) for t in phases.values())]
+        time_w = max(len(t) for t in all_times)
+        total_label = "Total:".ljust(2 + phase_label_w)
+        print(f"  {total_label}  {self._fmt_hms(total):>{time_w}}",
+              flush=True)
+        for name, t in phases.items():
+            label = (name + ":").ljust(phase_label_w)
+            print(f"    {label}  {self._fmt_hms(t):>{time_w}}",
+                  flush=True)
+
     def release(self):
         """Releases a version of your project"""
         # Validation in __init__ already printed an error if any.
         if self.release_targets is None:
             return
+
+        release_start = time.monotonic()
+        phase_times: dict[str, float] = {}
 
         #Pre-flight: compiler + patchelf (Linux) + required Python tools.
         #Fail fast with actionable messages before any version bumps,
@@ -1527,24 +1573,29 @@ class Release(Project):
         self._category = "Required Packages"
         self._cat_index = 0
         self._cat_count = pkg_count
+        t0 = time.monotonic()
         if not self.compile_shared():
             self._status("", newline=True)
             print(f"\nRelease FAILED during Required Packages.", flush=True)
             return
+        phase_times["Required Packages"] = time.monotonic() - t0
 
         # Screens + Modules (.pyd) — same parallel call
         self._category = "Modules"
         self._cat_index = 0
         self._cat_count = screen_count + module_count + screen_pkg_count
+        t0 = time.monotonic()
         if not self.compile_screens(mode="pyd"):
             self._status("", newline=True)
             print(f"\nRelease FAILED during Screen/Module compilation.", flush=True)
             return
+        phase_times["Modules"] = time.monotonic() - t0
 
         # Binaries (.exe)
         self._category = "Binaries"
         self._cat_index = 0
         self._cat_count = binary_count
+        t0 = time.monotonic()
         if not self.compile_screens(mode="exe"):
             self._status("", newline=True)
             print(f"\nRelease FAILED during Binary compilation.", flush=True)
@@ -1555,7 +1606,9 @@ class Release(Project):
             return
 
         self._status("", newline=True)
+        phase_times["Binaries"] = time.monotonic() - t0
 
+        installer_t0 = time.monotonic()
         #Clean Environment — copies Images/, Icons/, and .VIS/project.json
         #into self.final so they end up in binaries.zip.  Without this the
         #installer's appended-archive load raises KeyError on .VIS/project.json
@@ -1689,3 +1742,16 @@ class Release(Project):
             os.remove(downloads_installer)
         shutil.move(final_installer, downloads_installer)
         print(f"Installer ready: {downloads_installer}", flush=True)
+        phase_times["Installer"] = time.monotonic() - installer_t0
+
+        # Release-complete banner moved out of clean() so it lands
+        # after the installer is actually ready (#137).
+        print(
+            f"\n\nReleased a new"
+            f"{' '+self.flag+' ' if self.flag else ' '}"
+            f"build of {self.title}!",
+            flush=True,
+        )
+        self._print_release_summary(
+            time.monotonic() - release_start, phase_times,
+        )
