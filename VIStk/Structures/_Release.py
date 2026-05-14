@@ -644,13 +644,11 @@ class Release(Project):
         Members:
           * Every shared package (``compile_shared`` ships these)
           * ``Screens`` — every tabbed screen .pyd lands under here
-          * ``modules.<screen>`` for every release-target screen with a
-            ``modules/<screen>/`` directory
+          * ``modules`` — every per-screen modules .pyd lands under here
         """
         targets = list(self.shared_pkg_names)
         targets.append("Screens")
-        for name, _path in self._modules_for_release():
-            targets.append(f"modules.{name}")
+        targets.append("modules")
         return targets
 
     # Runtime-only filter: distribution names of build/dev tools we
@@ -1099,14 +1097,33 @@ class Release(Project):
             return False
         return True
 
+    @staticmethod
+    def _has_binary_extensions(pkg_dir: str) -> bool:
+        """True if the installed package contains compiled extensions
+        (.pyd/.so).  Such packages can't be packed into a single Nuitka
+        ``--module`` output — the C extensions are separate binaries
+        that must land next to the Python source on disk.  We copy the
+        whole package directory into runtime/ instead."""
+        for _root, _dirs, files in os.walk(pkg_dir):
+            for f in files:
+                if f.endswith((".pyd", ".so")):
+                    return True
+        return False
+
     def compile_shared(self):
-        """Compile shared packages as .pyd modules into Shared/.
+        """Ship shared packages into ``runtime/`` for every .exe to import.
 
-        Top-level packages from ``hidden_imports`` (names without dots) are
-        compiled here.  Module-level hints like ``PIL._tkinter_finder`` are
-        skipped — those are passed to the Host build instead.
+        Each package gets one of two treatments based on whether its
+        installed directory contains any compiled extensions:
 
-        ``collect_packages`` entries are also compiled if present.
+        * **Pure-Python** → Nuitka ``--module`` into a single
+          ``<pkg>.pyd`` at the runtime root.
+        * **Has binary extensions (.pyd/.so)** → installed package
+          directory copied as-is into ``runtime/<pkg>/``, then every
+          ``.py`` in the copy is compiled to a sibling ``.pyc`` and the
+          source removed.  Python's ``SourcelessFileLoader`` handles
+          ``.pyc``-only modules directly; the original C extensions
+          stay untouched alongside.
         """
         # Top-level packages from hidden_imports (no dots = full package)
         packages = [imp for imp in self.hidden_imports if "." not in imp]
@@ -1135,7 +1152,41 @@ class Release(Project):
             return True
 
         os.makedirs(self.runtime, exist_ok=True)
-        return self._compile_shared_parallel(resolved)
+
+        # Split: directory-shipped (binary extensions) vs compile-to-pyd.
+        dir_shipped: list[tuple[str, str]] = []
+        to_compile: list[tuple[str, str]] = []
+        for pkg, pkg_dir in resolved:
+            if self._has_binary_extensions(pkg_dir):
+                dir_shipped.append((pkg, pkg_dir))
+            else:
+                to_compile.append((pkg, pkg_dir))
+
+        for pkg, pkg_dir in dir_shipped:
+            self._step += 1
+            self._cat_index += 1
+            prefix = (f"  [{self._step}/{self._total_steps}] "
+                      f"{self._category} {self._cat_index}/{self._cat_count} - {pkg}")
+            dest = os.path.join(self.runtime, pkg)
+            if os.path.exists(dest):
+                shutil.rmtree(dest)
+            shutil.copytree(
+                pkg_dir, dest,
+                ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"),
+            )
+            import py_compile
+            for walk_root, _walk_dirs, walk_files in os.walk(dest):
+                for f in walk_files:
+                    if not f.endswith(".py"):
+                        continue
+                    py = os.path.join(walk_root, f)
+                    py_compile.compile(py, cfile=py + "c", doraise=True)
+                    os.remove(py)
+            print(f"{prefix} copied (binary extensions, .py→.pyc)", flush=True)
+
+        if not to_compile:
+            return True
+        return self._compile_shared_parallel(to_compile)
 
     def clean(self):
         """Appends project data to dist folder.
