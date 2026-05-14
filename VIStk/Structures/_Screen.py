@@ -57,6 +57,13 @@ class Screen(VINFO):
             shutil.copyfile(self.p_templates+"/screen.txt",self.p_project+"/"+script)
             os.mkdir(self.p_screens+"/"+self.name)
             os.mkdir(self.p_modules+"/"+self.name)
+            # Drop empty __init__.py files so each sub-package is a regular
+            # Python package, not a namespace package.  Nuitka's --module +
+            # --include-package needs an __init__ anchor to discover and
+            # bundle submodules; without it the compiled Screens/<name>.pyd
+            # loads cleanly but exposes no f_* siblings.
+            Path(self.p_screens+"/"+self.name+"/__init__.py").touch()
+            Path(self.p_modules+"/"+self.name+"/__init__.py").touch()
 
             with open(self.p_project+"/"+script, "r") as f:
                 template = f.read()
