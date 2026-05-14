@@ -679,6 +679,18 @@ class Release(Project):
         targets = list(self.shared_pkg_names)
         targets.append("Screens")
         targets.append("modules")
+        # Per-screen dotted entries so entry .exe compiles (which call
+        # _nofollow_flags() without exclude_self) don't freeze a stub
+        # ``Screens.<name>`` or ``modules.<name>`` package alongside
+        # the on-disk ``.pyd``.  An entry script's
+        # ``from Screens.<name> import f_xxx`` otherwise causes Nuitka
+        # to bundle just the subpackage's ``__init__.py`` reference,
+        # which shadows the real on-disk ``.pyd`` at runtime and
+        # produces an ImportError on the f_*/m_* submodule lookup.
+        for name, _path in self._screens_for_release():
+            targets.append(f"Screens.{name}")
+        for name, _path in self._modules_for_release():
+            targets.append(f"modules.{name}")
         return targets
 
     # Runtime-only filter: distribution names of build/dev tools we
