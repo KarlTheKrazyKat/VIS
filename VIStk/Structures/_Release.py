@@ -432,6 +432,12 @@ class Release(Project):
         parts.append("--follow-imports")
         parts.append("--enable-plugin=tk-inter")
 
+        # The tk-inter plugin handles Tcl/Tk runtime data files but only
+        # auto-bundles the tkinter Python package's actively-imported
+        # submodules.  Force the whole package in so shared .pyds (which
+        # exclude tkinter from their own bundle) can reach every submodule.
+        parts.append("--include-package=tkinter")
+
         # Dotted hidden_imports (e.g. ``PIL._tkinter_finder``) are
         # module-level hints — keep them as ``--include-module``.
         # Top-level shared packages, Screens, and modules sub-packages
@@ -1047,6 +1053,8 @@ class Release(Project):
             sys.executable, "-m", "nuitka", mode,
             *self._compiler_args(),
             "--enable-plugin=tk-inter",
+            # See compile_host() for why this is needed alongside the plugin.
+            "--include-package=tkinter",
             f"--output-dir={self.build_dir}",
             f"--output-filename={scr.name}{_EXE_EXT}",
             "--assume-yes-for-downloads",
@@ -1208,6 +1216,30 @@ class Release(Project):
         src = f"{self.p_project}/Icons/"
         if exists(src):
             shutil.copytree(src, f"{self.runtime}/Icons/", dirs_exist_ok=True)
+
+        # Ship top-level framework support files in Screens/ and modules/
+        # as .pyc.  Per-screen subdirectories (Screens/AssetManager/,
+        # modules/FloorView/, ...) are already compiled into the per-screen
+        # .pyds; only loose .py files at the package root need separate
+        # handling.  Without this, the entry .exes (which nofollow both
+        # `Screens` and `modules` so they resolve from disk) can't find
+        # framework imports like `from Screens.root import root, frame`
+        # or `from modules.menu import shared_menu_structure`.
+        import py_compile
+        for subdir in ("Screens", "modules"):
+            src = os.path.join(self.p_project, subdir)
+            if not os.path.isdir(src):
+                continue
+            dest = os.path.join(self.runtime, subdir)
+            os.makedirs(dest, exist_ok=True)
+            for entry in os.listdir(src):
+                full_src = os.path.join(src, entry)
+                if not os.path.isfile(full_src) or not entry.endswith(".py"):
+                    continue
+                py_compile.compile(
+                    full_src, cfile=os.path.join(dest, entry + "c"),
+                    doraise=True,
+                )
 
         # Copy license file if present.  Stays at the install root (NOT in
         # runtime/) so it's the first thing a user sees when they open
