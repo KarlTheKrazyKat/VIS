@@ -1013,6 +1013,19 @@ class Release(Project):
 
         Threadsafe — uses :meth:`_run_nuitka_silent`.
         """
+        # Nuitka --module + --include-package needs __init__.py as an
+        # anchor to discover and bundle submodules.  Without it the
+        # compiled .pyd loads cleanly at runtime but exposes nothing —
+        # `from Screens.<name> import f_xxx` raises ImportError.  Bail
+        # early with an actionable message instead of producing a stub.
+        init_path = os.path.join(src_path, "__init__.py")
+        if not os.path.exists(init_path):
+            return False, (
+                f"Screens/{screen_name}/ is a namespace package (no "
+                f"__init__.py) — Nuitka can't bundle its f_* submodules. "
+                f"Run: touch Screens/{screen_name}/__init__.py"
+            )
+
         out_dir = f"{self.build_dir}screens_{screen_name}/"
         os.makedirs(out_dir, exist_ok=True)
         self_target = f"Screens.{screen_name}"
