@@ -1214,13 +1214,24 @@ class Release(Project):
         # ``modules.<name>`` sub-packages are NOT nofollow'd, so Nuitka
         # bundles them (with every f_*/m_* sibling) directly into this
         # .exe.  Without that, Nuitka emits a stub Screens.<name> just
-        # for the import statement to resolve against — and that stub
-        # has no f_* siblings, so `from Screens.<name> import f_xxx`
-        # raises ImportError despite the on-disk .pyd being present
-        # (frozen importer wins over filesystem).  Letting the .exe
-        # bundle the subpackages directly makes it self-contained for
-        # those imports.  Other screens' subpackages stay nofollow'd.
-        own_subpkgs = {f"Screens.{scr.name}", f"modules.{scr.name}"}
+        # for the import statement to resolve against — that stub has
+        # no f_* siblings, so `from Screens.<name> import f_xxx` raises
+        # ImportError despite the on-disk .pyd being present (frozen
+        # importer wins over filesystem).  Letting the .exe bundle the
+        # subpackages directly makes it self-contained for those
+        # imports.  Other screens' subpackages stay nofollow'd.
+        #
+        # The TOP-LEVEL ``Screens`` and ``modules`` entries must also
+        # be excluded from nofollow.  Nuitka's
+        # ``--nofollow-import-to=Screens`` cascades to the entire
+        # package ("to the whole package in any case", per the
+        # Nuitka docs), so leaving it in would block Nuitka from
+        # following into ``Screens.<name>`` no matter what the
+        # subpackage-level flags say.
+        own_subpkgs = {
+            "Screens", "modules",
+            f"Screens.{scr.name}", f"modules.{scr.name}",
+        }
         parts.append("--follow-imports")
         parts.extend(self._nofollow_flags(exclude_self=own_subpkgs))
         # Same stdlib bundling as compile_host so standalone screens
