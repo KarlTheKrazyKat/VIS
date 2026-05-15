@@ -1,6 +1,6 @@
 
 #%Default Imports
-from modules.defaults import *
+from Screens.defaults import *
 #%File Specific Imports
 
 #%Declare Stringvars

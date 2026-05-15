@@ -93,7 +93,7 @@ The full generated screen template:
 .. code-block:: python
 
     #%Default Imports
-    from modules.defaults import *
+    from Screens.defaults import *
     #%File Specific Imports
 
     #%Screen Modules
@@ -165,10 +165,10 @@ The full generated screen template:
                 print(f"ScreenName main loop error: {_e}", file=sys.stderr)
                 break
 
-``modules/defaults.py``
+``Screens/defaults.py``
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
-Every project includes a ``modules/defaults.py`` that centralizes the default imports
+Every project includes a ``Screens/defaults.py`` that centralizes the default imports
 shared by all screen scripts and element files:
 
 .. code-block:: python
@@ -183,7 +183,7 @@ shared by all screen scripts and element files:
         *[name for name in dir() if not name.startswith('_')],
     ]
 
-``from modules.defaults import *`` re-exports all names through ``__all__``, making them
+``from Screens.defaults import *`` re-exports all names through ``__all__``, making them
 available in the importing module. Static analysis tools (Pylance) and the Nuitka compiler
 both resolve ``import *`` chains correctly.
 

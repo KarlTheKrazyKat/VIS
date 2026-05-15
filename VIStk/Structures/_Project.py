@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import shutil
 from VIStk.Structures._VINFO import *
 from VIStk.Structures._Screen import *
 from VIStk.Structures._Group import Group
@@ -482,6 +483,25 @@ class Project(VINFO):
         if entry is None:
             return None
         return entry.get("base_name") or entry.get("display_name")
+
+    def sync_templates(self) -> int:
+        """Refresh ``.VIS/Templates/`` from VIStk's installed templates.
+
+        Wipes the project's current templates folder and replaces it with a
+        fresh copy from VIStk.  Files that no longer exist in the source
+        are removed.  Run after updating VIStk to pick up template changes
+        (e.g. new default imports in ``screen.txt``).
+        """
+        src = VISROOT + "Templates"
+        dst = self.p_templates
+        if not os.path.isdir(src):
+            print(f"VIStk templates not found at {src}")
+            return 0
+        if os.path.exists(dst):
+            shutil.rmtree(dst)
+        shutil.copytree(src, dst)
+        print(f"Synced templates: {src} → {dst}")
+        return 1
 
     def set_default_docs(self, url: str | None) -> int:
         """Set or clear the project-level default documentation URL.

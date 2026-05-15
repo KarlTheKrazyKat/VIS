@@ -75,6 +75,22 @@ def contextual_help(tokens: list[str]) -> None:
         print("  version         major.minor.patch")
         print("  current         version string or none")
 
+    # ── sync ──────────────────────────────────────────────────────────────────
+    elif cmd in ("sync", "Sync"):
+        target = tokens[2] if len(tokens) >= 3 else ""
+        if target in ("templates", "Templates", "t", "T"):
+            print("Usage:  VIS sync templates\n")
+            print(
+                "Replaces this project's .VIS/Templates/ folder with a fresh\n"
+                "copy from the installed VIStk package.  Any files that no\n"
+                "longer exist in VIStk's source are removed.  Run after\n"
+                "upgrading VIStk to pick up new template content."
+            )
+        else:
+            print("Usage:  VIS sync <templates>\n")
+            print("Targets:")
+            print("  templates   refresh .VIS/Templates/ from VIStk")
+
     # ── release ───────────────────────────────────────────────────────────────
     elif cmd in ("release", "Release", "r", "R"):
         print("Usage:  VIS release [-Flag <suffix>] [-Type Major|Minor|Patch] [-Note <text>]")
@@ -104,6 +120,7 @@ def _top_level():
         ("stitch",  "Rewire imports for a screen"),
         ("rename",  "Rename a screen throughout the project"),
         ("edit",    "Set a screen attribute in project.json"),
+        ("sync",    "Refresh project files from VIStk (templates, ...)"),
         ("release", "Build and package as compiled executables"),
     ]
     print("VIS - VIStk project CLI\n")

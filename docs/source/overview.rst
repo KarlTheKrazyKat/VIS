@@ -107,7 +107,7 @@ Every tabbed screen must follow this pattern. Violating it will crash the Host o
 .. code-block:: python
 
    # Module-level: only imports and pure data (no widget creation, no Tk calls)
-   from modules.defaults import *
+   from Screens.defaults import *
 
    def loop():                  pass  # called every tick
    def configure_menu(menubar): pass  # contribute to HostMenu when tab is active

@@ -64,6 +64,17 @@ def __main__():
                     else:
                         project.newScreen(inp[3])
 
+        case "sync" | "Sync":
+            if len(inp) < 3:
+                print("Usage: VIS sync <templates>")
+                return
+            project = Project()
+            match inp[2]:
+                case "templates" | "Templates" | "t" | "T":
+                    project.sync_templates()
+                case _:
+                    print(f"Unknown sync target: {inp[2]!r}")
+
         case "stitch" | "Stitch" | "s" | "S":
             if len(inp) < 3:
                 print("Usage: VIS stitch <screenname>")

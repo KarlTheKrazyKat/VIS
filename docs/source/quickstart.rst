@@ -67,7 +67,7 @@ Open the generated screen script (e.g. ``Home.py``). The important parts:
 
 .. code-block:: python
 
-   from modules.defaults import *
+   from Screens.defaults import *
 
    def setup(parent):
        """Build this screen's UI into parent."""
@@ -88,7 +88,7 @@ Open the generated screen script (e.g. ``Home.py``). The important parts:
            else:
                break
 
-- ``from modules.defaults import *`` brings in tkinter, ``sys``, ``Project``, and
+- ``from Screens.defaults import *`` brings in tkinter, ``sys``, ``Project``, and
   ``LayoutFrame`` — the standard set every screen needs.
 - ``setup(parent)`` is where all widget creation goes. The Host calls this function
   when loading the screen as a tab.
@@ -167,7 +167,7 @@ Build your UI inside each element's ``build()`` function:
 .. code-block:: python
 
    # Screens/Home/f_header.py
-   from modules.defaults import *
+   from Screens.defaults import *
 
    f_header = None
 

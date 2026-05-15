@@ -279,7 +279,13 @@ class Host:
         try:
             if project_dir not in sys.path:
                 sys.path.insert(0, project_dir)
-            spec = importlib.util.spec_from_file_location(scr.name, script_path)
+            # Module name must match the file's PyInit_<stem> export when
+            # loading a compiled .pyd, so use the script stem rather than
+            # scr.name (which is the logical screen label and may differ —
+            # e.g. screen "Landing" whose entry is "StartUp.pyd" exports
+            # PyInit_StartUp, not PyInit_Landing).
+            stem = os.path.splitext(os.path.basename(scr.script))[0]
+            spec = importlib.util.spec_from_file_location(stem, script_path)
             if spec is None:
                 return None
             mod = importlib.util.module_from_spec(spec)
