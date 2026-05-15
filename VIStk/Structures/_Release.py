@@ -913,17 +913,28 @@ class Release(Project):
         # at load time, ImportError'ing on the f_* submodule lookup.
         # Bundling makes the entry .pyd self-contained for its own
         # imports; other screens' subpackages stay nofollow'd.
-        own_subpkgs = {
-            "Screens", "modules",
-            f"Screens.{scr.name}", f"modules.{scr.name}",
-        }
+        #
+        # Only include subpackages that actually exist on disk — some
+        # screens are single-file (no Screens/<name>/ subdir, no
+        # modules/<name>/ subdir).  Passing --include-package= for a
+        # non-existent package makes Nuitka FATAL out with "failed to
+        # locate package".
+        own_subpkgs = {"Screens", "modules"}
+        include_flags: list[str] = []
+        screens_subdir = os.path.join(self.p_project, "Screens", scr.name)
+        if os.path.isdir(screens_subdir):
+            include_flags.append(f"--include-package=Screens.{scr.name}")
+            own_subpkgs.add(f"Screens.{scr.name}")
+        modules_subdir = os.path.join(self.p_project, "modules", scr.name)
+        if os.path.isdir(modules_subdir):
+            include_flags.append(f"--include-package=modules.{scr.name}")
+            own_subpkgs.add(f"modules.{scr.name}")
         parts = [
             sys.executable, "-m", "nuitka", "--module",
             *self._compiler_args(),
             f"--output-dir={self.build_dir}",
             "--assume-yes-for-downloads",
-            f"--include-package=Screens.{scr.name}",
-            f"--include-package=modules.{scr.name}",
+            *include_flags,
             *self._nofollow_flags(exclude_self=own_subpkgs),
             scr.script,
         ]
@@ -1239,10 +1250,7 @@ class Release(Project):
         # Nuitka docs), so leaving it in would block Nuitka from
         # following into ``Screens.<name>`` no matter what the
         # subpackage-level flags say.
-        own_subpkgs = {
-            "Screens", "modules",
-            f"Screens.{scr.name}", f"modules.{scr.name}",
-        }
+        own_subpkgs = {"Screens", "modules"}
         parts.append("--follow-imports")
         # Force-bundle every submodule of this screen's own UI/logic
         # packages.  modules/<name>/__init__.py uses lazy
@@ -1250,8 +1258,19 @@ class Release(Project):
         # m_* siblings, which Nuitka's static analysis can't see; without
         # --include-package it bundles the __init__ but not the m_*
         # files, and the lazy lookup ModuleNotFoundErrors at runtime.
-        parts.append(f"--include-package=Screens.{scr.name}")
-        parts.append(f"--include-package=modules.{scr.name}")
+        #
+        # Only include subpackages that actually exist on disk — single-
+        # file screens (no Screens/<name>/ subdir, no modules/<name>/
+        # subdir) would otherwise FATAL out with Nuitka's
+        # "failed to locate package" error.
+        screens_subdir = os.path.join(self.p_project, "Screens", scr.name)
+        if os.path.isdir(screens_subdir):
+            parts.append(f"--include-package=Screens.{scr.name}")
+            own_subpkgs.add(f"Screens.{scr.name}")
+        modules_subdir = os.path.join(self.p_project, "modules", scr.name)
+        if os.path.isdir(modules_subdir):
+            parts.append(f"--include-package=modules.{scr.name}")
+            own_subpkgs.add(f"modules.{scr.name}")
         parts.extend(self._nofollow_flags(exclude_self=own_subpkgs))
         # Same stdlib bundling as compile_host so standalone screens
         # also expose the full stdlib to shared .pyds loaded at runtime.
