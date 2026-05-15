@@ -428,7 +428,9 @@ Usage
 
     from VIStk.Widgets import VISMenu
 
-    menu = VISMenu(parent_frame, "path/to/menu.json")
+    from Screens.Landing.j_administrate import menu as admin_data
+
+    menu = VISMenu(parent_frame, admin_data)
 
 ----
 
@@ -436,7 +438,7 @@ MenuItem
 --------
 
 ``MenuItem(Button)`` — A single button used by ``VISMenu``. Can be created directly for
-individual menu-style buttons without a full JSON-driven menu.
+individual menu-style buttons without a ``j_``-driven menu.
 
 .. code-block:: python
 
@@ -460,7 +462,9 @@ centers itself over the parent window.
 
     from VIStk.Widgets import MenuWindow
 
-    menu_win = MenuWindow(root, "path/to/menu.json")
+    from Screens.Landing.j_administrate import menu as admin_data
+
+    menu_win = MenuWindow(root, admin_data)
 
 ----
 
@@ -473,8 +477,9 @@ items than can fit on screen.
 .. code-block:: python
 
     from VIStk.Widgets import ScrollMenu
+    from Screens.Landing.j_administrate import menu as admin_data
 
-    sm = ScrollMenu(parent, "path/to/menu.json")
+    sm = ScrollMenu(parent, admin_data)
     sm.pack(fill=BOTH, expand=True)
 
 The ``VISMenu`` is placed inside the ``scrollable_frame``. Access the underlying menu via

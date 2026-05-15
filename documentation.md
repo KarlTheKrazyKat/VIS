@@ -934,22 +934,22 @@ Label(sf.scrollable_frame, text="Item 2").pack()
 
 ### VISMenu
 
-`VISMenu` builds a column of buttons from a JSON file. Each button can launch a screen by name or a script/executable by path. Keyboard shortcuts are supported via a `nav` character per item.
+`VISMenu` builds a column of buttons from a `j_` data module dict. Each button can launch a screen by name or a script/executable by path. Keyboard shortcuts are supported via a `nav` character per item.
 
-**JSON format:**
+**`j_` data module format** (e.g. `Screens/Landing/j_administrate.py`):
 
-```json
-{
+```python
+menu = {
     "Work Orders": {
         "text": "Work Orders",
         "path": "wo",
-        "nav": "w"
+        "nav": "w",
     },
     "Rolodex": {
         "text": "Rolodex",
         "path": "rolo",
-        "nav": "r"
-    }
+        "nav": "r",
+    },
 }
 ```
 
@@ -963,8 +963,9 @@ Label(sf.scrollable_frame, text="Item 2").pack()
 
 ```python
 from VIStk.Widgets import VISMenu
+from Screens.Landing.j_administrate import menu as admin_data
 
-menu = VISMenu(parent_frame, "path/to/menu.json")
+menu = VISMenu(parent_frame, admin_data)
 ```
 
 `VISMenu` uses `grid` internally and configures the parent frame's rows and columns. Button text autosizes to fit the button. If the `path` matches a registered screen name, `Screen.load()` is called; otherwise the path is executed directly.
@@ -993,7 +994,9 @@ The button highlights blue on hover and returns to default on leave. Clicking ca
 ```python
 from VIStk.Widgets import MenuWindow
 
-menu_win = MenuWindow(root, "path/to/menu.json")
+from Screens.Landing.j_administrate import menu as admin_data
+
+menu_win = MenuWindow(root, admin_data)
 ```
 
 The window sizes itself to fit its menu content and centers on the parent. It does not need explicit geometry — `update()` and `getGeometry` are called internally.
@@ -1006,8 +1009,9 @@ The window sizes itself to fit its menu content and centers on the parent. It do
 
 ```python
 from VIStk.Widgets import ScrollMenu
+from Screens.Landing.j_administrate import menu as admin_data
 
-sm = ScrollMenu(parent, "path/to/menu.json")
+sm = ScrollMenu(parent, admin_data)
 sm.pack(fill=BOTH, expand=True)
 ```
 

@@ -173,6 +173,17 @@ class Screen(VINFO):
         with open(self.p_project+"/"+self.script,"r") as f: text = f.read()
         stitched = []
 
+        #Data — fully-qualified imports for j_* data modules
+        data_files = glob.glob(self.path+'/j_*')
+        data_import_lines = []
+        for dp in data_files:
+            module_path = dp.replace("\\", "/")
+            module_path = module_path.replace(self.path+"/", "Screens."+self.name+".")[:-3]
+            stitched.append(module_path)
+            data_import_lines.append(f"import {module_path}")
+        data_str = ("\n".join(data_import_lines) + "\n") if data_import_lines else ""
+        text = self._replace_section(text, "Screen Data", data_str)
+
         #Elements — fully-qualified imports at module level, build calls inside setup()
         elements = glob.glob(self.path+'/f_*')
         import_lines = []
