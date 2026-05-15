@@ -286,6 +286,8 @@ class Host:
             spec.loader.exec_module(mod)
             return mod
         except Exception:
+            import traceback
+            sys.stderr.write(f"\n[VIStk] _import_screen failed for {scr.name!r}:\n{traceback.format_exc()}\n")
             return None
 
     def _import_hooks(self, scr):
@@ -306,6 +308,8 @@ class Host:
             spec.loader.exec_module(mod)
             return mod
         except Exception:
+            import traceback
+            sys.stderr.write(f"\n[VIStk] _import_hooks failed for {scr.name!r}:\n{traceback.format_exc()}\n")
             return None
 
     # ── FPS ────────────────────────────────────────────────────────────────────
