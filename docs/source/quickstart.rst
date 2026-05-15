@@ -54,6 +54,7 @@ Your project now looks like this:
    ├── Screens/
    │   └── Home/
    ├── modules/
+   │   ├── defaults.py          <- shared imports for all screens
    │   └── Home/
    ├── Icons/
    ├── Images/
@@ -66,10 +67,13 @@ Open the generated screen script (e.g. ``Home.py``). The important parts:
 
 .. code-block:: python
 
+   from modules.defaults import *
+
    def setup(parent):
        """Build this screen's UI into parent."""
-       from tkinter import ttk
-       label = ttk.Label(parent, text="Hello from Home")
+       pane = LayoutFrame(parent)
+       pane.place(relx=0, rely=0, relwidth=1, relheight=1)
+       label = ttk.Label(pane, text="Hello from Home")
        label.pack(padx=20, pady=20)
 
    if __name__ == "__main__":
@@ -84,6 +88,8 @@ Open the generated screen script (e.g. ``Home.py``). The important parts:
            else:
                break
 
+- ``from modules.defaults import *`` brings in tkinter, ``sys``, ``Project``, and
+  ``LayoutFrame`` — the standard set every screen needs.
 - ``setup(parent)`` is where all widget creation goes. The Host calls this function
   when loading the screen as a tab.
 - The ``if __name__ == "__main__":`` block lets you run the screen standalone for
@@ -161,15 +167,15 @@ Build your UI inside each element's ``build()`` function:
 .. code-block:: python
 
    # Screens/Home/f_header.py
-   from tkinter import ttk
+   from modules.defaults import *
 
-   f_elem = None
+   f_header = None
 
    def build(parent):
-       global f_elem
-       f_elem = ttk.Frame(parent)
-       f_elem.place(parent.Layout.cell(0, 0))
-       ttk.Label(f_elem, text="Header").pack()
+       global f_header
+       f_header = ttk.Frame(parent)
+       f_header.place(parent.Layout.cell(0, 0))
+       ttk.Label(f_header, text="Header").pack()
 
 7. Use layouts
 --------------
@@ -179,8 +185,6 @@ VIStk's ``Layout`` system divides frames into proportional rows and columns:
 .. code-block:: python
 
    def setup(parent):
-       from VIStk.Widgets import LayoutFrame
-
        pane = LayoutFrame(parent)
        pane.place(relx=0, rely=0, relwidth=1, relheight=1)
        pane.Layout.rowSize([0.1, 0.8, 0.1])    # header, body, footer

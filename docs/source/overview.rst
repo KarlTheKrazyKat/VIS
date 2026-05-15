@@ -20,6 +20,7 @@ A VIStk project has the following folder layout:
    ├── Screens/
    │   └── <screen>/           <- UI element files, prefixed f_ (e.g. f_header.py)
    ├── modules/
+   │   ├── defaults.py         <- shared imports for all screens and elements
    │   └── <screen>/           <- logic files, prefixed m_ (e.g. m_header.py)
    ├── Icons/                  <- .ico (Windows) or .xbm (Linux) icon files
    ├── Images/                 <- image assets used by VIMG
@@ -106,17 +107,17 @@ Every tabbed screen must follow this pattern. Violating it will crash the Host o
 .. code-block:: python
 
    # Module-level: only imports and pure data (no widget creation, no Tk calls)
+   from modules.defaults import *
 
-   def loop():                  pass  # called every frame (standalone only)
+   def loop():                  pass  # called every tick
    def configure_menu(menubar): pass  # contribute to HostMenu when tab is active
-   def on_focused():            pass  # tab gained focus
-   def on_unfocused():          pass  # tab lost focus
+   def on_activate():           pass  # tab gained focus
+   def on_deactivate():         pass  # tab lost focus
 
    def setup(parent):
        # ALL widget creation goes here
-       from tkinter import ttk
-       frame = ttk.Frame(parent)
-       frame.place(relx=0, rely=0, relwidth=1, relheight=1)
+       pane = LayoutFrame(parent)
+       pane.place(relx=0, rely=0, relwidth=1, relheight=1)
 
    if __name__ == "__main__":
        from Screens.root import root, frame
@@ -162,42 +163,49 @@ uses these to locate and rewrite import blocks in screen scripts.
    Do not delete or rename ``#%`` comment lines. They are not standard comments --- they are
    structural anchors that VIStk searches for by text pattern.
 
-The two critical blocks:
+The critical blocks:
 
 .. code-block:: python
 
    #%Screen Elements
-   from Screens.MyScreen.f_header import f_header
-   f_header.build(parent)
-   from Screens.MyScreen.f_body import f_body
-   f_body.build(parent)
-   #%Screen Grid
+   import Screens.MyScreen.f_header
+   import Screens.MyScreen.f_body
 
    #%Screen Modules
-   from modules import MyScreen
-   #%Handle Arguments
+   import modules.MyScreen.m_header
+   import modules.MyScreen.m_body
 
-``stitch`` replaces everything between ``#%Screen Elements`` and ``#%Screen Grid`` with
-fresh imports and ``build()`` calls for each ``Screens/<screen>/f_*.py`` file. Everything
-between ``#%Screen Modules`` and ``#%Handle Arguments`` is replaced with a single package
-import: ``from modules import <ScreenName>``.
-
-``stitch`` also generates ``modules/<screen>/__init__.py`` with three sections:
+Inside ``setup()``:
 
 .. code-block:: python
 
-   #%Modules (Auto-generated)
-   from . import m_header
-   from . import m_body
+   #%Build Screen Elements
+   Screens.MyScreen.f_header.build(pane)
+   Screens.MyScreen.f_body.build(pane)
 
-   #%Screen Variables
-   # Hand-edited shared state (e.g. current_wo = None)
+Inside ``loop()``:
 
-   #%Exports
-   # Hand-edited public API (e.g. from .m_header import get_wo_num)
+.. code-block:: python
 
-The ``#%Modules`` section is regenerated on every stitch. ``#%Screen Variables`` and
-``#%Exports`` are preserved across stitches.
+   #%Predefined Loop Functions
+   if bool(getattr(modules.MyScreen.m_header, "_m_header", False)): modules.MyScreen.m_header._m_header()
+   if bool(getattr(modules.MyScreen.m_body, "_m_body", False)): modules.MyScreen.m_body._m_body()
+
+   #%User Defined Loop Functions
+   pass
+
+``stitch`` replaces the content under ``#%Screen Elements`` with fully-qualified imports
+for each ``Screens/<screen>/f_*.py`` file. ``#%Screen Modules`` is replaced with
+fully-qualified imports for each ``modules/<screen>/m_*.py`` file. ``#%Build Screen
+Elements`` is replaced with ``build(pane)`` calls, and ``#%Predefined Loop Functions`` is
+replaced with guarded callbacks for each module.
+
+Import conventions:
+
+- ``Screens.*`` and ``modules.*`` are always imported as full dotted paths (``import
+  Screens.MyScreen.f_header``), never with ``from`` or ``as``.
+- ``from`` imports inside functions are only used in the ``__main__`` guard
+  (``from Screens.root import root, frame``).
 
 configure_menu Pattern
 ----------------------

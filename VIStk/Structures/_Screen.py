@@ -173,60 +173,41 @@ class Screen(VINFO):
         with open(self.p_project+"/"+self.script,"r") as f: text = f.read()
         stitched = []
 
-        #Elements — each f_element defines build(parent); call it inside setup()
-        elements = glob.glob(self.path+'/f_*')#get all elements
-        element_lines = []
+        #Elements — fully-qualified imports at module level, build calls inside setup()
+        elements = glob.glob(self.path+'/f_*')
+        import_lines = []
+        build_lines = []
         for elem_path in elements:
             module_path = elem_path.replace("\\", "/")
             module_path = module_path.replace(self.path+"/", "Screens."+self.name+".")[:-3]
             stitched.append(module_path)
-            pkg, mod_name = module_path.rsplit(".", 1)
-            element_lines.append(f"from {pkg} import {mod_name}")
-            element_lines.append(f"{mod_name}.build(parent)")
-        elements_str = ("\n".join(element_lines) + "\n") if element_lines else ""
-        text = self._replace_section(text, "Screen Elements", elements_str)
+            import_lines.append(f"import {module_path}")
+            build_lines.append(f"{module_path}.build(pane)")
+        imports_str = ("\n".join(import_lines) + "\n") if import_lines else ""
+        builds_str = ("\n".join(build_lines) + "\n") if build_lines else ""
+        text = self._replace_section(text, "Screen Elements", imports_str)
+        text = self._replace_section(text, "Build Screen Elements", builds_str)
 
-        #Modules — package import pattern
+        #Modules — fully-qualified imports
         modules_pkg_init = os.path.join(self.p_project, "modules", "__init__.py")
         if not os.path.exists(modules_pkg_init):
             Path(modules_pkg_init).touch()
 
-        modules = glob.glob(self.m_path+'/m_*')
-        for m in modules:
+        modules_list = sorted(glob.glob(self.m_path+'/m_*'))
+        module_import_lines = []
+        loop_lines = []
+        for m in modules_list:
+            mod_name = Path(m).stem
+            module_path = f"modules.{self.name}.{mod_name}"
             stitched.append(m)
-        modules_str = f"from modules import {self.name}\n" if modules else ""
+            module_import_lines.append(f"import {module_path}")
+            callback = f"_{mod_name}"
+            loop_lines.append(f"if bool(getattr({module_path}, \"{callback}\", False)): {module_path}.{callback}()")
+        modules_str = ("\n".join(module_import_lines) + "\n") if module_import_lines else ""
         text = self._replace_section(text, "Screen Modules", modules_str)
 
-        if modules:
-            mod_names = [Path(m).stem for m in sorted(modules)]
-            generated_block = (
-                f"_module_names = {mod_names!r}\n"
-                f"\n"
-                f"def __getattr__(name):\n"
-                f"    if name in _module_names:\n"
-                f"        import importlib\n"
-                f"        mod = importlib.import_module(f'.{{name}}', __name__)\n"
-                f"        globals()[name] = mod\n"
-                f"        return mod\n"
-                f"    raise AttributeError(f\"module {{__name__!r}} has no attribute {{name!r}}\")\n"
-            )
-
-            init_path = self.m_path + "/__init__.py"
-
-            if os.path.exists(init_path):
-                with open(init_path, "r") as f:
-                    existing = f.read()
-                new_init = self._replace_section(existing, "Modules (Auto-generated)", generated_block)
-            else:
-                new_init = (
-                    "#%Modules (Auto-generated)\n"
-                    f"{generated_block}\n"
-                    "#%Screen Variables\n\n"
-                    "#%Exports\n"
-                )
-
-            with open(init_path, "w") as f:
-                f.write(new_init)
+        loop_str = ("\n".join(loop_lines) + "\n") if loop_lines else "pass\n"
+        text = self._replace_section(text, "Predefined Loop Functions", loop_str)
 
         #write out
         with open(self.p_project+"/"+self.script,"w") as f:

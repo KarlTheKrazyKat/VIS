@@ -65,84 +65,127 @@ uses these markers to locate and rewrite specific blocks in a screen script.
    Do not delete or rename ``#%`` comment lines. They are not standard comments — they are
    structural anchors that VIStk searches for by text pattern.
 
-The two critical blocks are:
+The critical blocks are:
 
 .. code-block:: python
 
     #%Screen Elements
-    from Screens.myscreen.f_header import *
-    from Screens.myscreen.f_body import *
-    #%Screen Grid
+    import Screens.MyScreen.f_header
+    import Screens.MyScreen.f_body
 
     #%Screen Modules
-    from modules.myscreen.m_header import *
-    from modules.myscreen.m_body import *
-    #%Handle Arguments
+    import modules.MyScreen.m_header
+    import modules.MyScreen.m_body
 
-``stitch`` replaces everything between ``#%Screen Elements`` and ``#%Screen Grid`` with fresh
-imports from ``Screens/<screen>/f_*.py``, and everything between ``#%Screen Modules`` and
-``#%Handle Arguments`` with fresh imports from ``modules/<screen>/m_*.py``.
+``stitch`` replaces the content under ``#%Screen Elements`` with fully-qualified imports for
+each ``Screens/<screen>/f_*.py`` file, and ``#%Screen Modules`` with fully-qualified imports
+for each ``modules/<screen>/m_*.py`` file. It also populates ``#%Build Screen Elements``
+(inside ``setup()``) and ``#%Predefined Loop Functions`` (inside ``loop()``).
 
 If the VSCode VIStk extension is installed, ``#%`` lines are highlighted differently from
 regular comments.
 
-Screen template structure (0.4+)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Screen template structure
+~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The full generated screen template:
 
 .. code-block:: python
 
     #%Default Imports
-    from tkinter import *
-    from tkinter import ttk
-    import sys
+    from modules.defaults import *
     #%File Specific Imports
-
-    #%Handle Arguments
 
     #%Screen Modules
 
+    #%Screen Elements
+
     #%Define Loop Modules
     def loop():
+        """Called every tick by the Host (or standalone main loop)."""
+        #%Predefined Loop Functions
         pass
 
+        #%User Defined Loop Functions
+        pass
+
+    #%Menu Functions
+
+    #%Host Hooks
     def configure_menu(menubar):
-        """Contribute menu items to the Host's persistent menu bar."""
+        """Register menu items with the containing TabManager."""
+        menubar.set_screen_items([], label="ScreenName")
+
+    def on_activate():
+        """Called when this tab gains focus."""
         pass
 
-    def on_focused():
-        """Called when this tab gains focus inside the Host."""
+    def on_deactivate():
+        """Called when this tab loses focus."""
         pass
 
-    def on_unfocused():
-        """Called when this tab loses focus or is closed inside the Host."""
+    def on_quit() -> bool:
+        """Called when this screen is about to be destroyed.
+        Return False to prevent destruction (e.g. unsaved changes prompt)."""
         pass
 
     def setup(parent):
         """Build this screen's UI into parent."""
-        #%Screen Grid
+        pane = LayoutFrame(parent)
+        pane.place(relx=0, rely=0, relwidth=1, relheight=1)
 
-        #%Screen Elements
-    #%Update Loop
+        #%Screen Grid
+        pane.Layout.colSize([1.0])
+        pane.Layout.rowSize([1.0])
+
+        #%Build Screen Elements
+
+        #%Other Setup
+
+    #%Standalone Entry
     if __name__ == "__main__":
         from Screens.root import root, frame
         setup(frame)
         root.Active = True
         root.WindowGeometry.setGeometry(width=66, height=66, align="center", size_style="screen_relative")
-        root.screenTitle("<title>")
-        root.setIcon("<icon>")
+        root.screenTitle("ScreenName")
+        root.setIcon("ScreenName")
 
         while True:
             try:
                 if root.Active:
-                    try: loop()
-                    except: pass
+                    try:
+                        loop()
+                    except Exception as _e:
+                        print(f"ScreenName loop error: {_e}", file=sys.stderr)
                     root.update()
                 else:
                     break
-            except:
+            except Exception as _e:
+                print(f"ScreenName main loop error: {_e}", file=sys.stderr)
                 break
+
+``modules/defaults.py``
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+Every project includes a ``modules/defaults.py`` that centralizes the default imports
+shared by all screen scripts and element files:
+
+.. code-block:: python
+
+    from tkinter import *
+    from tkinter import ttk
+    import sys
+    from VIStk.Structures._Project import Project
+    from VIStk.Widgets import LayoutFrame
+
+    __all__ = [
+        *[name for name in dir() if not name.startswith('_')],
+    ]
+
+``from modules.defaults import *`` re-exports all names through ``__all__``, making them
+available in the importing module. Static analysis tools (Pylance) and the Nuitka compiler
+both resolve ``import *`` chains correctly.
 
 Warnings
 --------

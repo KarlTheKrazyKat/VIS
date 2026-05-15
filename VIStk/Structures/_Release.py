@@ -698,7 +698,7 @@ class Release(Project):
         # _nofollow_flags() without exclude_self) don't freeze a stub
         # ``Screens.<name>`` or ``modules.<name>`` package alongside
         # the on-disk ``.pyd``.  An entry script's
-        # ``from Screens.<name> import f_xxx`` otherwise causes Nuitka
+        # ``import Screens.<name>.f_xxx`` otherwise causes Nuitka
         # to bundle just the subpackage's ``__init__.py`` reference,
         # which shadows the real on-disk ``.pyd`` at runtime and
         # produces an ImportError on the f_*/m_* submodule lookup.
@@ -1070,7 +1070,7 @@ class Release(Project):
 
         Same shape as :meth:`_compile_one_module` but for the per-screen
         UI sub-package.  Exposes ``f_*`` section files as submodules
-        accessible via ``from Screens.<screen> import f_xxx`` at runtime.
+        accessible via ``import Screens.<screen>.f_xxx`` at runtime.
         The runtime/Screens/<name>.pyd slot was freed by moving the
         entry-script compile to runtime/<name>.pyd (see
         :meth:`_compile_screen_pyd`).
@@ -1080,7 +1080,7 @@ class Release(Project):
         # Nuitka --module + --include-package needs __init__.py as an
         # anchor to discover and bundle submodules.  Without it the
         # compiled .pyd loads cleanly at runtime but exposes nothing —
-        # `from Screens.<name> import f_xxx` raises ImportError.  Bail
+        # `import Screens.<name>.f_xxx` raises ImportError.  Bail
         # early with an actionable message instead of producing a stub.
         init_path = os.path.join(src_path, "__init__.py")
         if not os.path.exists(init_path):
@@ -1237,7 +1237,7 @@ class Release(Project):
         # bundles them (with every f_*/m_* sibling) directly into this
         # .exe.  Without that, Nuitka emits a stub Screens.<name> just
         # for the import statement to resolve against — that stub has
-        # no f_* siblings, so `from Screens.<name> import f_xxx` raises
+        # no f_* siblings, so `import Screens.<name>.f_xxx` raises
         # ImportError despite the on-disk .pyd being present (frozen
         # importer wins over filesystem).  Letting the .exe bundle the
         # subpackages directly makes it self-contained for those

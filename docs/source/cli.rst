@@ -82,8 +82,11 @@ Stitch a screen
    VIS stitch <screen_name>
 
 Scans ``Screens/<screen>/`` and ``modules/<screen>/`` for all ``f_*`` and ``m_*`` files
-and rewrites the import blocks in the screen script to include them all. This is called
-automatically when adding elements. Run manually if you add files without using the CLI.
+and rewrites the screen script. Generates fully-qualified imports under ``#%Screen
+Elements`` and ``#%Screen Modules``, ``build(pane)`` calls under ``#%Build Screen
+Elements``, and guarded loop callbacks under ``#%Predefined Loop Functions``. This is
+called automatically when adding elements. Run manually if you add files without using
+the CLI.
 
 Release the project
 -------------------
