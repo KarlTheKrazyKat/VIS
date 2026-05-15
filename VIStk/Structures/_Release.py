@@ -905,15 +905,26 @@ class Release(Project):
         don't fight over the progress display.  Returns ``(ok, error)``.
         """
         stem = os.path.splitext(scr.script)[0]
+        # Bundle this screen's own UI + logic subpackages directly into
+        # the tabbed entry .pyd, mirroring the standalone .exe build.
+        # Without --include-package + parent exclusion, Nuitka emits a
+        # stub Screens.<name> referenced by the entry's import statements
+        # and the stub shadows the on-disk runtime/Screens/<name>.pyd
+        # at load time, ImportError'ing on the f_* submodule lookup.
+        # Bundling makes the entry .pyd self-contained for its own
+        # imports; other screens' subpackages stay nofollow'd.
+        own_subpkgs = {
+            "Screens", "modules",
+            f"Screens.{scr.name}", f"modules.{scr.name}",
+        }
         parts = [
             sys.executable, "-m", "nuitka", "--module",
             *self._compiler_args(),
             f"--output-dir={self.build_dir}",
             "--assume-yes-for-downloads",
-            # The entry script isn't itself a compile target — every
-            # external target gets nofollow.  Cross-screen and shared-
-            # package imports stay runtime-resolved.
-            *self._nofollow_flags(),
+            f"--include-package=Screens.{scr.name}",
+            f"--include-package=modules.{scr.name}",
+            *self._nofollow_flags(exclude_self=own_subpkgs),
             scr.script,
         ]
 
@@ -1233,6 +1244,14 @@ class Release(Project):
             f"Screens.{scr.name}", f"modules.{scr.name}",
         }
         parts.append("--follow-imports")
+        # Force-bundle every submodule of this screen's own UI/logic
+        # packages.  modules/<name>/__init__.py uses lazy
+        # importlib.import_module() inside __getattr__ to load
+        # m_* siblings, which Nuitka's static analysis can't see; without
+        # --include-package it bundles the __init__ but not the m_*
+        # files, and the lazy lookup ModuleNotFoundErrors at runtime.
+        parts.append(f"--include-package=Screens.{scr.name}")
+        parts.append(f"--include-package=modules.{scr.name}")
         parts.extend(self._nofollow_flags(exclude_self=own_subpkgs))
         # Same stdlib bundling as compile_host so standalone screens
         # also expose the full stdlib to shared .pyds loaded at runtime.
