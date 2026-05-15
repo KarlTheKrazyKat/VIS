@@ -1,0 +1,7 @@
+menu = {
+    # "<key>": {
+    #     "text": "Menu Item Text",
+    #     "path": "ScreenName",
+    #     "nav": "k",
+    # },
+}

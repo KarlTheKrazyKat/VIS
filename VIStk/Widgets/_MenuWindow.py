@@ -3,7 +3,7 @@ from VIStk.Widgets._VISMenu import VISMenu
 from tkinter import *
 
 class MenuWindow(SubRoot):
-    def __init__(self,parent:Tk|Toplevel,path:str,*args,center_ref=None,**kwargs):
+    def __init__(self,parent:Tk|Toplevel,data:dict,*args,center_ref=None,**kwargs):
         super().__init__(*args,**kwargs)
         self.master=parent
 
@@ -11,7 +11,7 @@ class MenuWindow(SubRoot):
         self.withdraw()
 
         #Load Menu
-        self.menu = VISMenu(self, path)
+        self.menu = VISMenu(self, data)
 
         #SubWindow Geometry
         self.update()
