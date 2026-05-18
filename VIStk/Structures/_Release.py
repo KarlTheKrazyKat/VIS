@@ -16,6 +16,7 @@ import datetime
 import hashlib
 import importlib.metadata
 import json
+import marshal
 from VIStk.Structures._Version import Version
 
 # Nuitka writes ``.pyd`` on Windows and ``.so`` on Linux/macOS for both
@@ -117,8 +118,9 @@ class Release(Project):
         self.extra_nuitka_args: list[str] = _nuitka_cfg.get("extra_args", [])
 
         # Serializes the .dist → runtime/ merge step inside
-        # _compile_screen_exe / compile_host so parallel binary compiles
-        # don't race on shared runtime files (python313.dll, tcl/, ...).
+        # compile_host so its ``.dist`` doesn't race on shared runtime
+        # files (python313.dll, tcl/, ...) if other phases ever ship
+        # things into runtime/ concurrently.
         self._merge_lock = threading.Lock()
 
     def _resolve_release_targets(self) -> list[Screen] | None:
@@ -396,13 +398,21 @@ class Release(Project):
                 segment = segment.strip()
                 if not segment:
                     continue
-                # C file compilation progress
-                m = _re.search(r'Compiled (\d+)[/ ](?:out of )?(\d+)', segment)
+                # C file compilation progress — Nuitka emits variants like
+                # "Compiled 23/47", "Compiled 23 of 47", or
+                # "Compiled 23 out of 47" depending on version.
+                m = _re.search(r'Compiled (\d+)\s*(?:/|of|out of)\s*(\d+)', segment)
                 if m:
                     self._status(f"{prefix} — C {m.group(1)}/{m.group(2)}")
                     continue
                 if 'Backend C linking' in segment:
                     self._status(f"{prefix} — linking")
+                    continue
+                # Analysis / optimization phase — long-running silent
+                # gaps before the C compile, where progress otherwise
+                # appears stuck on "...".
+                if 'Optimizing modules' in segment or 'Doing module' in segment:
+                    self._status(f"{prefix} — analyzing")
                     continue
                 # Capture last FATAL/error line for failure reporting
                 if 'FATAL' in segment or 'error:' in segment.lower():
@@ -432,11 +442,13 @@ class Release(Project):
         compile targets resolve from the install root (see
         :meth:`_make_bootstrap_wrapper`).
 
-        Parallel-safe: uses ``_run_nuitka_silent`` so concurrent binary
-        compiles don't fight over the progress line, and the .dist →
-        runtime/ merge is wrapped in ``self._merge_lock`` so concurrent
-        merges don't race on shared runtime files (python313.dll,
-        tcl/, ...).  Returns ``(ok, err)``.
+        Uses ``_run_nuitka`` (live progress) since the Host is now the
+        only binary in a build — under the always-Host model there are
+        no per-screen .exes competing for the progress line.  The .dist
+        → runtime/ merge is wrapped in ``self._merge_lock`` for safety
+        if any other phase ever races on runtime files.  Returns
+        ``(ok, err)`` — err is always empty on this path because
+        ``_run_nuitka`` prints failure details itself before returning.
         """
         ixt = ".ico" if sys.platform == "win32" else ".xbm"
         icon_file = f"{self.p_project}/Icons/{self.d_icon}{ixt}"
@@ -495,9 +507,8 @@ class Release(Project):
         entry_script = self._entry_for_compile(self.host_script)
         parts.append(entry_script)
 
-        ok, err = self._run_nuitka_silent(parts, self.p_project)
-        if not ok:
-            return False, err or "nuitka returned non-zero"
+        if not self._run_nuitka(parts, self.title, self.p_project):
+            return False, ""  # _run_nuitka already printed the failure line
 
         with self._merge_lock:
             if not self._place_exe_output(entry_script, self.title):
@@ -549,52 +560,38 @@ class Release(Project):
         return True
 
     def compile_screens(self, mode="all"):
-        """Compile each screen plus its per-screen modules sub-package.
+        """Compile each screen's wrapper .pyd and (optionally) the Host .exe.
 
-        For every tabbed screen in ``release_targets``, two artifacts
-        ship to the install:
+        For every screen in ``release_targets`` a single wrapper ``.pyd``
+        is produced at ``runtime/<stem>.pyd``.  The wrapper bundles
+        marshalled bytecode for the entry script and every ``f_*`` /
+        ``j_*`` / ``m_*`` source file; per-tab namespaces are built from
+        that dict at runtime by ``TabManager._build_namespace``.  No
+        separate ``Screens/<name>.pyd`` or ``modules/<name>.pyd``
+        artifacts ship.
 
-        * ``Screens/<name>.pyd`` — the screen's UI entry, compiled from
-          ``<name>.py``.
-        * ``modules/<name>.pyd`` — the screen's logic sub-package,
-          compiled from ``modules/<name>/`` (only when that directory
-          exists).
-
-        Both kinds of jobs share one parallel call so workers stay busy.
-        Workers default to ``cpu_count // 2`` to leave headroom for
-        Nuitka's per-process C compiler subprocesses.
-
-        Standalone screens (``tabbed=false``) with ``release=true`` stay
-        serial — each is ``--standalone`` and merges its ``.dist`` into
-        the shared ``self.final`` directory, where concurrent merges
-        would race on common runtime files (python3xx.dll, etc.).
-
-        ``mode`` filters which screens to compile: ``"pyd"`` for tabbed
-        screens (and their modules), ``"exe"`` for standalone release
-        screens only, or ``"all"`` for both (default).
+        ``mode`` filters which compilations to run: ``"pyd"`` for screen
+        wrappers, ``"exe"`` for the Host binary, or ``"all"`` for both
+        (default).  Under the always-Host model there are no per-screen
+        .exes — every screen opens through the Host (as a tab or a
+        chromeless DetachedWindow); the Host binary is the only .exe
+        in the install.
         """
-        ixt = ".ico" if sys.platform == "win32" else ".xbm"
-
         if mode in ("all", "pyd"):
-            tabbed = [s for s in self.release_targets if s.tabbed]
-            modules = self._modules_for_release()
-            screens_pkgs = self._screens_for_release()
-            if tabbed or modules or screens_pkgs:
-                # Tabbed entry .pyds now go to runtime root (was Screens/);
-                # runtime dir already exists from earlier phases.
-                if modules:
-                    os.makedirs(f"{self.runtime}/modules", exist_ok=True)
-                if screens_pkgs:
-                    os.makedirs(f"{self.runtime}/Screens", exist_ok=True)
-                if not self._compile_pyds_parallel(tabbed, modules, screens_pkgs):
+            # Wrapper .pyd is built for every release target — tabbed and
+            # standalone alike — so the Host can open any of them as a
+            # tab through TabManager._build_namespace.
+            screens = list(self.release_targets)
+            if screens:
+                if not self._compile_pyds_parallel(screens):
                     return False
 
         if mode in ("all", "exe"):
-            # Parallel: every standalone screen .exe + the Host .exe.
-            # Each job acquires self._merge_lock around its .dist →
-            # runtime/ merge so concurrent compiles don't race on
-            # shared runtime files (python313.dll, tcl/, ...).
-            if not self._compile_binaries_parallel():
+            # compile_host now uses _run_nuitka (live progress) and
+            # manages its own step/cat_index bookkeeping — no need to
+            # increment here.  Failure detail is printed by _run_nuitka.
+            ok, _err = self.compile_host()
+            if not ok:
                 return False
 
         return True
@@ -891,63 +888,129 @@ class Release(Project):
             out.append("--no-deployment-flag=excluded-module-usage")
         return out
 
-    def _compile_screen_pyd(self, scr) -> tuple[bool, str]:
-        """Compile one tabbed screen entry script → ``runtime/<stem>.pyd``.
+    def _build_screen_wrapper(self, scr) -> str:
+        """Generate the per-screen wrapper ``.py`` source and return its path.
 
-        Lives at the runtime root (not inside ``Screens/``) because that
-        slot is now occupied by the per-screen UI sub-package compile
-        (``Screens/<name>/`` → ``runtime/Screens/<name>.pyd``, see
-        :meth:`_compile_one_screen_package`).  Co-locating with a
-        same-named standalone .exe is fine — Python only resolves the
-        .pyd for imports.
+        The wrapper contains a single ``_EMBEDDED`` dict holding marshalled
+        bytecode for the screen's entry script and every ``f_*`` / ``j_*``
+        in ``Screens/<name>/`` plus every ``m_*`` in ``modules/<name>/``.
+        At runtime ``TabManager._load_codes_from_embedded`` reads this
+        dict and unmarshals into code objects for per-tab exec.
+
+        Wrapper file is named ``<stem>.py`` (where ``stem`` is the entry
+        script's basename without extension) so the Nuitka-compiled
+        ``.pyd`` exports ``PyInit_<stem>`` — what Python looks for when
+        the runtime does ``importlib.import_module(stem)``.  It lives
+        under ``self.build_dir/wrappers/`` to avoid colliding with
+        anything Nuitka writes at the build_dir root.
+        """
+        stem = os.path.splitext(scr.script)[0]
+        embedded: dict = {"entry": None, "screens": {}, "modules": {}}
+
+        # Entry script
+        with open(scr.script_path, "rb") as f:
+            entry_src = f.read()
+        embedded["entry"] = marshal.dumps(compile(entry_src, scr.script, "exec"))
+
+        # Screens/<name>/f_*, j_*
+        if os.path.isdir(scr.path):
+            for fname in sorted(os.listdir(scr.path)):
+                if not fname.endswith(".py") or fname == "__init__.py":
+                    continue
+                full = os.path.join(scr.path, fname)
+                with open(full, "rb") as f:
+                    src = f.read()
+                embedded["screens"][fname[:-3]] = marshal.dumps(compile(src, full, "exec"))
+
+        # modules/<name>/m_*
+        if os.path.isdir(scr.m_path):
+            for fname in sorted(os.listdir(scr.m_path)):
+                if not fname.endswith(".py") or fname == "__init__.py":
+                    continue
+                full = os.path.join(scr.m_path, fname)
+                with open(full, "rb") as f:
+                    src = f.read()
+                embedded["modules"][fname[:-3]] = marshal.dumps(compile(src, full, "exec"))
+
+        # Per-screen subdir so multiple screens with name collisions
+        # (impossible today but cheap insurance) don't stomp each other.
+        wrapper_dir = os.path.join(self.build_dir, "wrappers", stem)
+        os.makedirs(wrapper_dir, exist_ok=True)
+        wrapper_path = os.path.join(wrapper_dir, f"{stem}.py")
+        wrapper_src = (
+            f'"""Per-screen bundle for {scr.name!r} — VIS release artifact.\n'
+            f"\n"
+            f"Loaded by VIStk.Objects._TabManager when the Host opens this\n"
+            f"screen.  Contains marshalled bytecode for the entry script and\n"
+            f"every f_*, j_*, and m_* file; per-tab namespaces are built\n"
+            f"from this dict at runtime.\n"
+            f'"""\n'
+            f"\n"
+            f"_EMBEDDED = {embedded!r}\n"
+        )
+        with open(wrapper_path, "w", encoding="utf-8") as f:
+            f.write(wrapper_src)
+        return wrapper_path
+
+    def _compile_screen_pyd(self, scr) -> tuple[bool, str]:
+        """Compile one screen → ``runtime/<stem>.pyd``.
+
+        Builds a wrapper ``.py`` containing marshalled bytecode for the
+        entry script and every ``f_*`` / ``j_*`` / ``m_*`` source file,
+        then Nuitka-compiles that wrapper with ``--module``.  At runtime
+        ``TabManager._build_namespace`` imports this .pyd, reads its
+        ``_EMBEDDED`` dict, and exec's the bytecode into per-tab
+        namespaces — no separate ``Screens/<name>.pyd`` or
+        ``modules/<name>.pyd`` artifacts are produced.
+
+        The wrapper has no runtime imports beyond the standard library,
+        so the previous ``--include-package`` + ``--nofollow-import-to``
+        dance falls away.
+
+        Wrapper file is named ``<stem>.py`` (matching the entry script
+        stem) so the produced .pyd exports ``PyInit_<stem>`` — required
+        for ``importlib.import_module(stem)`` at runtime to succeed.
+        Each screen's wrapper + output live in their own subdir under
+        ``build_dir/wrappers/<stem>/`` so concurrent compiles don't
+        race on shared output paths.
 
         Threadsafe — uses :meth:`_run_nuitka_silent` so concurrent calls
         don't fight over the progress display.  Returns ``(ok, error)``.
         """
         stem = os.path.splitext(scr.script)[0]
-        # Bundle this screen's own UI + logic subpackages directly into
-        # the tabbed entry .pyd, mirroring the standalone .exe build.
-        # Without --include-package + parent exclusion, Nuitka emits a
-        # stub Screens.<name> referenced by the entry's import statements
-        # and the stub shadows the on-disk runtime/Screens/<name>.pyd
-        # at load time, ImportError'ing on the f_* submodule lookup.
-        # Bundling makes the entry .pyd self-contained for its own
-        # imports; other screens' subpackages stay nofollow'd.
-        #
-        # Only include subpackages that actually exist on disk — some
-        # screens are single-file (no Screens/<name>/ subdir, no
-        # modules/<name>/ subdir).  Passing --include-package= for a
-        # non-existent package makes Nuitka FATAL out with "failed to
-        # locate package".
-        own_subpkgs = {"Screens", "modules"}
-        include_flags: list[str] = []
-        screens_subdir = os.path.join(self.p_project, "Screens", scr.name)
-        if os.path.isdir(screens_subdir):
-            include_flags.append(f"--include-package=Screens.{scr.name}")
-            own_subpkgs.add(f"Screens.{scr.name}")
-        modules_subdir = os.path.join(self.p_project, "modules", scr.name)
-        if os.path.isdir(modules_subdir):
-            include_flags.append(f"--include-package=modules.{scr.name}")
-            own_subpkgs.add(f"modules.{scr.name}")
+        wrapper_path = self._build_screen_wrapper(scr)
+        wrapper_dir = os.path.dirname(wrapper_path)
+
         parts = [
             sys.executable, "-m", "nuitka", "--module",
             *self._compiler_args(),
-            f"--output-dir={self.build_dir}",
+            f"--output-dir={wrapper_dir}",
             "--assume-yes-for-downloads",
-            *include_flags,
-            *self._nofollow_flags(exclude_self=own_subpkgs),
-            scr.script,
+            *self._nofollow_flags(),
+            wrapper_path,
         ]
 
-        ok, err = self._run_nuitka_silent(parts, self.p_project)
+        ok, err = self._run_nuitka_silent(parts, wrapper_dir)
         if not ok:
             return False, err or "nuitka returned non-zero"
 
-        built_mods = glob.glob(f"{self.build_dir}{stem}*{_MOD_EXT}")
-        if not built_mods:
-            return False, f"no {_MOD_EXT} produced at {self.build_dir}{stem}*{_MOD_EXT}"
-        for bp in built_mods:
-            shutil.move(bp, f"{self.runtime}/{stem}{_MOD_EXT}")
+        # Output is in the wrapper's isolated subdir.  May be plain
+        # ``<stem>.pyd`` or ABI-tagged like ``<stem>.cp313-win_amd64.pyd``
+        # depending on Nuitka config.  Either way, move it to the
+        # runtime root as ``<stem>.pyd``.
+        built = glob.glob(f"{wrapper_dir}/{stem}*{_MOD_EXT}")
+        if not built:
+            return False, f"no {_MOD_EXT} produced at {wrapper_dir}/{stem}*{_MOD_EXT}"
+        target = f"{self.runtime}/{stem}{_MOD_EXT}"
+        if os.path.exists(target):
+            os.remove(target)
+        # If Nuitka emitted multiple variants (rare), prefer the exact
+        # stem match.
+        primary = next(
+            (bp for bp in built if os.path.basename(bp) == f"{stem}{_MOD_EXT}"),
+            built[0],
+        )
+        shutil.move(primary, target)
         return True, ""
 
     def _run_parallel(self, jobs: list, label: str, max_workers: int) -> bool:
@@ -1000,123 +1063,20 @@ class Release(Project):
                                 f.cancel()
         return all_ok
 
-    def _compile_pyds_parallel(self, screens: list, modules: list,
-                               screens_pkgs: list) -> bool:
-        """Compile screens, their modules sub-packages, and their Screens
-        UI sub-packages concurrently.
+    def _compile_pyds_parallel(self, screens: list) -> bool:
+        """Compile every tabbed screen's wrapper .pyd concurrently.
 
-        All job kinds run in the same ``ThreadPoolExecutor`` so workers
-        stay busy.  Workers default to ``cpu_count // 2`` to leave
-        headroom for Nuitka's per-process C compiler subprocesses.
+        Each screen produces ONE wrapper .pyd at ``runtime/<stem>.pyd``
+        containing marshalled bytecode for the entry script and every
+        ``f_*`` / ``j_*`` / ``m_*`` source file — no separate
+        ``Screens/<name>.pyd`` or ``modules/<name>.pyd`` artifacts.
+
+        Workers default to ``cpu_count // 2`` to leave headroom for
+        Nuitka's per-process C compiler subprocesses.
         """
         max_workers = max(1, (os.cpu_count() or 4) // 2)
-        jobs = []
-        for s in screens:
-            jobs.append((s.name, lambda s=s: self._compile_screen_pyd(s)))
-        for name, path in modules:
-            jobs.append((f"modules.{name}",
-                         lambda n=name, p=path: self._compile_one_module(n, p)))
-        for name, path in screens_pkgs:
-            jobs.append((f"Screens.{name}",
-                         lambda n=name, p=path: self._compile_one_screen_package(n, p)))
-        return self._run_parallel(jobs, "module", max_workers)
-
-    def _compile_one_module(self, screen_name: str, mod_path: str) -> tuple[bool, str]:
-        """Compile ``modules/<screen>/`` → ``final/modules/<screen>.pyd``.
-
-        Each job uses an isolated build subdir to avoid colliding with
-        the matching screen's ``.pyd`` compile (both produce a ``.pyd``
-        whose stem is the screen's leaf name, so they'd otherwise stomp
-        each other's intermediates inside ``self.build_dir``).
-
-        Threadsafe — uses :meth:`_run_nuitka_silent`.
-        """
-        out_dir = f"{self.build_dir}modules_{screen_name}/"
-        os.makedirs(out_dir, exist_ok=True)
-        self_target = f"modules.{screen_name}"
-        parts = [
-            sys.executable, "-m", "nuitka", "--module",
-            *self._compiler_args(),
-            f"--include-package={self_target}",
-            f"--output-dir={out_dir}",
-            "--assume-yes-for-downloads",
-            # Self gets --include-package; every other compile target
-            # (other modules siblings, Screens, shared packages) gets
-            # --nofollow-import-to so we don't bundle anything that
-            # ships as its own .pyd.
-            *self._nofollow_flags(exclude_self=self_target),
-            mod_path,
-        ]
-
-        ok, err = self._run_nuitka_silent(parts, self.p_project)
-        if not ok:
-            return False, err or "nuitka returned non-zero"
-
-        built = glob.glob(f"{out_dir}*{_MOD_EXT}")
-        if not built:
-            return False, f"no {_MOD_EXT} produced for modules.{screen_name}"
-        target = f"{self.runtime}/modules/{screen_name}{_MOD_EXT}"
-        # If multiple .pyds came out, pick the one that matches the leaf
-        # (Nuitka may emit a cpython-tagged sibling).  Prefer exact stem.
-        primary = next((bp for bp in built
-                        if os.path.basename(bp).startswith(f"{screen_name}.")
-                        or os.path.basename(bp).startswith(f"{screen_name}{_MOD_EXT}")),
-                       built[0])
-        shutil.move(primary, target)
-        return True, ""
-
-    def _compile_one_screen_package(self, screen_name: str, src_path: str) -> tuple[bool, str]:
-        """Compile ``Screens/<screen>/`` → ``runtime/Screens/<screen>.pyd``.
-
-        Same shape as :meth:`_compile_one_module` but for the per-screen
-        UI sub-package.  Exposes ``f_*`` section files as submodules
-        accessible via ``import Screens.<screen>.f_xxx`` at runtime.
-        The runtime/Screens/<name>.pyd slot was freed by moving the
-        entry-script compile to runtime/<name>.pyd (see
-        :meth:`_compile_screen_pyd`).
-
-        Threadsafe — uses :meth:`_run_nuitka_silent`.
-        """
-        # Nuitka --module + --include-package needs __init__.py as an
-        # anchor to discover and bundle submodules.  Without it the
-        # compiled .pyd loads cleanly at runtime but exposes nothing —
-        # `import Screens.<name>.f_xxx` raises ImportError.  Bail
-        # early with an actionable message instead of producing a stub.
-        init_path = os.path.join(src_path, "__init__.py")
-        if not os.path.exists(init_path):
-            return False, (
-                f"Screens/{screen_name}/ is a namespace package (no "
-                f"__init__.py) — Nuitka can't bundle its f_* submodules. "
-                f"Run: touch Screens/{screen_name}/__init__.py"
-            )
-
-        out_dir = f"{self.build_dir}screens_{screen_name}/"
-        os.makedirs(out_dir, exist_ok=True)
-        self_target = f"Screens.{screen_name}"
-        parts = [
-            sys.executable, "-m", "nuitka", "--module",
-            *self._compiler_args(),
-            f"--include-package={self_target}",
-            f"--output-dir={out_dir}",
-            "--assume-yes-for-downloads",
-            *self._nofollow_flags(exclude_self=self_target),
-            src_path,
-        ]
-
-        ok, err = self._run_nuitka_silent(parts, self.p_project)
-        if not ok:
-            return False, err or "nuitka returned non-zero"
-
-        built = glob.glob(f"{out_dir}*{_MOD_EXT}")
-        if not built:
-            return False, f"no {_MOD_EXT} produced for Screens.{screen_name}"
-        target = f"{self.runtime}/Screens/{screen_name}{_MOD_EXT}"
-        primary = next((bp for bp in built
-                        if os.path.basename(bp).startswith(f"{screen_name}.")
-                        or os.path.basename(bp).startswith(f"{screen_name}{_MOD_EXT}")),
-                       built[0])
-        shutil.move(primary, target)
-        return True, ""
+        jobs = [(s.name, lambda s=s: self._compile_screen_pyd(s)) for s in screens]
+        return self._run_parallel(jobs, "screen", max_workers)
 
     def _compile_shared_parallel(self, packages: list) -> bool:
         """Compile shared packages concurrently.
@@ -1188,135 +1148,15 @@ class Release(Project):
             shutil.move(bp, f"{self.runtime}/{pkg}{_MOD_EXT}")
         return True, ""
 
-    def _compile_screen_exe(self, scr, ixt: str) -> tuple[bool, str]:
-        """Compile one standalone screen → ``final/<scr.name>.exe``.
-
-        Honors the project-level ``onefile`` flag: standalone produces a
-        ``.dist`` that gets merged into ``self.runtime``, onefile produces
-        a single ``.exe`` that gets moved.
-
-        Parallel-safe: uses ``_run_nuitka_silent`` and wraps the
-        ``.dist`` → ``runtime/`` merge in ``self._merge_lock`` so
-        concurrent binary compiles don't race on shared runtime files.
-        Returns ``(ok, err)``.
-        """
-        icon = (scr.icon if scr.icon else self.d_icon) + ixt
-        icon_file = f"{self.p_project}/Icons/{icon}"
-
-        mode = "--onefile" if self.onefile else "--standalone"
-        parts = [
-            sys.executable, "-m", "nuitka", mode,
-            *self._compiler_args(),
-            "--enable-plugin=tk-inter",
-            # See compile_host() for why this is needed alongside the plugin.
-            "--include-package=tkinter",
-            f"--output-dir={self.build_dir}",
-            f"--output-filename={scr.name}{_EXE_EXT}",
-            "--assume-yes-for-downloads",
-        ]
-        if icon_file and exists(icon_file):
-            parts.append(f"--windows-icon-from-ico={icon_file}")
-        if self.company:
-            parts.append(f"--windows-company-name={self.company}")
-            parts.append(f"--windows-product-name={self.title}")
-            year = datetime.datetime.now().year
-            parts.append(f"--windows-file-description={scr.name}")
-            parts.append(f"--copyright=Copyright {year} {self.company}")
-        parts.append(f"--windows-product-version={self.Version}")
-        # TEMP DEBUG: console disabled so startup errors are visible.
-        # Revert before shipping.
-        # if sys.platform == "win32":
-        #     parts.append("--windows-console-mode=disable")
-        # Standalone screens share the Host runtime at the install root
-        # (python3xx.dll, .pyd, third-party packages).  Follow direct
-        # imports for everything except other compile targets — those
-        # ship as their own .pyds and must not be bundled in.
-        #
-        # Exception: this screen's own ``Screens.<name>`` and
-        # ``modules.<name>`` sub-packages are NOT nofollow'd, so Nuitka
-        # bundles them (with every f_*/m_* sibling) directly into this
-        # .exe.  Without that, Nuitka emits a stub Screens.<name> just
-        # for the import statement to resolve against — that stub has
-        # no f_* siblings, so `import Screens.<name>.f_xxx` raises
-        # ImportError despite the on-disk .pyd being present (frozen
-        # importer wins over filesystem).  Letting the .exe bundle the
-        # subpackages directly makes it self-contained for those
-        # imports.  Other screens' subpackages stay nofollow'd.
-        #
-        # The TOP-LEVEL ``Screens`` and ``modules`` entries must also
-        # be excluded from nofollow.  Nuitka's
-        # ``--nofollow-import-to=Screens`` cascades to the entire
-        # package ("to the whole package in any case", per the
-        # Nuitka docs), so leaving it in would block Nuitka from
-        # following into ``Screens.<name>`` no matter what the
-        # subpackage-level flags say.
-        own_subpkgs = {"Screens", "modules"}
-        parts.append("--follow-imports")
-        # Force-bundle every submodule of this screen's own UI/logic
-        # packages.  modules/<name>/__init__.py uses lazy
-        # importlib.import_module() inside __getattr__ to load
-        # m_* siblings, which Nuitka's static analysis can't see; without
-        # --include-package it bundles the __init__ but not the m_*
-        # files, and the lazy lookup ModuleNotFoundErrors at runtime.
-        #
-        # Only include subpackages that actually exist on disk — single-
-        # file screens (no Screens/<name>/ subdir, no modules/<name>/
-        # subdir) would otherwise FATAL out with Nuitka's
-        # "failed to locate package" error.
-        screens_subdir = os.path.join(self.p_project, "Screens", scr.name)
-        if os.path.isdir(screens_subdir):
-            parts.append(f"--include-package=Screens.{scr.name}")
-            own_subpkgs.add(f"Screens.{scr.name}")
-        modules_subdir = os.path.join(self.p_project, "modules", scr.name)
-        if os.path.isdir(modules_subdir):
-            parts.append(f"--include-package=modules.{scr.name}")
-            own_subpkgs.add(f"modules.{scr.name}")
-        parts.extend(self._nofollow_flags(exclude_self=own_subpkgs))
-        # Same stdlib bundling as compile_host so standalone screens
-        # also expose the full stdlib to shared .pyds loaded at runtime.
-        parts.extend(self._stdlib_includes())
-        parts.extend(self.extra_nuitka_args)
-
-        entry_script = self._entry_for_compile(scr.script)
-        parts.append(entry_script)
-
-        ok, err = self._run_nuitka_silent(parts, self.p_project)
-        if not ok:
-            return False, err or "nuitka returned non-zero"
-
-        with self._merge_lock:
-            if not self._place_exe_output(entry_script, scr.name):
-                return False, "merge into runtime/ failed"
-            # Post-condition: the screen's exe is inside runtime/.
-            expected_exe = os.path.join(self.runtime, f"{scr.name}{_EXE_EXT}")
-            if not exists(expected_exe):
-                return False, (
-                    f"expected {expected_exe} after merge but it is missing"
-                )
-        return True, ""
-
-    def _compile_binaries_parallel(self) -> bool:
-        """Compile every standalone screen .exe and the Host .exe in
-        parallel.
-
-        Each job runs Nuitka silently and acquires ``self._merge_lock``
-        around its ``.dist`` → ``runtime/`` merge so concurrent compiles
-        don't race on shared runtime files (python313.dll, tcl/, ...).
-        Workers default to ``min(n_jobs, cpu_count // 2)`` — same
-        heuristic as the Modules phase, capped at the job count so we
-        don't spin up more threads than there is work.
-        """
-        ixt = ".ico" if sys.platform == "win32" else ".xbm"
-        jobs = []
-        for scr in self.release_targets:
-            if scr.tabbed:
-                continue
-            jobs.append((scr.name,
-                         lambda s=scr: self._compile_screen_exe(s, ixt)))
-        jobs.append((self.title, self.compile_host))
-
-        max_workers = min(len(jobs), max(1, (os.cpu_count() or 4) // 2))
-        return self._run_parallel(jobs, "binary", max_workers)
+    # NOTE (0.5.X+): Standalone per-screen .exes are gone.  Every
+    # installed project ships exactly one binary — the Host .exe —
+    # and every screen (tabbed or formerly-standalone) loads through
+    # the Host as either a regular tab or a chromeless DetachedWindow.
+    # Direct-launch by the user happens via Start Menu shortcuts that
+    # invoke ``<project>.exe <ScreenName>`` (Host honors the screen
+    # name as a startup argument).  The ``release`` field on Screen no
+    # longer triggers an .exe build; it gates Start Menu shortcut
+    # creation in the installer instead.
 
     @staticmethod
     def _has_binary_extensions(pkg_dir: str) -> bool:
@@ -1671,6 +1511,14 @@ class Release(Project):
         os.makedirs(self.location, exist_ok=True)
         os.makedirs(self.build_dir, exist_ok=True)
 
+        #Wipe runtime/ from any previous build.  Without this, leftover
+        #per-screen .exes (from the old pre-always-Host pipeline) or
+        #stale source .py files from older flows persist into the new
+        #install, both bloating binaries.zip and tripping the runtime's
+        #dev/release detection in TabManager._load_screen_codes.
+        if os.path.isdir(self.runtime):
+            shutil.rmtree(self.runtime)
+
         #Check default screen
         if self.default_screen is None:
             print("Warning: No default screen set in project.json.", flush=True)
@@ -1691,17 +1539,19 @@ class Release(Project):
                 shared_pkgs.append(pkg)
         pkg_count = len(shared_pkgs)
 
-        screen_count = sum(1 for s in self.release_targets if s.tabbed)
-        module_count = len(self._modules_for_release())
-        screen_pkg_count = len(self._screens_for_release())
-        binary_count = sum(1 for s in self.release_targets if not s.tabbed) + 1  # +1 = Host
+        # Every release target produces one wrapper .pyd — tabbed and
+        # standalone alike — so the Host can open it as a tab.  Under
+        # the always-Host model there are no per-screen .exes; the Host
+        # binary is the only one in the install.
+        screen_count = len(self.release_targets)
+        binary_count = 1  # Host .exe only
 
         all_screens = self.Groups[Group.ALL].screenlist
         if len(self.release_targets) < len([s for s in all_screens if s.tabbed or s.release]):
             print(f"Partial release: {len(self.release_targets)} screen(s) included.",
                   flush=True)
 
-        total = pkg_count + screen_count + module_count + screen_pkg_count + binary_count
+        total = pkg_count + screen_count + binary_count
         self._step = 0
         self._total_steps = total
         print(f"\n{self.title} Release - {total} Compilations", flush=True)
@@ -1717,34 +1567,29 @@ class Release(Project):
             return
         phase_times["Required Packages"] = time.monotonic() - t0
 
-        # Screens + Modules (.pyd) — same parallel call
-        self._category = "Modules"
+        # Screen wrappers (.pyd) — one per release target, parallel
+        self._category = "Screens"
         self._cat_index = 0
-        self._cat_count = screen_count + module_count + screen_pkg_count
+        self._cat_count = screen_count
         t0 = time.monotonic()
         if not self.compile_screens(mode="pyd"):
             self._status("", newline=True)
-            print(f"\nRelease FAILED during Screen/Module compilation.", flush=True)
+            print(f"\nRelease FAILED during Screen wrapper compilation.", flush=True)
             return
-        phase_times["Modules"] = time.monotonic() - t0
+        phase_times["Screens"] = time.monotonic() - t0
 
-        # Binaries (.exe)
-        self._category = "Binaries"
+        # Host binary (.exe) — the only binary under the always-Host model
+        self._category = "Host"
         self._cat_index = 0
         self._cat_count = binary_count
         t0 = time.monotonic()
-        # compile_screens(mode="exe") now bundles every standalone
-        # screen .exe AND the Host .exe into a single parallel pool —
-        # _compile_binaries_parallel orchestrates the merge under
-        # self._merge_lock so concurrent .dist merges into runtime/
-        # don't clobber each other.
         if not self.compile_screens(mode="exe"):
             self._status("", newline=True)
-            print(f"\nRelease FAILED during Binary compilation.", flush=True)
+            print(f"\nRelease FAILED during Host compilation.", flush=True)
             return
 
         self._status("", newline=True)
-        phase_times["Binaries"] = time.monotonic() - t0
+        phase_times["Host"] = time.monotonic() - t0
 
         installer_t0 = time.monotonic()
         #Clean Environment — copies Images/, Icons/, and .VIS/project.json
@@ -1753,24 +1598,14 @@ class Release(Project):
         #and the --windowed exe dies before any window appears.
         self.clean()
 
-        # Nuitka exes live at the install root and are launched directly.
-        # No PyInstaller launcher shim, no .Runtime/ indirection — see #105.
-
-        # Post-condition: every standalone screen we said we'd build must
-        # have its exe present inside runtime/.  Catches silent failures
-        # further upstream (issue #115) so we don't ship a binaries.zip
-        # that's missing the screens the user paid to compile.
-        missing_exes = []
-        for scr in self.release_targets:
-            if scr.tabbed:
-                continue
-            expected = os.path.join(self.runtime, f"{scr.name}{_EXE_EXT}")
-            if not exists(expected):
-                missing_exes.append(scr.name)
-        if missing_exes:
+        # Post-condition: the Host .exe must be present in runtime/.  No
+        # per-screen .exes to check anymore — every screen opens through
+        # the Host as a tab or chromeless DetachedWindow.
+        expected_host = os.path.join(self.runtime, f"{self.title}{_EXE_EXT}")
+        if not exists(expected_host):
             print(
-                f"\nRelease FAILED: standalone exe(s) missing from {self.runtime}: "
-                f"{', '.join(missing_exes)}.  Inspect the build output above "
+                f"\nRelease FAILED: Host binary missing from {self.runtime}: "
+                f"{self.title}{_EXE_EXT}.  Inspect the build output above "
                 f"for the underlying failure.",
                 flush=True,
             )

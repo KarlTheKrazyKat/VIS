@@ -1,9 +1,5 @@
 from __future__ import annotations
 
-import importlib
-import importlib.util
-import os
-import queue
 import sys
 import time
 from pathlib import Path
@@ -222,8 +218,6 @@ class Host:
                 return
 
         display = self._unique_display_name(scr.name)
-        module = self._import_screen(scr)
-        hooks = self._import_hooks(scr)
         icon = self._load_tab_icon(scr)
 
         # Open in the active TabManager, or the first window's primary pane
@@ -231,13 +225,12 @@ class Host:
         if target is None and self.detached_windows:
             target = self.detached_windows[0].tab_manager
         if target is None:
-            # No window exists yet — create one
+            # No window exists yet — create one; it opens the tab itself.
             from VIStk.Objects._DetachedWindow import DetachedWindow
-            dw = DetachedWindow(self, module, scr.name)
+            dw = DetachedWindow(self, scr)
             return
 
-        target.open_tab(display, module, hooks=hooks, icon=icon,
-                        base_name=scr.name)
+        target.open_screen(scr, display, icon=icon)
 
     def _open_standalone(self, scr):
         """Open a standalone (tabbed=False) screen as a new DetachedWindow.
@@ -247,11 +240,8 @@ class Host:
         ``tabbed=False`` looks like a plain application window rather than
         a single-tab Host shell.
         """
-        module = self._import_screen(scr)
-        if module is None:
-            return
         from VIStk.Objects._DetachedWindow import DetachedWindow
-        dw = DetachedWindow(self, module, scr.name, chromeless=True)
+        dw = DetachedWindow(self, scr, chromeless=True)
 
     def _load_tab_icon(self, scr) -> "PIL.ImageTk.PhotoImage | None":
         if not scr.icon:
@@ -269,53 +259,6 @@ class Host:
                    .resize((16, 16), Resampling.LANCZOS))
             return PIL.ImageTk.PhotoImage(img)
         except Exception:
-            return None
-
-    # ── Screen import ──────────────────────────────────────────────────────────
-
-    def _import_screen(self, scr):
-        script_path = self.Project.p_project + "/" + scr.script
-        project_dir = self.Project.p_project
-        try:
-            if project_dir not in sys.path:
-                sys.path.insert(0, project_dir)
-            # Module name must match the file's PyInit_<stem> export when
-            # loading a compiled .pyd, so use the script stem rather than
-            # scr.name (which is the logical screen label and may differ —
-            # e.g. screen "Landing" whose entry is "StartUp.pyd" exports
-            # PyInit_StartUp, not PyInit_Landing).
-            stem = os.path.splitext(os.path.basename(scr.script))[0]
-            spec = importlib.util.spec_from_file_location(stem, script_path)
-            if spec is None:
-                return None
-            mod = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(mod)
-            return mod
-        except Exception:
-            import traceback
-            sys.stderr.write(f"\n[VIStk] _import_screen failed for {scr.name!r}:\n{traceback.format_exc()}\n")
-            return None
-
-    def _import_hooks(self, scr):
-        name = scr.name
-        hooks_path = self.Project.p_project + f"/modules/{name}/m_{name}.py"
-        try:
-            if not os.path.exists(hooks_path):
-                return None
-            project_dir = self.Project.p_project
-            if project_dir not in sys.path:
-                sys.path.insert(0, project_dir)
-            spec = importlib.util.spec_from_file_location(
-                f"modules.{name}.m_{name}", hooks_path
-            )
-            if spec is None:
-                return None
-            mod = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(mod)
-            return mod
-        except Exception:
-            import traceback
-            sys.stderr.write(f"\n[VIStk] _import_hooks failed for {scr.name!r}:\n{traceback.format_exc()}\n")
             return None
 
     # ── FPS ────────────────────────────────────────────────────────────────────

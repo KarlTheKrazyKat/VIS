@@ -115,6 +115,17 @@ class Screen(VINFO):
         ``file:///``, etc.).
         """
       
+    @property
+    def script_path(self) -> str:
+        """Absolute path to this screen's entry script (``<project>/<script>``).
+
+        Used by :meth:`VIStk.Objects._TabManager.TabManager._build_namespace`
+        to read source for per-tab exec.  Same value as
+        ``self.p_project + "/" + self.script`` — exposed as a property so
+        callers don't have to know about the path layout.
+        """
+        return self.p_project + "/" + self.script
+
     def addElement(self,element:str) -> int:
         if validName(element):
             if not os.path.exists(self.path+"/f_"+element+".py"):
