@@ -1311,12 +1311,16 @@ class Release(Project):
         if exists(src):
             shutil.copy2(src, f"{vis_dest}/project.json")
 
-        # Rewrite installed project.json with .pyd script paths
+        # Prune installed project.json down to what we actually built.
+        # We intentionally do NOT rewrite ``scr.script`` extensions from
+        # .py to .pyd — TabManager's dev/release dispatch uses
+        # ``__compiled__`` rather than the script extension, and a
+        # previous attempt to rewrite caused asymmetric breakage when
+        # the rewriter only covered tabbed screens.
         installed_json = f"{vis_dest}/project.json"
         if exists(installed_json):
             with open(installed_json, "r") as f:
                 info = json.load(f)
-            # Prune installed project.json down to what we actually built.
             keep = {s.name for s in self.release_targets}
             for sname in list(info[self.title]["Screens"].keys()):
                 if sname not in keep:
@@ -1333,10 +1337,6 @@ class Release(Project):
                     groups[gname]["screens"] = pruned
                 else:
                     groups.pop(gname)
-            for screen_name, screen_data in info[self.title]["Screens"].items():
-                if screen_data.get("tabbed", False):
-                    stem = os.path.splitext(screen_data["script"])[0]
-                    screen_data["script"] = f"{stem}{_MOD_EXT}"
             with open(installed_json, "w") as f:
                 json.dump(info, f, indent=4)
 

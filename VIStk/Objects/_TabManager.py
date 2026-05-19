@@ -385,10 +385,12 @@ class TabManager(Frame):
 
         pkg = ModuleType(pkg_name)
         pkg.__path__ = [scr.path]
+        pkg.__getattr__ = self._make_lazy_resolver(pkg_name)
         sys.modules[pkg_name] = pkg
 
         mod_pkg = ModuleType(mod_pkg_name)
         mod_pkg.__path__ = [scr.m_path]
+        mod_pkg.__getattr__ = self._make_lazy_resolver(mod_pkg_name)
         sys.modules[mod_pkg_name] = mod_pkg
 
         # Routing builtins reference the per-tab packages, so they must
@@ -404,16 +406,23 @@ class TabManager(Frame):
         entry_code, screens_codes, modules_codes = self._load_screen_codes(scr)
 
         # Pre-register every submodule under both per-tab packages with
-        # its pending code object attached.  Exec is deferred: the
-        # routing __import__ calls ``_ensure_executed`` to run any
-        # pending code at first reference.  This handles import-order
-        # surprises where module A (alphabetically earlier) does
-        # ``from B import name`` before B has been exec'd — eager
-        # exec in sorted order would return B's empty shell and
-        # raise ImportError on the name lookup.
-        for codes, parent_pkg, parent_name in (
-            (screens_codes, pkg,     pkg_name),
-            (modules_codes, mod_pkg, mod_pkg_name),
+        # its pending code object attached.  Exec is deferred to first
+        # access; the per-tab package's ``__getattr__`` (set above)
+        # runs the pending code when the submodule is first looked up,
+        # whether via routing-rewritten ``import`` or direct attribute
+        # access through the screen / module proxy.
+        #
+        # We intentionally do NOT ``setattr(parent_pkg, stem, sub)``.
+        # Pre-setting would make ``__getattr__`` skip — Python only
+        # invokes module ``__getattr__`` on missed attribute lookup.
+        # Leaving the submodules out of the parent's ``__dict__`` lets
+        # every access funnel through the lazy resolver, which is what
+        # gives us correct exec ordering even for late accesses from
+        # ``setup()`` (e.g. ``AM.m_parts._m_parts`` where ``AM`` is the
+        # per-tab modules package).
+        for codes, parent_name in (
+            (screens_codes, pkg_name),
+            (modules_codes, mod_pkg_name),
         ):
             for stem, code in codes.items():
                 full_name = f"{parent_name}.{stem}"
@@ -421,15 +430,63 @@ class TabManager(Frame):
                 sub.__builtins__ = routing_builtins
                 sub.__vistk_pending_code__ = code   # exec-on-demand marker
                 sys.modules[full_name] = sub
-                setattr(parent_pkg, stem, sub)
 
         # Exec the entry script into the per-tab package itself.  Its
         # top-level imports cascade through the routing __import__,
         # which exec's each submodule on demand in the correct order.
         # After this returns, ``pkg.setup``, ``pkg.loop``, etc. are
-        # populated in ``pkg.__dict__``.
+        # populated in ``pkg.__dict__``.  Submodules with pending code
+        # that weren't referenced by the entry script stay pending —
+        # the per-tab packages' ``__getattr__`` exec's them the moment
+        # someone (e.g. ``setup()``) reaches for them.
         exec(entry_code, pkg.__dict__)
         return pkg
+
+    @staticmethod
+    def _make_lazy_resolver(parent_name: str):
+        """Build the module-level ``__getattr__`` for a per-tab package.
+
+        Python 3.7+ invokes a module's ``__getattr__`` function when a
+        normal attribute lookup misses.  We hook that to find a
+        pre-registered submodule in ``sys.modules`` and exec its
+        pending code on first access.  After exec, we cache the
+        resolved submodule on the parent module's ``__dict__`` so
+        subsequent accesses go through the fast normal-attribute path
+        without re-invoking the resolver.
+
+        Crucial for two access patterns:
+
+        1. Routing-rewritten imports — ``import Screens.X.f_wonum``
+           rewrites to the per-tab name, real ``__import__`` finds the
+           pre-registered shell in ``sys.modules``, and the import
+           machinery's parent-attribute walk lands here.
+        2. Direct attribute chains — ``AM.m_parts._m_parts`` where
+           ``AM`` is the per-tab modules package.  No routing, just
+           plain attribute access; the resolver still fires because
+           we deliberately didn't ``setattr`` submodules at build time.
+        """
+        def __getattr__(name):
+            full_name = f"{parent_name}.{name}"
+            sub = sys.modules.get(full_name)
+            if sub is None:
+                raise AttributeError(
+                    f"module {parent_name!r} has no attribute {name!r}"
+                )
+            code = getattr(sub, "__vistk_pending_code__", None)
+            if code is not None:
+                # Clear the marker BEFORE exec so any circular-import
+                # chain returns the partially-populated module rather
+                # than recursing forever.
+                del sub.__vistk_pending_code__
+                exec(code, sub.__dict__)
+            # Cache for next access (skip the resolver on subsequent
+            # lookups — module-__dict__ lookup is faster than running
+            # __getattr__ every time).
+            parent_mod = sys.modules.get(parent_name)
+            if parent_mod is not None:
+                parent_mod.__dict__[name] = sub
+            return sub
+        return __getattr__
 
     @staticmethod
     def _ensure_executed(name: str):
@@ -475,16 +532,14 @@ class TabManager(Frame):
         (no per-tab routing), polluting ``sys.modules`` and breaking
         the per-tab isolation invariant.
 
-        Detection: does ``scr.script_path`` exist on disk?
-        ``script_path`` resolves to ``p_project + "/" + scr.script``,
-        which in dev points at the project's checkout (where the .py
-        files live) and in a release install points at the runtime/
-        root (where they don't — only wrapper .pyds ship there).
-        The release pipeline wipes runtime/ at the start of every
-        full build (see ``Release.release``), so stale .py leftovers
-        from previous pipelines no longer mislead this check.
+        Detection: Nuitka injects ``__compiled__`` into every compiled
+        module's globals.  Since VIStk ships as a compiled ``VIStk.pyd``
+        in release, this module (running inside that shared package)
+        has the attribute.  In dev VIStk is imported from source and
+        ``__compiled__`` is absent.
 
-        We tried two other discriminators and they both failed:
+        We've cycled through several other discriminators that all
+        failed in some scenario:
 
         * ``importlib.util.find_spec(stem)`` — returns ``None`` inside
           Nuitka's frozen runtime for loose .pyd files at the install
@@ -493,14 +548,19 @@ class TabManager(Frame):
         * ``sys.frozen`` — set by PyInstaller and Nuitka's onefile
           mode, but NOT by Nuitka's ``--standalone`` mode, which is
           what we ship.
+        * ``os.path.exists(scr.script_path)`` — fails when an install
+          ends up with .py files at the runtime root that we don't
+          control (Nuitka may copy the entry script's surrounding
+          tree into the .dist; old artifacts persist if the installer
+          merges over a previous install; etc.).
 
-        The presence-of-source check is the simplest signal that
-        actually distinguishes the two cases without relying on
-        per-tool conventions.
+        ``__compiled__`` is independent of filesystem state and
+        per-tool conventions — it's about how *this* code object was
+        produced, which is exactly the question we care about.
         """
-        if os.path.exists(scr.script_path):
-            return self._load_codes_from_source(scr)
-        return self._load_codes_from_embedded(scr)
+        if "__compiled__" in globals():
+            return self._load_codes_from_embedded(scr)
+        return self._load_codes_from_source(scr)
 
     def _load_codes_from_source(self, scr):
         """Read source .py files and return compiled code objects."""
