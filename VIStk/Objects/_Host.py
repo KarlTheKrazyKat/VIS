@@ -1,6 +1,12 @@
 from __future__ import annotations
 
+import getpass
+import hashlib
+import json
+import queue
+import socket
 import sys
+import threading
 import time
 from pathlib import Path
 from tkinter import Tk
@@ -34,10 +40,33 @@ class Host:
     def __init__(self):
         global _HOST_INSTANCE
 
+        self.Active: bool = True
+        self.Project = Project()
+
+        # When invoked as ``VIS <Project> <ScreenName>`` the screen name is
+        # forwarded as ``sys.argv[1]`` (or ``argv[0]`` for a frozen Host
+        # exe).  Resolve it (and any trailing CLI args) BEFORE creating any
+        # Tk object, so the single-instance forward path can hand the
+        # request to a running Host and exit without spinning up a root.
+        self._startup_screen: str | None = self._resolve_startup_screen()
+        self._startup_args: list[str] = self._resolve_startup_args()
+
+        # Single-instance: a per-project/user localhost port is the mutex.
+        # If another Host already holds it, forward our open request to it
+        # and go inert — the entry script's ``while host.Active`` loop sees
+        # ``Active == False`` and exits without showing a window.
+        self._lock_sock: socket.socket | None = None
+        self._listener_thread: threading.Thread | None = None
+        self._ipc_queue: queue.SimpleQueue = queue.SimpleQueue()
+        self._lock_port: int = self._compute_lock_port()
+        if not self._acquire_lock():
+            self._forward_to_primary(self._startup_screen, self._startup_args)
+            self.Active = False
+            _HOST_INSTANCE = self
+            return
+
         self.root = Tk()
         self.root.withdraw()
-
-        self.Project = Project()
 
         # Set the hidden root title (shows in taskbar if accidentally mapped)
         self.root.title(self.Project.title)
@@ -57,17 +86,14 @@ class Host:
         # (0.4.7) Multiple-instance tracking retired — tab IDs now make
         # every tab uniquely addressable; label uniqueness is only a UX
         # concern, handled by :meth:`_unique_display_name`.
-        self.Active: bool = True
 
         self._opened_default = False
 
-        # When invoked as ``VIS <Project> <ScreenName>`` the screen name is
-        # forwarded as ``sys.argv[1]`` (or ``argv[0]`` for a frozen Host
-        # exe).  Override the default screen so the requested screen opens
-        # at startup instead of the project default.
-        self._startup_screen: str | None = self._resolve_startup_screen()
-
         _HOST_INSTANCE = self
+
+        # We hold the lock — start accepting forwarded requests from
+        # later launches.
+        self._start_ipc_listener()
 
     def _resolve_startup_screen(self) -> str | None:
         """Return the screen name passed on the command line, or None.
@@ -86,6 +112,181 @@ class Host:
             if self.Project.getScreen(arg) is not None:
                 return arg
         return None
+
+    def _resolve_startup_args(self) -> list[str]:
+        """CLI args to forward alongside the startup screen.
+
+        Everything in ``sys.argv[1:]`` except the host script path and
+        the resolved startup screen name — i.e. the ``--Flag value``
+        pairs a screen's ``ArgHandler`` would consume.  Captured here so
+        the single-instance forward path can hand them to the running
+        Host along with the screen name.
+        """
+        out: list[str] = []
+        for arg in sys.argv[1:]:
+            if arg.endswith(".py") and Path(arg).name.lower() == "host.py":
+                continue
+            if arg == self._startup_screen:
+                continue
+            out.append(arg)
+        return out
+
+    # ── Single instance (localhost socket mutex + open-request forwarding) ──────
+    #
+    # Binding a per-project/user localhost port IS the mutex: only one
+    # process can hold it.  The holder is the primary Host and listens for
+    # forwarded open requests; a second launch fails to bind, forwards its
+    # request to the holder, and exits.  127.0.0.1-only, args-only payload
+    # — see module docstring rationale in the commit that introduced this.
+
+    _LOCK_PORT_LOW = 49152    # IANA dynamic/private range
+    _LOCK_PORT_HIGH = 65535
+    _LOCK_CONNECT_TIMEOUT = 0.5
+
+    def _compute_lock_port(self) -> int:
+        """Stable port from project title + OS user.
+
+        Same inputs → same port, so the primary and a later forwarder
+        independently agree where to talk without a shared file.  Keyed
+        by user so two accounts on one machine each run their own Host.
+        """
+        try:
+            user = getpass.getuser()
+        except Exception:
+            user = ""
+        key = f"{self.Project.title}\x00{user}".encode("utf-8")
+        h = int.from_bytes(hashlib.sha256(key).digest()[:4], "big")
+        span = self._LOCK_PORT_HIGH - self._LOCK_PORT_LOW
+        return self._LOCK_PORT_LOW + (h % span)
+
+    def _acquire_lock(self) -> bool:
+        """Try to bind the lock port.  True → we're the primary Host.
+
+        On POSIX we set ``SO_REUSEADDR`` to dodge ``TIME_WAIT`` bind
+        failures on quick restart (it does NOT permit a second live
+        binder).  On Windows we leave the default exclusive bind —
+        ``SO_REUSEADDR`` there WOULD let a second process bind and break
+        the mutex, so it must not be set.
+        """
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        if sys.platform != "win32":
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.bind(("127.0.0.1", self._lock_port))
+            sock.listen(8)
+        except OSError:
+            sock.close()
+            return False
+        self._lock_sock = sock
+        return True
+
+    def _forward_to_primary(self, screen_name: str | None,
+                            args: list[str] | None = None) -> bool:
+        """Send an open request to the running Host.  True if delivered.
+
+        Best-effort: a False return (primary died between our failed bind
+        and this connect) leaves the caller inert.  The user relaunches.
+        """
+        payload = json.dumps({
+            "screen": screen_name,
+            "args": list(args or []),
+        }).encode("utf-8")
+        try:
+            with socket.create_connection(
+                ("127.0.0.1", self._lock_port),
+                timeout=self._LOCK_CONNECT_TIMEOUT,
+            ) as sock:
+                sock.sendall(len(payload).to_bytes(4, "big") + payload)
+            return True
+        except OSError:
+            return False
+
+    def _start_ipc_listener(self) -> None:
+        """Spawn the daemon thread that accepts forwarded requests."""
+        if self._lock_sock is None:
+            return
+        self._listener_thread = threading.Thread(
+            target=self._ipc_accept_loop, daemon=True,
+            name=f"VIStk-Host-IPC-{self.Project.title}",
+        )
+        self._listener_thread.start()
+
+    def _ipc_accept_loop(self) -> None:
+        """Accept connections, parse one request each, queue for the main
+        loop.  Runs on a background thread — does NOT touch Tk; it only
+        puts onto ``_ipc_queue``, which :meth:`update` drains."""
+        while self._lock_sock is not None:
+            try:
+                conn, _addr = self._lock_sock.accept()
+            except OSError:
+                break  # socket closed during shutdown
+            with conn:
+                try:
+                    raw_len = self._recv_exact(conn, 4)
+                    if raw_len is None:
+                        continue
+                    length = int.from_bytes(raw_len, "big")
+                    # Payloads are tiny JSON; cap to reject junk/hostile.
+                    if length <= 0 or length > 64 * 1024:
+                        continue
+                    data = self._recv_exact(conn, length)
+                    if data is None:
+                        continue
+                    msg = json.loads(data.decode("utf-8"))
+                except Exception:
+                    continue
+                self._ipc_queue.put((msg.get("screen"), msg.get("args") or []))
+
+    @staticmethod
+    def _recv_exact(conn: socket.socket, n: int) -> bytes | None:
+        """Read exactly *n* bytes from *conn*, or None if it closed early."""
+        buf = b""
+        while len(buf) < n:
+            chunk = conn.recv(n - len(buf))
+            if not chunk:
+                return None
+            buf += chunk
+        return buf
+
+    def _drain_ipc_queue(self) -> None:
+        """Process forwarded open requests on the Tk main loop.
+
+        Called from :meth:`update`.  Opening a screen and touching
+        windows must happen on the main thread, hence the queue handoff
+        from the listener thread.
+        """
+        try:
+            while True:
+                screen_name, _args = self._ipc_queue.get_nowait()
+                if screen_name:
+                    self.open(screen_name)
+                # Surface the running app: a relaunch should bring a
+                # window forward, not silently no-op.
+                self._raise_a_window()
+        except queue.Empty:
+            pass
+
+    def _raise_a_window(self) -> None:
+        """Bring the most recent DetachedWindow to the foreground."""
+        if not self.detached_windows:
+            return
+        dw = self.detached_windows[-1]
+        try:
+            dw.win.deiconify()
+            dw.win.lift()
+            dw.win.focus_force()
+        except Exception:
+            pass
+
+    def _close_lock(self) -> None:
+        """Close the listener socket, unblocking the accept loop."""
+        sock = self._lock_sock
+        self._lock_sock = None
+        if sock is not None:
+            try:
+                sock.close()
+            except Exception:
+                pass
 
     # ── Navigation ─────────────────────────────────────────────────────────────
 
@@ -320,6 +521,7 @@ class Host:
             startup = self._startup_screen or self.Project.default_screen
             if startup:
                 self.open(startup)
+        self._drain_ipc_queue()
         self._tick_screens()
         self.root.update()
 
@@ -337,6 +539,7 @@ class Host:
                 return
 
         self.Active = False
+        self._close_lock()
         try:
             self.root.destroy()
         except Exception:
