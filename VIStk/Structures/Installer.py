@@ -250,36 +250,82 @@ for _lname in ("LICENSE", "LICENSE.txt", "EULA.txt", "EULA.md"):
         break
 
 #%Core Install & Shorcut Creation
-def shortcut(name:str, location:Path):
-    """Make shortcut for arguments"""
+def _start_menu_dir():
+    """Per-user Start Menu folder this app's shortcuts live in.
+
+    Windows: a ``<title>`` subfolder of the Start Menu Programs dir.
+    Linux: the XDG applications dir that drives the app launcher menu.
+    """
     if sys.platform == "win32":
-        winshell.CreateShortcut(
-            Path=(os.path.join(winshell.desktop(), f"{name}.lnk")),
-            Target=os.path.join(location, f"{name}.exe"),
-            StartIn=f"{location}"
+        return os.path.join(winshell.programs(), title)
+    return os.path.join(str(platformdirs.user_data_path()), "applications")
+
+
+def shortcut(name: str, location, screen: str | None = None,
+             start_menu: bool = False):
+    """Create a shortcut that launches the Host, optionally opening *screen*.
+
+    Under the always-Host model there are no per-screen executables —
+    every shortcut targets the single Host exe
+    (``location/runtime/<title>.exe``) and selects which screen to open
+    via a command-line argument.  ``screen=None`` opens the project's
+    default screen (used for the project's own "main app" shortcut).
+
+    Args:
+        name:        Display name / filename of the shortcut.
+        location:    Install root (the Host exe is in ``location/runtime/``).
+        screen:      Screen name passed as argv to the Host; ``None``
+                     opens the default screen.
+        start_menu:  True → Start Menu (``Programs/<title>/``); False →
+                     Desktop.
+    """
+    ext = ".exe" if sys.platform == "win32" else ""
+    host_exe = os.path.join(location, "runtime", f"{title}{ext}")
+    runtime_dir = os.path.join(location, "runtime")
+
+    # Icon: the screen's own if it has one, else the project default.
+    icon_name = None
+    if screen:
+        icon_name = info[title]["Screens"].get(screen, {}).get("icon")
+    if not icon_name:
+        icon_name = info[title].get("defaults", {}).get("icon")
+    icon_path = (os.path.join(runtime_dir, "Icons", icon_name + ".ico")
+                 if icon_name else None)
+
+    if sys.platform == "win32":
+        folder = _start_menu_dir() if start_menu else winshell.desktop()
+        os.makedirs(folder, exist_ok=True)
+        kwargs = dict(
+            Path=os.path.join(folder, f"{name}.lnk"),
+            Target=host_exe,
+            StartIn=runtime_dir,
         )
+        if screen:
+            kwargs["Arguments"] = screen
+        if icon_path and os.path.exists(icon_path):
+            kwargs["Icon"] = (icon_path, 0)
+        winshell.CreateShortcut(**kwargs)
     else:
-        icon = info[title]["Screens"][name].get("icon")
-        if icon is None:
-            icon = info[title]["defaults"]["icon"]
-        icon = os.path.join(location,"Icons",icon+".ico")
-        binary = os.path.join(location,name)
-        lines=[]
-        lines.append("[Desktop Entry]\n")
-        lines.append(f"Name={name}\n")
-        lines.append(f"Icon={icon}\n")
-        lines.append(f"Exec={binary}\n")
-        lines.append(f"Type=Application\n")
-        lines.append(f"Categories=Application;\n")
-        lines.append(f"Name[en_GB]={name}\n")
-        lines.append(f"Terminal=false\n")
-        lines.append(f"StartupNotify=true\n")
-        lines.append(f"Path={location}")
-
-        with open(os.path.join(platformdirs.user_desktop_path(),name+".desktop"),"w") as f:
+        folder = (_start_menu_dir() if start_menu
+                  else str(platformdirs.user_desktop_path()))
+        os.makedirs(folder, exist_ok=True)
+        exec_line = host_exe + (f" {screen}" if screen else "")
+        lines = ["[Desktop Entry]\n", f"Name={name}\n"]
+        if icon_path:
+            lines.append(f"Icon={icon_path}\n")
+        lines += [
+            f"Exec={exec_line}\n",
+            "Type=Application\n",
+            "Categories=Application;\n",
+            f"Name[en_GB]={name}\n",
+            "Terminal=false\n",
+            "StartupNotify=true\n",
+            f"Path={runtime_dir}\n",
+        ]
+        dest = os.path.join(folder, name + ".desktop")
+        with open(dest, "w") as f:
             f.writelines(lines)
-
-        subprocess.call(f"chmod +x {os.path.join(platformdirs.user_desktop_path(),name+'.desktop')}", shell=True)
+        subprocess.call(f"chmod +x {dest}", shell=True)
 
 # Directory prefixes inside runtime/ that hold non-binary assets.  Files
 # matching these prefixes skip extal()'s chmod logic (no Linux exes live
@@ -386,7 +432,8 @@ def _group_of(screen_name: str) -> str | None:
             return gname
     return None
 
-def write_install_log(location, selected_screens, desktop_shortcuts):
+def write_install_log(location, selected_screens, desktop_shortcuts,
+                      start_menu_shortcuts=None):
     """Write install_log.json recording what was installed."""
     directories = [".VIS", "Icons", "Images", ".Runtime"]
 
@@ -435,6 +482,7 @@ def write_install_log(location, selected_screens, desktop_shortcuts):
         "company": info[title].get("metadata", {}).get("company", ""),
         "screens": screens,
         "desktop_shortcuts": list(desktop_shortcuts),
+        "start_menu_shortcuts": list(start_menu_shortcuts or []),
         "directories": directories,
         "registry_key": registry_key,
     }
@@ -755,9 +803,21 @@ if QUIET is True:
 
     for i in dinstalls:
         print(f"  Creating shortcut: {i}")
-        shortcut(i, location)
+        shortcut(i, location, screen=(None if i == title else i))
 
-    write_install_log(location, cinstalls, dinstalls)
+    # Start Menu shortcuts: project + every installed release=true screen.
+    q_start_menu = []
+    for name in cinstalls:
+        is_project = (name == title)
+        is_release = bool(info[title]["Screens"].get(name, {}).get("release"))
+        if not (is_project or is_release):
+            continue
+        print(f"  Start Menu shortcut: {name}")
+        shortcut(name, location, screen=(None if is_project else name),
+                 start_menu=True)
+        q_start_menu.append(name)
+
+    write_install_log(location, cinstalls, dinstalls, q_start_menu)
     register_uninstall(location)
     print("Installation complete.")
     archive.close()
@@ -1586,19 +1646,39 @@ def binstall(desktop:list[str], selected_screens:list[str]):
     if backup_dir:
         shutil.rmtree(backup_dir, ignore_errors=True)
 
-    # Create desktop shortcuts
+    # Create desktop shortcuts (user-selected).  Each targets the Host
+    # exe with the screen as a startup arg; the project's own entry
+    # (name == title) opens the default screen.
     actual_shortcuts = []
     for name, checked in shortcut_selections:
         if checked:
             file_label.config(text=f"Creating shortcut: {name}")
             root.update()
-            shortcut(name, location)
+            shortcut(name, location, screen=(None if name == title else name))
             actual_shortcuts.append(name)
+
+    # Create Start Menu shortcuts for the project + every release=true
+    # screen that was installed.  Under the always-Host model these are
+    # the designated launch points (there's no per-screen .exe to
+    # double-click), so they're created automatically rather than via
+    # the opt-in desktop page.
+    start_menu_shortcuts = []
+    for name in selected_screens:
+        is_project = (name == title)
+        is_release = bool(info[title]["Screens"].get(name, {}).get("release"))
+        if not (is_project or is_release):
+            continue
+        file_label.config(text=f"Start Menu: {name}")
+        root.update()
+        shortcut(name, location, screen=(None if is_project else name),
+                 start_menu=True)
+        start_menu_shortcuts.append(name)
 
     # Write install log and register in Add/Remove Programs
     file_label.config(text="Registering installation...")
     root.update()
-    write_install_log(location, selected_screens, actual_shortcuts)
+    write_install_log(location, selected_screens, actual_shortcuts,
+                      start_menu_shortcuts)
     register_uninstall(location)
 
     _log_write(f"install complete: {len(files_to_extract)} files, "

@@ -99,6 +99,43 @@ def remove_desktop_shortcuts(log):
                 pass
 
 
+def remove_start_menu_shortcuts(log):
+    """Delete Start Menu shortcuts listed in the install log.
+
+    On Windows these live in ``Programs/<app_name>/<name>.lnk``; the
+    ``<app_name>`` folder is removed too once emptied.  On Linux they're
+    ``.desktop`` files in the XDG applications dir.
+    """
+    app = log.get("app_name", "")
+    for name in log.get("start_menu_shortcuts", []):
+        if sys.platform == "win32":
+            try:
+                import winshell
+                lnk = os.path.join(winshell.programs(), app, f"{name}.lnk")
+                if os.path.exists(lnk):
+                    os.remove(lnk)
+            except Exception:
+                pass
+        else:
+            try:
+                appdir = os.path.join(str(platformdirs.user_data_path()),
+                                      "applications")
+                dt_file = os.path.join(appdir, f"{name}.desktop")
+                if os.path.exists(dt_file):
+                    os.remove(dt_file)
+            except Exception:
+                pass
+    # Remove the now-empty Start Menu folder (Windows).
+    if sys.platform == "win32" and app:
+        try:
+            import winshell
+            folder = os.path.join(winshell.programs(), app)
+            if os.path.isdir(folder) and not os.listdir(folder):
+                os.rmdir(folder)
+        except Exception:
+            pass
+
+
 def remove_registry_entry(log):
     """Remove the Add/Remove Programs registry key."""
     if sys.platform != "win32":
@@ -335,6 +372,9 @@ if QUIET:
     remove_desktop_shortcuts(log)
     print("  Removed desktop shortcuts")
 
+    remove_start_menu_shortcuts(log)
+    print("  Removed Start Menu shortcuts")
+
     remove_registry_entry(log)
     print("  Removed registry entry")
 
@@ -560,6 +600,7 @@ def _do_uninstall():
     progress_label.config(text="Removing desktop shortcuts...")
     root.update()
     remove_desktop_shortcuts(filtered_log)
+    remove_start_menu_shortcuts(filtered_log)
 
     all_selected = len(selected) == len(installed_screens)
     if all_selected:
