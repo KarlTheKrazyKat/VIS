@@ -1514,8 +1514,10 @@ def binstall(desktop:list[str], selected_screens:list[str]):
 
     # Phase 2: Back up files that will be overwritten (for rollback on failure)
     backup_dir = None
+    backup_failed: set[str] = set()
     if n_backup > 0:
         backup_dir = tempfile.mkdtemp(prefix="vis_backup_")
+        _log_write(f"backup start: {n_backup} files into {backup_dir}")
         for idx, file in enumerate(files_to_extract):
             file_label.config(text=f"Backing up: {os.path.basename(file)}")
             root.update()
@@ -1523,11 +1525,23 @@ def binstall(desktop:list[str], selected_screens:list[str]):
             if dest.exists():
                 backup_path = Path(backup_dir) / file
                 backup_path.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(dest, backup_path)
+                _log_write(f"  backup [{idx+1}/{n_backup}] {file}")
+                try:
+                    shutil.copy2(dest, backup_path)
+                except (PermissionError, OSError) as e:
+                    # File is locked (e.g. host .exe / a loaded .pyd
+                    # from a running install).  Skip backup of this
+                    # one file rather than hanging the whole install.
+                    # If extract later fails, rollback skips this file
+                    # — degraded recovery but not a hang.
+                    _log_write(f"    BACKUP SKIPPED: {type(e).__name__}: {e}")
+                    backup_failed.add(file)
             pct = scan_end + int((idx + 1) / n_backup * (backup_end - scan_end))
             progress_bar.config(value=pct)
             pct_label.config(text=f"{pct}%")
             root.update()
+        _log_write(f"backup done: {n_backup - len(backup_failed)} ok, "
+                   f"{len(backup_failed)} skipped")
 
     # Phase 3: Extract changed/new files; rollback on failure
     try:

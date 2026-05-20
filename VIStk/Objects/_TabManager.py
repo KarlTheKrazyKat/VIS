@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+import builtins
 import gc
+import importlib
+import importlib.util
 import inspect
+import marshal
+import os
 import queue
 import sys
 from tkinter import Frame
+from types import ModuleType
 
 from VIStk.Objects._Identity import new_id
 from VIStk.Widgets._TabBar import TabBar, _BG_BAR
@@ -33,6 +39,33 @@ def set_tab_info(frame, info):
         mgr.set_tab_info(tab_id, info)
 
 
+class _PerTabProxy:
+    """Stand-in for ``Screens`` / ``modules`` inside a per-tab namespace.
+
+    When the routing ``__import__`` rewrites ``import Screens.<X>.Y`` to
+    ``import Screens.<X>__tab<id>.Y``, Python's ``IMPORT_NAME`` opcode
+    binds the local name ``Screens`` to whatever the import returned.
+    Subsequent attribute access (``Screens.<X>.Y.something``) walks
+    attributes — never re-entering ``__import__`` — so the binding
+    must answer for ``.<X>``.
+
+    This proxy intercepts the screen-name attribute and returns the
+    per-tab package; everything else (``Screens.defaults``,
+    ``Screens.root``, ...) delegates to the real package.
+    """
+    __slots__ = ("_real", "_intercept_name", "_intercept_target")
+
+    def __init__(self, real_pkg, intercept_name, intercept_target):
+        object.__setattr__(self, "_real",             real_pkg)
+        object.__setattr__(self, "_intercept_name",   intercept_name)
+        object.__setattr__(self, "_intercept_target", intercept_target)
+
+    def __getattr__(self, name):
+        if name == self._intercept_name:
+            return self._intercept_target
+        return getattr(self._real, name)
+
+
 class TabManager(Frame):
     """Manages the tabbed screen area of a DetachedWindow.
 
@@ -55,9 +88,20 @@ class TabManager(Frame):
     lookup is non-deterministic in the presence of duplicate labels.
     Callers that hold a specific instance should pass the ID.
 
-    Hook lookup priority: if ``modules/<screen>/m_<screen>.py`` exists,
-    ``TabManager`` checks it first for ``on_focused``, ``on_unfocused``, and
-    ``configure_menu``.  The screen module is used as a fallback.
+    Per-tab screen namespaces
+    -------------------------
+    :meth:`open_screen` builds an isolated Python namespace for each tab,
+    registered in ``sys.modules`` under ``Screens.<name>__tab<id>`` and
+    ``modules.<name>__tab<id>``.  The entry script and every ``f_*`` /
+    ``m_*`` / ``j_*`` submodule are exec'd into per-tab module objects,
+    so two tabs of the same screen do NOT share module-level state.
+    See :meth:`_build_namespace`.
+
+    Tab moves between panes (:meth:`move_tab`) destroy and rebuild the
+    Tk frame (Tk can't reparent widgets) but preserve the per-tab
+    namespace.  The screen's ``setup()`` runs again to bind widgets to
+    the new frame; Python state (StringVar values, loaded data,
+    closures) survives.
 
     Callbacks (receive ``tab_id: int`` as the first argument)::
 
@@ -80,7 +124,12 @@ class TabManager(Frame):
         """Stable process-unique pane ID (0.4.7)."""
 
         self._tabs: dict[int, dict] = {}
-        """tab_id -> {tab_id, display_name, frame, module, hooks, icon, base_name, info, _info_trace}"""
+        """tab_id -> {tab_id, display_name, frame, module, icon, base_name, info, _info_trace}
+
+        ``module`` is the per-tab namespace built by :meth:`_build_namespace`.
+        Hooks (``on_focused``, ``on_quit``, ``configure_menu``, ...) live
+        inside that same namespace — no separate ``hooks`` key.
+        """
         self._active: int | None = None
         self._position: str = position
 
@@ -120,14 +169,20 @@ class TabManager(Frame):
     # ── Action queue pump ─────────────────────────────────────────────────────
 
     def _pump_actions(self):
-        """Drain queued navigation callables on the Tk main loop."""
+        """Drain queued navigation callables on the Tk main loop.
+
+        Exceptions raised by queued callables are printed to stderr —
+        previously swallowed silently, which made debugging "tab
+        didn't open and there's no error" scenarios impossible.
+        """
         try:
             while True:
                 fn = self._action_queue.get_nowait()
                 try:
                     fn()
                 except Exception:
-                    pass
+                    import traceback
+                    traceback.print_exc()
         except queue.Empty:
             pass
         try:
@@ -137,7 +192,6 @@ class TabManager(Frame):
 
     def _stop_action_pump(self, event=None):
         """Cancel the pending pump on widget destruction."""
-        # <Destroy> bubbles up from descendants; only act for this widget.
         if event is not None and event.widget is not self:
             return
         if self._action_pump_id is not None:
@@ -161,7 +215,7 @@ class TabManager(Frame):
         if not self._tab_bar_hidden:
             if self._position in ("top", "bottom"):
                 self.tab_bar.pack(side=self._position, fill="x")
-            else:  # left or right
+            else:
                 self.tab_bar.pack(side=self._position, fill="y")
         if self._position in ("top", "bottom"):
             self._content.pack(side="top", fill="both", expand=True)
@@ -243,54 +297,51 @@ class TabManager(Frame):
     def navigate(self, name: str, args=None):
         """Navigate this pane to a new screen.
 
-        Tears down the current screen (calling on_quit), cleans up modules,
-        imports the new screen, runs setup(), and handles args.
+        Tears down the current screen (calling on_quit), then opens a
+        fresh tab for *name* via :meth:`open_screen`.
         """
         from VIStk.Objects._Host import _HOST_INSTANCE
         if _HOST_INSTANCE is None:
             return
 
-        # 1. Call on_quit on active screen and close it
         if self._active is not None and self._active in self._tabs:
             entry = self._tabs[self._active]
             module = entry.get("module")
-            hooks = entry.get("hooks")
-            quit_fn = (getattr(hooks, "on_quit", None)
-                       or getattr(module, "on_quit", None))
+            quit_fn = getattr(module, "on_quit", None)
             if quit_fn:
                 try:
                     if quit_fn() is False:
                         return  # vetoed
                 except Exception:
                     pass
-            base_name = entry.get("base_name", entry.get("display_name", name))
             self.close_tab(self._active)
-            self._cleanup_screen_modules(base_name)
 
-        # 2. Import new screen
         scr = _HOST_INSTANCE.Project.getScreen(name)
         if scr is None:
             return
-        module = _HOST_INSTANCE._import_screen(scr)
-        hooks = _HOST_INSTANCE._import_hooks(scr)
-        icon = _HOST_INSTANCE._load_tab_icon(scr)
+        icon    = _HOST_INSTANCE._load_tab_icon(scr)
         display = _HOST_INSTANCE._unique_display_name(name)
+        tab_id  = self.open_screen(scr, display, icon=icon)
 
-        # 3. Open new tab
-        self.open_tab(display, module, hooks=hooks, icon=icon, base_name=name)
-
-        # 4. Handle args via ArgHandler
-        if args is not None and module and hasattr(module, "ArgHandler"):
-            try:
-                module.ArgHandler.handle(args)
-            except Exception:
-                pass
+        if args is not None and tab_id is not None:
+            module = self._tabs[tab_id].get("module")
+            if module and hasattr(module, "ArgHandler"):
+                try:
+                    module.ArgHandler.handle(args)
+                except Exception:
+                    pass
 
     def _cleanup_screen_modules(self, screen_name: str):
-        """Remove screen-specific entries from sys.modules to allow clean re-import."""
+        """Remove EVERY per-tab sys.modules entry for *screen_name*.
+
+        Sweeps every ``Screens.<screen_name>__tab*`` and
+        ``modules.<screen_name>__tab*`` registration.  Kept as a
+        screen-wide purge for callers that don't have a specific tab_id;
+        single-tab close uses :meth:`_destroy_namespace_entries` instead.
+        """
         prefixes = (
-            f"Screens.{screen_name}.",
-            f"modules.{screen_name}.",
+            f"Screens.{screen_name}__tab",
+            f"modules.{screen_name}__tab",
         )
         to_delete = [k for k in sys.modules if any(k.startswith(p) for p in prefixes)]
         for key in to_delete:
@@ -298,32 +349,497 @@ class TabManager(Frame):
         gc.collect()
 
     def _cleanup_all_modules(self):
-        """Clean up all screen modules owned by this TabManager."""
-        for entry in list(self._tabs.values()):
-            base_name = entry.get("base_name", entry.get("display_name", ""))
+        """Strip per-tab sys.modules entries for every tab in this manager.
+
+        Called by ``DetachedWindow._destroy_pane`` when a pane is
+        removed before its tabs went through ``close_tab``.  Defensive —
+        tabs closed via ``close_tab`` clean up their own namespace.
+        """
+        for tab_id, entry in list(self._tabs.items()):
+            base_name = entry.get("base_name") or entry.get("display_name")
             if base_name:
-                self._cleanup_screen_modules(base_name)
+                self._destroy_namespace_entries(tab_id, base_name)
+
+    # ── Per-tab namespace construction ────────────────────────────────────────
+
+    def _build_namespace(self, tab_id: int, scr) -> ModuleType:
+        """Build a fresh per-tab namespace for *scr* and exec its entry into it.
+
+        Registers per-tab versions of the screen's UI subpackage at
+        ``Screens.<name>__tab<id>`` (with each ``f_*`` / ``j_*`` as a
+        submodule) and the logic subpackage at ``modules.<name>__tab<id>``
+        (with each ``m_*`` as a submodule).  Every submodule shares a
+        routing ``__builtins__`` whose ``__import__`` redirects absolute
+        ``Screens.<name>.*`` / ``modules.<name>.*`` imports to the
+        per-tab variants; everything else passes through unchanged.
+
+        Pre-registers all submodules in ``sys.modules`` *before* exec'ing
+        any of them so circular imports between them resolve.
+
+        Returns the per-tab package.  Caller (:meth:`open_screen`) stores
+        it as ``tab_entry["module"]`` and invokes
+        ``module.setup(frame)`` / ``module.loop()`` / etc. on it.
+        """
+        pkg_name     = f"Screens.{scr.name}__tab{tab_id}"
+        mod_pkg_name = f"modules.{scr.name}__tab{tab_id}"
+
+        pkg = ModuleType(pkg_name)
+        pkg.__path__ = [scr.path]
+        pkg.__getattr__ = self._make_lazy_resolver(pkg_name)
+        sys.modules[pkg_name] = pkg
+
+        mod_pkg = ModuleType(mod_pkg_name)
+        mod_pkg.__path__ = [scr.m_path]
+        mod_pkg.__getattr__ = self._make_lazy_resolver(mod_pkg_name)
+        sys.modules[mod_pkg_name] = mod_pkg
+
+        # Routing builtins reference the per-tab packages, so they must
+        # exist in sys.modules first (already done above).
+        routing_builtins = self._make_routing_import(
+            tab_id, scr.name, pkg, mod_pkg,
+        )
+        pkg.__builtins__     = routing_builtins
+        mod_pkg.__builtins__ = routing_builtins
+
+        # Load code objects — from source files in dev, from the wrapper
+        # .pyd's ``_EMBEDDED`` dict in a compiled release build.
+        entry_code, screens_codes, modules_codes = self._load_screen_codes(scr)
+
+        # Pre-register every submodule under both per-tab packages with
+        # its pending code object attached.  Exec is deferred to first
+        # access; the per-tab package's ``__getattr__`` (set above)
+        # runs the pending code when the submodule is first looked up,
+        # whether via routing-rewritten ``import`` or direct attribute
+        # access through the screen / module proxy.
+        #
+        # We intentionally do NOT ``setattr(parent_pkg, stem, sub)``.
+        # Pre-setting would make ``__getattr__`` skip — Python only
+        # invokes module ``__getattr__`` on missed attribute lookup.
+        # Leaving the submodules out of the parent's ``__dict__`` lets
+        # every access funnel through the lazy resolver, which is what
+        # gives us correct exec ordering even for late accesses from
+        # ``setup()`` (e.g. ``AM.m_parts._m_parts`` where ``AM`` is the
+        # per-tab modules package).
+        for codes, parent_name in (
+            (screens_codes, pkg_name),
+            (modules_codes, mod_pkg_name),
+        ):
+            for stem, code in codes.items():
+                full_name = f"{parent_name}.{stem}"
+                sub = ModuleType(full_name)
+                sub.__builtins__ = routing_builtins
+                sub.__vistk_pending_code__ = code   # exec-on-demand marker
+                sys.modules[full_name] = sub
+
+        # Exec the entry script into the per-tab package itself.  Its
+        # top-level imports cascade through the routing __import__,
+        # which exec's each submodule on demand in the correct order.
+        # After this returns, ``pkg.setup``, ``pkg.loop``, etc. are
+        # populated in ``pkg.__dict__``.  Submodules with pending code
+        # that weren't referenced by the entry script stay pending —
+        # the per-tab packages' ``__getattr__`` exec's them the moment
+        # someone (e.g. ``setup()``) reaches for them.
+        exec(entry_code, pkg.__dict__)
+        return pkg
+
+    @staticmethod
+    def _make_lazy_resolver(parent_name: str):
+        """Build the module-level ``__getattr__`` for a per-tab package.
+
+        Python 3.7+ invokes a module's ``__getattr__`` function when a
+        normal attribute lookup misses.  We hook that to find a
+        pre-registered submodule in ``sys.modules`` and exec its
+        pending code on first access.  After exec, we cache the
+        resolved submodule on the parent module's ``__dict__`` so
+        subsequent accesses go through the fast normal-attribute path
+        without re-invoking the resolver.
+
+        Crucial for two access patterns:
+
+        1. Routing-rewritten imports — ``import Screens.X.f_wonum``
+           rewrites to the per-tab name, real ``__import__`` finds the
+           pre-registered shell in ``sys.modules``, and the import
+           machinery's parent-attribute walk lands here.
+        2. Direct attribute chains — ``AM.m_parts._m_parts`` where
+           ``AM`` is the per-tab modules package.  No routing, just
+           plain attribute access; the resolver still fires because
+           we deliberately didn't ``setattr`` submodules at build time.
+        """
+        def __getattr__(name):
+            full_name = f"{parent_name}.{name}"
+            sub = sys.modules.get(full_name)
+            if sub is None:
+                raise AttributeError(
+                    f"module {parent_name!r} has no attribute {name!r}"
+                )
+            code = getattr(sub, "__vistk_pending_code__", None)
+            if code is not None:
+                # Clear the marker BEFORE exec so any circular-import
+                # chain returns the partially-populated module rather
+                # than recursing forever.
+                del sub.__vistk_pending_code__
+                exec(code, sub.__dict__)
+            # Cache for next access (skip the resolver on subsequent
+            # lookups — module-__dict__ lookup is faster than running
+            # __getattr__ every time).
+            parent_mod = sys.modules.get(parent_name)
+            if parent_mod is not None:
+                parent_mod.__dict__[name] = sub
+            return sub
+        return __getattr__
+
+    @staticmethod
+    def _ensure_executed(name: str):
+        """Walk the dotted *name* and exec any per-tab submodule that
+        still carries pending code.
+
+        Called by the routing ``__import__`` before returning a
+        rewritten target so callers always see a fully-populated
+        module.  Safe to call repeatedly — pending-code attr is
+        cleared atomically before exec runs (sentinel prevents
+        recursive exec loops on circular imports).
+        """
+        parts = name.split(".")
+        for i in range(1, len(parts) + 1):
+            sub_name = ".".join(parts[:i])
+            mod = sys.modules.get(sub_name)
+            if mod is None:
+                continue
+            code = getattr(mod, "__vistk_pending_code__", None)
+            if code is None:
+                continue
+            # Clear marker before exec to defeat recursion in
+            # circular-import chains: if A.exec → triggers import
+            # of B → triggers import of A again, the second pass
+            # finds no pending code and returns A's current
+            # (partial) state — same semantics as Python's normal
+            # circular-import handling.
+            del mod.__vistk_pending_code__
+            exec(code, mod.__dict__)
+
+    def _load_screen_codes(self, scr):
+        """Return ``(entry_code, screens_codes, modules_codes)`` for *scr*.
+
+        Each return value is either a single code object (entry) or a
+        ``{stem: code_object}`` dict (screens/modules).
+
+        Resolution: prefer the wrapper ``.pyd``'s ``_EMBEDDED`` dict if
+        one is on the import path (compiled release), otherwise read
+        source files from disk (dev).  We probe with
+        :func:`importlib.util.find_spec` and only import when we know
+        the spec points at a compiled extension — importing a source
+        ``.py`` would execute its top-level code with normal builtins
+        (no per-tab routing), polluting ``sys.modules`` and breaking
+        the per-tab isolation invariant.
+
+        Detection: Nuitka injects ``__compiled__`` into every compiled
+        module's globals.  Since VIStk ships as a compiled ``VIStk.pyd``
+        in release, this module (running inside that shared package)
+        has the attribute.  In dev VIStk is imported from source and
+        ``__compiled__`` is absent.
+
+        We've cycled through several other discriminators that all
+        failed in some scenario:
+
+        * ``importlib.util.find_spec(stem)`` — returns ``None`` inside
+          Nuitka's frozen runtime for loose .pyd files at the install
+          root, even when ``importlib.import_module`` of the same name
+          succeeds.
+        * ``sys.frozen`` — set by PyInstaller and Nuitka's onefile
+          mode, but NOT by Nuitka's ``--standalone`` mode, which is
+          what we ship.
+        * ``os.path.exists(scr.script_path)`` — fails when an install
+          ends up with .py files at the runtime root that we don't
+          control (Nuitka may copy the entry script's surrounding
+          tree into the .dist; old artifacts persist if the installer
+          merges over a previous install; etc.).
+
+        ``__compiled__`` is independent of filesystem state and
+        per-tool conventions — it's about how *this* code object was
+        produced, which is exactly the question we care about.
+        """
+        if "__compiled__" in globals():
+            return self._load_codes_from_embedded(scr)
+        return self._load_codes_from_source(scr)
+
+    def _load_codes_from_source(self, scr):
+        """Read source .py files and return compiled code objects."""
+        entry = self._compile_file(scr.script_path)
+        screens = self._compile_dir(scr.path)   if os.path.isdir(scr.path)   else {}
+        modules = self._compile_dir(scr.m_path) if os.path.isdir(scr.m_path) else {}
+        return entry, screens, modules
+
+    def _load_codes_from_embedded(self, scr):
+        """Read marshalled bytecode from the compiled wrapper's ``_EMBEDDED``
+        dict and unmarshal into code objects.
+
+        The wrapper is the compiled .pyd produced by the release pipeline
+        (see ``Release._build_screen_wrapper``).  It exposes a single
+        attribute, ``_EMBEDDED``, with shape::
+
+            {"entry":   <bytes>,
+             "screens": {stem: <bytes>, ...},
+             "modules": {stem: <bytes>, ...}}
+
+        where each ``<bytes>`` value is the output of ``marshal.dumps``
+        on the original source's compiled code object.
+
+        Patches: the wrapper .pyd may carry a VISKPATCH trailer
+        appended by ``Release.patch_screens``.  When present, the
+        trailer's override dict (same shape as ``_EMBEDDED``) is merged
+        over the baked-in dict — overridden entries win.  See
+        :meth:`_read_viskpatch` for the trailer format.
+        """
+        stem = os.path.splitext(scr.script)[0]
+        mod = importlib.import_module(stem)
+        embedded = mod._EMBEDDED
+
+        overrides = self._read_viskpatch(mod.__file__) if mod.__file__ else None
+        if overrides:
+            # Shallow merge — "entry" replaces wholesale, sub-dicts
+            # ("screens" / "modules") merge per-stem.  Avoid mutating
+            # the cached _EMBEDDED in place; build a fresh dict.
+            merged = {
+                "entry":   overrides.get("entry", embedded.get("entry")),
+                "screens": {**embedded.get("screens", {}),
+                            **overrides.get("screens", {})},
+                "modules": {**embedded.get("modules", {}),
+                            **overrides.get("modules", {})},
+            }
+            embedded = merged
+
+        return (
+            marshal.loads(embedded["entry"]),
+            {k: marshal.loads(v) for k, v in embedded.get("screens", {}).items()},
+            {k: marshal.loads(v) for k, v in embedded.get("modules", {}).items()},
+        )
+
+    # VISKPATCH trailer format (v1):
+    #
+    #   [ ...wrapper .pyd bytes (unchanged)... ]
+    #   [ payload:  <length> bytes — marshal.dumps(override_dict) ]
+    #   [ checksum: 4 bytes BE uint32 — zlib.crc32(payload) ]
+    #   [ pyver:    4 bytes BE uint32 — (major<<8)|minor ]
+    #   [ length:   4 bytes BE uint32 — len(payload) ]
+    #   [ version:  1 byte  — 0x01 (format version) ]
+    #   [ magic:    9 bytes — b"VISKPATCH" ]
+    #
+    # Header is the last 22 bytes of the file.  Read backward from EOF:
+    # check magic first, then unpack the rest, then read the payload
+    # that sits immediately before the header.
+    _VISKPATCH_MAGIC = b"VISKPATCH"
+    _VISKPATCH_HEADER_LEN = 22   # 4+4+4+1+9
+    _VISKPATCH_FORMAT_VERSION = 1
+
+    @classmethod
+    def _read_viskpatch(cls, pyd_path: str):
+        """Return the marshalled override dict from a .pyd's VISKPATCH
+        trailer, or ``None`` if no trailer is present / invalid.
+
+        Returning ``None`` means "use the wrapper's ``_EMBEDDED`` as-is" —
+        callers should treat absence and corruption identically.
+
+        Rejection reasons (all silent, returning None):
+          * File smaller than the header.
+          * Magic mismatch — no trailer was appended.
+          * Format version mismatch — patch was built for a newer
+            VISKPATCH revision that this runtime doesn't understand.
+          * Python major.minor mismatch — marshal format is
+            interpreter-version-specific; refusing to unmarshal
+            avoids crashes on subtly-wrong code objects.
+          * CRC32 mismatch — payload corruption.
+        """
+        try:
+            with open(pyd_path, "rb") as f:
+                f.seek(0, 2)
+                size = f.tell()
+                if size < cls._VISKPATCH_HEADER_LEN:
+                    return None
+                f.seek(-cls._VISKPATCH_HEADER_LEN, 2)
+                header = f.read(cls._VISKPATCH_HEADER_LEN)
+                if header[-9:] != cls._VISKPATCH_MAGIC:
+                    return None
+                version  = header[-10]
+                length   = int.from_bytes(header[-14:-10], "big")
+                pyver    = int.from_bytes(header[-18:-14], "big")
+                checksum = int.from_bytes(header[-22:-18], "big")
+                if version != cls._VISKPATCH_FORMAT_VERSION:
+                    return None
+                expected_pyver = (sys.version_info.major << 8) | sys.version_info.minor
+                if pyver != expected_pyver:
+                    return None
+                if size < cls._VISKPATCH_HEADER_LEN + length:
+                    return None
+                f.seek(-(cls._VISKPATCH_HEADER_LEN + length), 2)
+                payload = f.read(length)
+        except OSError:
+            return None
+        import zlib
+        if zlib.crc32(payload) != checksum:
+            return None
+        try:
+            return marshal.loads(payload)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _compile_file(path: str):
+        """Read one source file and return its compiled code object."""
+        with open(path, "rb") as f:
+            return compile(f.read(), path, "exec")
+
+    @classmethod
+    def _compile_dir(cls, src_dir: str) -> dict:
+        """Return ``{stem: code_object}`` for every ``*.py`` in *src_dir*
+        except ``__init__.py``."""
+        out: dict = {}
+        for fname in sorted(os.listdir(src_dir)):
+            if fname.endswith(".py") and fname != "__init__.py":
+                stem = fname[:-3]
+                out[stem] = cls._compile_file(f"{src_dir}/{fname}")
+        return out
+
+    def _make_routing_import(self, tab_id: int, screen_name: str,
+                              per_tab_screens, per_tab_modules):
+        """Return a ``__builtins__`` dict whose ``__import__`` reroutes
+        ``Screens.<screen_name>.*`` and ``modules.<screen_name>.*`` to
+        the per-tab versions, leaving everything else unchanged.
+
+        For ``import X.Y.Z`` (empty fromlist) returns a
+        :class:`_PerTabProxy` so subsequent attribute access on the
+        local ``Screens`` / ``modules`` binding routes through the
+        per-tab namespace.  For ``from X.Y import Z`` (non-empty
+        fromlist) returns the rewritten leaf module directly — Python
+        applies ``getattr(leaf, "Z")`` and the leaf IS the per-tab
+        module, so the right thing happens.
+        """
+        real = builtins.__import__
+        sp, ts = f"Screens.{screen_name}", f"Screens.{screen_name}__tab{tab_id}"
+        mp, tm = f"modules.{screen_name}", f"modules.{screen_name}__tab{tab_id}"
+
+        # Ensure the real top-level packages exist in sys.modules before
+        # wrapping them — they hold shared modules like ``Screens.defaults``
+        # and ``modules.menu`` that screen code passes through to.  First
+        # screen open will be the import trigger; subsequent opens find
+        # them already cached.
+        real_screens = sys.modules.get("Screens") or importlib.import_module("Screens")
+        real_modules = sys.modules.get("modules") or importlib.import_module("modules")
+
+        screens_proxy = _PerTabProxy(real_screens, screen_name, per_tab_screens)
+        modules_proxy = _PerTabProxy(real_modules, screen_name, per_tab_modules)
+
+        ensure = self._ensure_executed
+
+        def routing_import(name, glb=None, loc=None, fromlist=(), level=0):
+            if level == 0:
+                rewritten = None
+                proxy = None
+                if name == sp or name.startswith(sp + "."):
+                    rewritten = ts + name[len(sp):]
+                    proxy = screens_proxy
+                elif name == mp or name.startswith(mp + "."):
+                    rewritten = tm + name[len(mp):]
+                    proxy = modules_proxy
+
+                if rewritten is not None:
+                    # Exec the target module's pending code (if any)
+                    # before real __import__ uses it — otherwise the
+                    # leaf comes back as an empty pre-registered shell.
+                    ensure(rewritten)
+                    result = real(rewritten, glb, loc, fromlist, 0)
+                    # ``from <pkg> import <name>`` may name a submodule.
+                    # Ensure those are exec'd too; real __import__ won't
+                    # re-trigger load on pre-registered modules.
+                    if fromlist:
+                        for item in fromlist:
+                            if item == "*":
+                                continue
+                            ensure(f"{rewritten}.{item}")
+                    return result if fromlist else proxy
+
+                # ``from modules import <screen_name>`` /
+                # ``from Screens import <screen_name>`` — the new stitch
+                # convention emits this pattern.  Real ``__import__``
+                # would return the on-disk ``modules`` / ``Screens``
+                # package and ``IMPORT_FROM`` would fail because the
+                # package doesn't expose the per-tab module as an
+                # attribute.  Return the proxy instead — its
+                # ``__getattr__`` answers for ``screen_name`` with the
+                # per-tab module.
+                if fromlist and screen_name in fromlist:
+                    if name == "modules":
+                        ensure(tm)
+                        return modules_proxy
+                    if name == "Screens":
+                        ensure(ts)
+                        return screens_proxy
+            return real(name, glb, loc, fromlist, level)
+
+        nb = dict(builtins.__dict__)
+        nb["__import__"] = routing_import
+        return nb
+
+    def _destroy_namespace_entries(self, tab_id: int, screen_name: str):
+        """Drop this tab's per-tab sys.modules entries.
+
+        Targeted counterpart to :meth:`_cleanup_screen_modules` —
+        removes only ``Screens.<screen_name>__tab<tab_id>*`` and
+        ``modules.<screen_name>__tab<tab_id>*``, leaving sibling tabs
+        of the same screen intact.
+        """
+        prefixes = (
+            f"Screens.{screen_name}__tab{tab_id}",
+            f"modules.{screen_name}__tab{tab_id}",
+        )
+        to_del = [k for k in sys.modules
+                  if any(k == p or k.startswith(p + ".") for p in prefixes)]
+        for k in to_del:
+            del sys.modules[k]
+
+    # ── Tab opening ───────────────────────────────────────────────────────────
+
+    def open_screen(self, scr, display: str, icon=None,
+                    insert_idx: int = -1, tab_id: int | None = None) -> int | None:
+        """Open *scr* as a new tab, building a fresh per-tab namespace.
+
+        Allocates ``tab_id`` (or uses the supplied one — for
+        force-refresh and split-rebuild scenarios that preserve
+        identity), builds the per-tab namespace via
+        :meth:`_build_namespace`, then registers the tab via
+        :meth:`open_tab` with the freshly-built module.
+        """
+        if tab_id is None:
+            existing = self._id_for_display(display)
+            if existing is not None:
+                self.tab_bar.focus_tab(existing)
+                return None
+            tab_id = new_id()
+        elif tab_id in self._tabs:
+            return None
+
+        instance = self._build_namespace(tab_id, scr)
+        return self.open_tab(display, instance, icon=icon,
+                             insert_idx=insert_idx, base_name=scr.name,
+                             tab_id=tab_id)
 
     def open_tab(self, name: str, module, hooks=None, icon=None,
                  insert_idx: int = -1, base_name: str = None,
                  tab_id: int | None = None) -> int | None:
-        """Open a new tab and build its screen UI.
+        """Place an already-built *module* as a new tab.
 
-        Args:
-            name:       Display label shown on the tab button.
-            module:     Imported screen module.
-            hooks:      Optional hooks module from ``modules/<name>/m_<name>.py``.
-            icon:       Optional ``PIL.ImageTk.PhotoImage``.
-            insert_idx: 0-based insertion position; -1 appends.
-            base_name:  Screen registry name (same as *name* if no suffix).
-            tab_id:     Optional existing tab_id to reuse (for SplitView
-                rebuilds that must preserve tab identity across pane
-                destruction). When ``None`` a fresh ID is allocated.
+        Low-level entry point used by:
+          * :meth:`open_screen` after building a per-tab namespace
+          * :meth:`move_tab` to place a moved tab's preserved namespace
+          * ``SplitView`` snapshot/rebuild to restore tabs with their
+            existing per-tab namespaces
 
-        Returns:
-            The tab's ``tab_id`` on success, ``None`` if a tab with this
-            exact display name already exists in *this* pane (callers with
-            the same label across panes are fine).
+        The legacy *hooks* argument is accepted for back-compat but
+        ignored — under the per-tab namespace design hooks live inside
+        ``module`` (the per-tab namespace).
+
+        Returns the tab's ``tab_id`` on success, ``None`` if a tab with
+        this exact display name already exists in *this* pane (callers
+        with the same label across panes are fine).
         """
         # Reject only if the same ``tab_id`` is already registered —
         # SplitView rebuilds call with an explicit ``tab_id`` and require
@@ -354,11 +870,10 @@ class TabManager(Frame):
             "display_name":  name,
             "frame":         frame,
             "module":        module,
-            "hooks":         hooks,
             "icon":          icon,
             "base_name":     base_name if base_name is not None else name,
             "info":          "",
-            "_info_trace":   None,   # (StringVar, trace_id) | None
+            "_info_trace":   None,
         }
 
         if module and hasattr(module, "setup"):
@@ -400,8 +915,77 @@ class TabManager(Frame):
         self.tab_bar.open_tab(tab_id, name, icon=icon, insert_idx=insert_idx)
         return tab_id
 
+    def move_tab(self, source_mgr: "TabManager", tab_id: int,
+                 insert_idx: int = -1) -> int | None:
+        """Move *tab_id* from *source_mgr* to this manager.
+
+        Tk widgets can't be reparented cleanly, so the source frame is
+        destroyed and a fresh one built under this manager's content
+        frame; ``setup(new_frame)`` runs again to bind widgets to it.
+        The per-tab sys.modules entries (and the per-tab namespace they
+        contain) are preserved — module-level state like ``StringVar``
+        values, loaded LRF data, and callback closures survive the move.
+
+        The ``tab_id`` is preserved across the move so external
+        references (recorded focus IDs, pane-parent lookups) stay valid.
+
+        Returns the preserved ``tab_id`` on success, ``None`` if the tab
+        wasn't found in *source_mgr* or destination already holds the ID.
+        """
+        if tab_id not in source_mgr._tabs:
+            return None
+        if tab_id in self._tabs:
+            return None
+
+        entry     = source_mgr._tabs[tab_id]
+        display   = entry["display_name"]
+        icon      = entry.get("icon")
+        base_name = entry.get("base_name", display)
+        module    = entry.get("module")
+        trace     = entry.get("_info_trace")
+        info_str  = entry.get("info", "")
+
+        # Tear down source pane's view of this tab without touching
+        # sys.modules — the per-tab namespace lives on.
+        if source_mgr._active == tab_id:
+            source_mgr._deactivate(tab_id)
+            source_mgr._active = None
+        if trace is not None:
+            var, tid = trace
+            try:
+                var.trace_remove("write", tid)
+            except Exception:
+                pass
+        try:
+            entry["frame"].destroy()
+        except Exception:
+            pass
+        del source_mgr._tabs[tab_id]
+        source_mgr.tab_bar.close_tab(tab_id)
+
+        # Build the new frame and re-run setup with the preserved module
+        new_id_returned = self.open_tab(display, module, icon=icon,
+                                         insert_idx=insert_idx,
+                                         base_name=base_name, tab_id=tab_id)
+        if new_id_returned is None:
+            return None
+
+        # Restore the info trace on the new pane (prefer StringVar if
+        # the caller wired one originally)
+        if trace is not None:
+            var, _ = trace
+            self.set_tab_info(tab_id, var)
+        elif info_str:
+            self.set_tab_info(tab_id, info_str)
+
+        return tab_id
+
     def close_tab(self, key, skip_on_quit: bool = False) -> bool:
         """Close the tab identified by *key* (tab_id or display label).
+
+        Destroys the per-tab namespace as part of teardown.  Callers
+        that want to move a tab between managers without losing its
+        namespace should use :meth:`move_tab` instead.
 
         Args:
             key:          Tab ID (int) or display label (str).
@@ -412,14 +996,13 @@ class TabManager(Frame):
         if tab_id is None:
             return False
 
-        entry = self._tabs[tab_id]
+        entry     = self._tabs[tab_id]
+        base_name = entry.get("base_name") or entry.get("display_name", "")
 
         # Call on_quit unless skipped (e.g. window close already checked)
         if not skip_on_quit:
-            module = entry.get("module")
-            hooks = entry.get("hooks")
-            quit_fn = (getattr(hooks, "on_quit", None)
-                       or getattr(module, "on_quit", None))
+            module  = entry.get("module")
+            quit_fn = getattr(module, "on_quit", None)
             if quit_fn:
                 try:
                     if quit_fn() is False:
@@ -441,6 +1024,12 @@ class TabManager(Frame):
             self._active = None
 
         entry["frame"].destroy()
+
+        # Drop per-tab sys.modules entries for this tab.  Sibling tabs
+        # of the same screen are unaffected.
+        if base_name:
+            self._destroy_namespace_entries(tab_id, base_name)
+
         del self._tabs[tab_id]
         self.tab_bar.close_tab(tab_id)
         return True
@@ -457,11 +1046,13 @@ class TabManager(Frame):
         return self._resolve_id(key) is not None
 
     def force_refresh_tab(self, key) -> bool:
-        """Close and reopen the identified tab at its current position, re-running ``setup``.
+        """Close and reopen the identified tab, re-running ``setup`` with
+        a fresh per-tab namespace.
 
         Preserves the same ``tab_id`` across the refresh so external
-        references (``_pane_parents`` look-ups, recorded focus IDs, etc.)
-        remain valid.
+        references survive.  In-tab state is intentionally lost — that's
+        the point of "refresh."  For state-preserving moves between
+        panes, use :meth:`move_tab`.
         """
         tab_id = self._resolve_id(key)
         if tab_id is None:
@@ -469,20 +1060,21 @@ class TabManager(Frame):
         idx       = self.tab_bar.get_tab_idx(tab_id)
         entry     = self._tabs[tab_id]
         display   = entry["display_name"]
-        module    = entry.get("module")
-        hooks     = entry.get("hooks")
         icon      = entry.get("icon")
         base_name = entry.get("base_name", display)
 
-        # Tear down without calling on_quit
+        from VIStk.Objects._Host import _HOST_INSTANCE
+        if _HOST_INSTANCE is None:
+            return False
+        scr = _HOST_INSTANCE.Project.getScreen(base_name)
+        if scr is None:
+            return False
+
         if not self.close_tab(tab_id, skip_on_quit=True):
             return False
 
-        # Re-open reusing the original tab_id so any external reference to
-        # this tab (e.g. focus tracking in SplitView) survives the refresh.
-        new_tab_id = self.open_tab(display, module, hooks=hooks, icon=icon,
-                                    insert_idx=idx, base_name=base_name,
-                                    tab_id=tab_id)
+        new_tab_id = self.open_screen(scr, display, icon=icon,
+                                       insert_idx=idx, tab_id=tab_id)
         return new_tab_id is not None
 
     def set_tab_info(self, key, info) -> None:
@@ -517,11 +1109,16 @@ class TabManager(Frame):
     # ── Hook lookup ────────────────────────────────────────────────────────────
 
     def _get_hook(self, tab_id: int, hook_name: str):
+        """Look up *hook_name* on the tab's per-tab namespace.
+
+        Under the per-tab namespace design hooks
+        (``on_focused``, ``on_unfocused``, ``on_quit``,
+        ``configure_menu``, ``has_unsaved``) and the rest of the
+        screen's API both live in the same per-tab module — no separate
+        hooks module to consult.
+        """
         entry = self._tabs.get(tab_id, {})
-        fn = getattr(entry.get("hooks"), hook_name, None)
-        if fn is None:
-            fn = getattr(entry.get("module"), hook_name, None)
-        return fn
+        return getattr(entry.get("module"), hook_name, None)
 
     # ── Internal ───────────────────────────────────────────────────────────────
 
@@ -531,10 +1128,8 @@ class TabManager(Frame):
             return
         self._tabs[tab_id]["info"] = info
         name = self._tabs[tab_id]["display_name"]
-        # Update tab button text
-        display = f"{name} \u2014 {info}" if info else name
+        display = f"{name} — {info}" if info else name
         self.tab_bar.update_tab_label(tab_id, display)
-        # Notify interested parties (Host, DetachedWindow)
         if self.on_tab_info_change:
             self.on_tab_info_change(tab_id, info)
 
@@ -552,7 +1147,7 @@ class TabManager(Frame):
             self.on_tab_deactivate(tab_id)
 
     def _call_configure_menu(self, tab_id: int):
-        """Call configure_menu on the active tab's hooks or module.
+        """Call configure_menu on the active tab's per-tab namespace.
 
         Supports both new signature (tabmanager) and old signature (menubar)
         for backwards compatibility.
@@ -564,7 +1159,6 @@ class TabManager(Frame):
             sig = inspect.signature(cfg)
             params = list(sig.parameters.keys())
             if params and params[0] == "menubar":
-                # Old signature — pass menubar directly for compat
                 if self._menubar:
                     cfg(self._menubar)
             else:
@@ -630,19 +1224,14 @@ class TabManager(Frame):
 
     def _on_merge_request(self, tab_id: int, source_bar: "TabBar",
                           insert_idx: int = -1):
-        """A drag from *source_bar* was released over this bar at *insert_idx*."""
+        """A drag from *source_bar* was released over this bar at *insert_idx*.
+
+        Uses :meth:`move_tab` so the per-tab namespace and in-tab state
+        survive the merge.
+        """
         source_mgr = source_bar.owner
         if source_mgr is None or source_mgr is self:
             return
         if not source_mgr.has_tab(tab_id):
             return
-        entry     = source_mgr._tabs[tab_id]
-        display   = entry["display_name"]
-        module    = entry.get("module")
-        hooks     = entry.get("hooks")
-        icon      = entry.get("icon")
-        base_name = entry.get("base_name", display)
-        if not source_mgr.close_tab(tab_id, skip_on_quit=True):
-            return
-        self.open_tab(display, module, hooks=hooks, icon=icon,
-                      insert_idx=insert_idx, base_name=base_name)
+        self.move_tab(source_mgr, tab_id, insert_idx=insert_idx)
