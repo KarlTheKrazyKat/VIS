@@ -321,15 +321,9 @@ class TabManager(Frame):
             return
         icon    = _HOST_INSTANCE._load_tab_icon(scr)
         display = _HOST_INSTANCE._unique_display_name(name)
-        tab_id  = self.open_screen(scr, display, icon=icon)
-
-        if args is not None and tab_id is not None:
-            module = self._tabs[tab_id].get("module")
-            if module and hasattr(module, "ArgHandler"):
-                try:
-                    module.ArgHandler.handle(args)
-                except Exception:
-                    pass
+        # open_screen applies args via the screen's ArgHandler before
+        # setup() (see _apply_args) — no separate post-open handling.
+        self.open_screen(scr, display, icon=icon, args=args)
 
     def _cleanup_screen_modules(self, screen_name: str):
         """Remove EVERY per-tab sys.modules entry for *screen_name*.
@@ -799,7 +793,8 @@ class TabManager(Frame):
     # ── Tab opening ───────────────────────────────────────────────────────────
 
     def open_screen(self, scr, display: str, icon=None,
-                    insert_idx: int = -1, tab_id: int | None = None) -> int | None:
+                    insert_idx: int = -1, tab_id: int | None = None,
+                    args: list | None = None) -> int | None:
         """Open *scr* as a new tab, building a fresh per-tab namespace.
 
         Allocates ``tab_id`` (or uses the supplied one — for
@@ -807,6 +802,13 @@ class TabManager(Frame):
         identity), builds the per-tab namespace via
         :meth:`_build_namespace`, then registers the tab via
         :meth:`open_tab` with the freshly-built module.
+
+        *args* are CLI-style arguments (``["--Flag", "value", ...]``)
+        forwarded from ``WOM.exe <Screen> --Flag value`` or a
+        single-instance IPC request.  They're applied via the screen's
+        ``ArgHandler`` BEFORE ``setup()`` runs, so screens that seed
+        module state from a flag and then build their UI from that
+        state observe the flagged value (see :meth:`_apply_args`).
         """
         if tab_id is None:
             existing = self._id_for_display(display)
@@ -818,9 +820,41 @@ class TabManager(Frame):
             return None
 
         instance = self._build_namespace(tab_id, scr)
+        if args:
+            self._apply_args(instance, args)
         return self.open_tab(display, instance, icon=icon,
                              insert_idx=insert_idx, base_name=scr.name,
                              tab_id=tab_id)
+
+    @staticmethod
+    def _apply_args(instance, args: list) -> None:
+        """Feed *args* to the screen's ``ArgHandler``, if it has one.
+
+        Discovers the handler by scanning the per-tab namespace for a
+        module-level :class:`ArgHandler` instance — screens name theirs
+        variously (``larg``, ``argu``, ``arg_handler``), so we match by
+        type rather than by a fixed attribute name.  The handler and its
+        flag registrations must be set up at MODULE level (not inside the
+        screen's ``if __name__ == "__main__"`` block) to be visible here,
+        since the Host exec's the entry script as a module, not as main.
+
+        No-op (logged) when the screen exposes no module-level handler —
+        the args were simply not consumable by that screen.
+        """
+        from VIStk.Objects._ArgHandler import ArgHandler
+        handler = None
+        for name in vars(instance):
+            val = getattr(instance, name, None)
+            if isinstance(val, ArgHandler):
+                handler = val
+                break
+        if handler is None:
+            return
+        try:
+            handler.handle(args)
+        except Exception:
+            import traceback
+            traceback.print_exc()
 
     def open_tab(self, name: str, module, hooks=None, icon=None,
                  insert_idx: int = -1, base_name: str = None,

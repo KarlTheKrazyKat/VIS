@@ -29,7 +29,7 @@ class DetachedWindow:
     def __init__(self, host, scr=None,
                  x_root: int | None = None, y_root: int | None = None,
                  btn_offset_x: int = 0, btn_offset_y: int = 0,
-                 chromeless: bool = False):
+                 chromeless: bool = False, args: list | None = None):
         """
         Args:
             host:         The owning ``Host`` instance.
@@ -46,6 +46,8 @@ class DetachedWindow:
                           ``Host._open_standalone`` so non-tabbed screens
                           appear as plain windows rather than single-tab
                           windows.
+            args:         CLI-style args forwarded to the first tab's
+                          ``ArgHandler`` (only used when *scr* is given).
         """
         from VIStk.Objects._Host import _HOST_INSTANCE
 
@@ -134,7 +136,7 @@ class DetachedWindow:
         if scr is not None:
             icon = host._load_tab_icon(scr)
             display = host._unique_display_name(scr.name)
-            self.tab_manager.open_screen(scr, display, icon=icon)
+            self.tab_manager.open_screen(scr, display, icon=icon, args=args)
 
         # Position window
         if x_root is not None and y_root is not None:

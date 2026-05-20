@@ -257,9 +257,9 @@ class Host:
         """
         try:
             while True:
-                screen_name, _args = self._ipc_queue.get_nowait()
+                screen_name, args = self._ipc_queue.get_nowait()
                 if screen_name:
-                    self.open(screen_name)
+                    self.open(screen_name, args)
                 # Surface the running app: a relaunch should bring a
                 # window forward, not silently no-op.
                 self._raise_a_window()
@@ -290,7 +290,7 @@ class Host:
 
     # ── Navigation ─────────────────────────────────────────────────────────────
 
-    def open(self, screen_name: str):
+    def open(self, screen_name: str, args: list | None = None):
         """Unified navigation entry point.
 
         Tabbed screens open as tabs in the active TabManager's window.
@@ -298,6 +298,11 @@ class Host:
         When running from a compiled installation, refuses to open a
         screen whose binary is not present on disk and shows an inline
         banner in the active window's InfoRow instead.
+
+        *args* are CLI-style arguments forwarded from the command line
+        (``WOM.exe <Screen> --Flag value``) or a single-instance IPC
+        request; they reach the screen's ``ArgHandler`` before its
+        ``setup()`` runs.
         """
         scr = self.Project.getScreen(screen_name)
         if scr is None:
@@ -305,9 +310,9 @@ class Host:
         if not self._check_installed(scr):
             return
         if scr.tabbed:
-            self._open_tab(scr)
+            self._open_tab(scr, args)
         else:
-            self._open_standalone(scr)
+            self._open_standalone(scr, args)
 
     def _check_installed(self, scr) -> bool:
         """Return True if ``scr`` can be opened; show a banner and return
@@ -388,7 +393,7 @@ class Host:
             n += 1
         return f"{base} ({n})"
 
-    def _open_tab(self, scr):
+    def _open_tab(self, scr, args: list | None = None):
         if scr.single_instance:
             tm, tab_id = self._find_tab_by_base(scr.name)
             if tm is not None and tab_id is not None:
@@ -428,12 +433,12 @@ class Host:
         if target is None:
             # No window exists yet — create one; it opens the tab itself.
             from VIStk.Objects._DetachedWindow import DetachedWindow
-            dw = DetachedWindow(self, scr)
+            dw = DetachedWindow(self, scr, args=args)
             return
 
-        target.open_screen(scr, display, icon=icon)
+        target.open_screen(scr, display, icon=icon, args=args)
 
-    def _open_standalone(self, scr):
+    def _open_standalone(self, scr, args: list | None = None):
         """Open a standalone (tabbed=False) screen as a new DetachedWindow.
 
         Standalone windows are chromeless: the tab bar is hidden and the
@@ -442,7 +447,7 @@ class Host:
         a single-tab Host shell.
         """
         from VIStk.Objects._DetachedWindow import DetachedWindow
-        dw = DetachedWindow(self, scr, chromeless=True)
+        dw = DetachedWindow(self, scr, chromeless=True, args=args)
 
     def _load_tab_icon(self, scr) -> "PIL.ImageTk.PhotoImage | None":
         if not scr.icon:
@@ -520,7 +525,12 @@ class Host:
             self._opened_default = True
             startup = self._startup_screen or self.Project.default_screen
             if startup:
-                self.open(startup)
+                # Forward CLI args only when the startup screen is the one
+                # named on the command line — not when falling back to the
+                # project default (the args weren't meant for it).
+                startup_args = (self._startup_args
+                                if startup == self._startup_screen else None)
+                self.open(startup, startup_args)
         self._drain_ipc_queue()
         self._tick_screens()
         self.root.update()
