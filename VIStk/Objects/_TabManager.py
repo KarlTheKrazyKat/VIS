@@ -583,15 +583,104 @@ class TabManager(Frame):
 
         where each ``<bytes>`` value is the output of ``marshal.dumps``
         on the original source's compiled code object.
+
+        Patches: the wrapper .pyd may carry a VISKPATCH trailer
+        appended by ``Release.patch_screens``.  When present, the
+        trailer's override dict (same shape as ``_EMBEDDED``) is merged
+        over the baked-in dict — overridden entries win.  See
+        :meth:`_read_viskpatch` for the trailer format.
         """
         stem = os.path.splitext(scr.script)[0]
         mod = importlib.import_module(stem)
-        e = mod._EMBEDDED
+        embedded = mod._EMBEDDED
+
+        overrides = self._read_viskpatch(mod.__file__) if mod.__file__ else None
+        if overrides:
+            # Shallow merge — "entry" replaces wholesale, sub-dicts
+            # ("screens" / "modules") merge per-stem.  Avoid mutating
+            # the cached _EMBEDDED in place; build a fresh dict.
+            merged = {
+                "entry":   overrides.get("entry", embedded.get("entry")),
+                "screens": {**embedded.get("screens", {}),
+                            **overrides.get("screens", {})},
+                "modules": {**embedded.get("modules", {}),
+                            **overrides.get("modules", {})},
+            }
+            embedded = merged
+
         return (
-            marshal.loads(e["entry"]),
-            {k: marshal.loads(v) for k, v in e.get("screens", {}).items()},
-            {k: marshal.loads(v) for k, v in e.get("modules", {}).items()},
+            marshal.loads(embedded["entry"]),
+            {k: marshal.loads(v) for k, v in embedded.get("screens", {}).items()},
+            {k: marshal.loads(v) for k, v in embedded.get("modules", {}).items()},
         )
+
+    # VISKPATCH trailer format (v1):
+    #
+    #   [ ...wrapper .pyd bytes (unchanged)... ]
+    #   [ payload:  <length> bytes — marshal.dumps(override_dict) ]
+    #   [ checksum: 4 bytes BE uint32 — zlib.crc32(payload) ]
+    #   [ pyver:    4 bytes BE uint32 — (major<<8)|minor ]
+    #   [ length:   4 bytes BE uint32 — len(payload) ]
+    #   [ version:  1 byte  — 0x01 (format version) ]
+    #   [ magic:    9 bytes — b"VISKPATCH" ]
+    #
+    # Header is the last 22 bytes of the file.  Read backward from EOF:
+    # check magic first, then unpack the rest, then read the payload
+    # that sits immediately before the header.
+    _VISKPATCH_MAGIC = b"VISKPATCH"
+    _VISKPATCH_HEADER_LEN = 22   # 4+4+4+1+9
+    _VISKPATCH_FORMAT_VERSION = 1
+
+    @classmethod
+    def _read_viskpatch(cls, pyd_path: str):
+        """Return the marshalled override dict from a .pyd's VISKPATCH
+        trailer, or ``None`` if no trailer is present / invalid.
+
+        Returning ``None`` means "use the wrapper's ``_EMBEDDED`` as-is" —
+        callers should treat absence and corruption identically.
+
+        Rejection reasons (all silent, returning None):
+          * File smaller than the header.
+          * Magic mismatch — no trailer was appended.
+          * Format version mismatch — patch was built for a newer
+            VISKPATCH revision that this runtime doesn't understand.
+          * Python major.minor mismatch — marshal format is
+            interpreter-version-specific; refusing to unmarshal
+            avoids crashes on subtly-wrong code objects.
+          * CRC32 mismatch — payload corruption.
+        """
+        try:
+            with open(pyd_path, "rb") as f:
+                f.seek(0, 2)
+                size = f.tell()
+                if size < cls._VISKPATCH_HEADER_LEN:
+                    return None
+                f.seek(-cls._VISKPATCH_HEADER_LEN, 2)
+                header = f.read(cls._VISKPATCH_HEADER_LEN)
+                if header[-9:] != cls._VISKPATCH_MAGIC:
+                    return None
+                version  = header[-10]
+                length   = int.from_bytes(header[-14:-10], "big")
+                pyver    = int.from_bytes(header[-18:-14], "big")
+                checksum = int.from_bytes(header[-22:-18], "big")
+                if version != cls._VISKPATCH_FORMAT_VERSION:
+                    return None
+                expected_pyver = (sys.version_info.major << 8) | sys.version_info.minor
+                if pyver != expected_pyver:
+                    return None
+                if size < cls._VISKPATCH_HEADER_LEN + length:
+                    return None
+                f.seek(-(cls._VISKPATCH_HEADER_LEN + length), 2)
+                payload = f.read(length)
+        except OSError:
+            return None
+        import zlib
+        if zlib.crc32(payload) != checksum:
+            return None
+        try:
+            return marshal.loads(payload)
+        except Exception:
+            return None
 
     @staticmethod
     def _compile_file(path: str):

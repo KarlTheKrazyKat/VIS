@@ -15,8 +15,10 @@ from zipfile import *
 import datetime
 import hashlib
 import importlib.metadata
+import importlib.util
 import json
 import marshal
+import zlib
 from VIStk.Structures._Version import Version
 
 # Nuitka writes ``.pyd`` on Windows and ``.so`` on Linux/macOS for both
@@ -38,7 +40,8 @@ class Release(Project):
     """A VIS Release object"""
     def __init__(self, flag:str="",type:str="",note:str="",
                  release_groups: list[str] | None = None,
-                 release_screens: list[str] | None = None):
+                 release_screens: list[str] | None = None,
+                 patch_mode: bool = False):
         """Creates a Release object to release or examine a release of a project
 
         ``release_groups`` and ``release_screens`` scope the build to a
@@ -46,6 +49,13 @@ class Release(Project):
         screen (every tabbed screen + every standalone with
         ``release=true``) is built.  Otherwise only the union of the named
         groups and explicit screens is built; the Host is always included.
+
+        ``patch_mode`` (``--patch`` on the CLI) builds a patch installer
+        without re-running Nuitka.  Existing wrapper .pyds in ``dist/``
+        are diffed against current source; differences land in a
+        VISKPATCH trailer appended to each affected .pyd.  Requires a
+        previous full release at the same ``dist/<pendix>/`` location —
+        hard error otherwise.  See :meth:`patch_screens`.
 
         Validation runs in ``__init__`` and prints + sets
         ``self.release_targets`` to ``None`` on any of:
@@ -61,6 +71,11 @@ class Release(Project):
         self.type = type
         self.flag = flag
         self.note = note
+        self.patch_mode: bool = patch_mode
+        """When ``True``, ``release()`` skips Nuitka compilation phases
+        and goes straight to :meth:`patch_screens` → :meth:`clean` →
+        installer build.  Requires an existing baseline build in
+        ``dist/<pendix>/runtime/``."""
 
         # Deliverables (final dist folders, installers, zips) and Nuitka
         # working dirs (per-flag caches) both live at the project root.
@@ -1013,6 +1028,257 @@ class Release(Project):
         shutil.move(primary, target)
         return True, ""
 
+    # ── VISKPATCH trailer ─────────────────────────────────────────────────────
+    #
+    # Format mirrors what :meth:`TabManager._read_viskpatch` consumes.
+    # Reader is the source of truth — see _TabManager.py for the layout
+    # diagram.  Summary: append the marshalled override dict, then a
+    # 22-byte fixed trailer ending in the magic ``b"VISKPATCH"``.
+
+    _VISKPATCH_MAGIC = b"VISKPATCH"
+    _VISKPATCH_HEADER_LEN = 22
+    _VISKPATCH_FORMAT_VERSION = 1
+
+    @classmethod
+    def _append_viskpatch_trailer(cls, pyd_path: str, overrides: dict) -> None:
+        """Marshal *overrides* and append a VISKPATCH trailer to *pyd_path*.
+
+        Caller is responsible for stripping any pre-existing trailer
+        first (see :meth:`_strip_viskpatch_trailer`) — appending without
+        stripping would leave the inner trailer's magic findable by
+        readers walking backward from a now-incorrect offset.
+
+        Encodes the patch with the current interpreter's
+        ``sys.version_info.major.minor`` so the reader can reject
+        marshal blobs produced for an incompatible Python.
+        """
+        payload = marshal.dumps(overrides)
+        checksum = zlib.crc32(payload)
+        pyver = (sys.version_info.major << 8) | sys.version_info.minor
+        trailer = (
+            checksum.to_bytes(4, "big")
+            + pyver.to_bytes(4, "big")
+            + len(payload).to_bytes(4, "big")
+            + bytes([cls._VISKPATCH_FORMAT_VERSION])
+            + cls._VISKPATCH_MAGIC
+        )
+        with open(pyd_path, "ab") as f:
+            f.write(payload)
+            f.write(trailer)
+
+    def _read_embedded_from_pyd(self, pyd_path: str) -> dict:
+        """Return the ``_EMBEDDED`` dict from a wrapper .pyd, read via subprocess.
+
+        Critical: must be a subprocess, NOT an in-process import.  On
+        Windows, ``importlib`` of a ``.pyd`` loads it as a DLL into the
+        current process and Windows holds an exclusive lock on the file
+        for the process lifetime — even after ``sys.modules.pop()``.
+        We'd hit ``PermissionError`` the moment patch mode tries to
+        ``open(pyd_path, "ab")`` for the trailer.  A subprocess loads
+        the DLL into its own address space; when it exits, the file
+        lock is released.
+
+        Side benefit: zero risk of polluting the build process's
+        ``sys.modules`` or causing import-order side effects for
+        whatever the wrapper happens to bake in.
+        """
+        stem = os.path.splitext(os.path.basename(pyd_path))[0]
+        # The subprocess script writes the pickled _EMBEDDED dict to
+        # its stdout as raw bytes; we read it back here.  Using pickle
+        # rather than marshal because pickle round-trips dict[str,
+        # dict|bytes] structures directly without further encoding.
+        script = (
+            "import sys, pickle, importlib.util\n"
+            f"spec = importlib.util.spec_from_file_location({stem!r}, {pyd_path!r})\n"
+            "mod = importlib.util.module_from_spec(spec)\n"
+            "spec.loader.exec_module(mod)\n"
+            "sys.stdout.buffer.write(pickle.dumps(dict(mod._EMBEDDED)))\n"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            err = result.stderr.decode(errors="replace").strip()
+            raise ImportError(
+                f"subprocess read of _EMBEDDED from {pyd_path} failed: {err}"
+            )
+        import pickle
+        return pickle.loads(result.stdout)
+
+    def _build_patch_overrides(self, scr, existing_embedded: dict) -> dict:
+        """Compile current source for *scr* and return a dict of entries
+        that differ from *existing_embedded*.
+
+        Returned dict mirrors the shape of ``_EMBEDDED`` but contains
+        only changed entries:
+
+            {"entry":   <bytes>?,         # present iff entry differs
+             "screens": {stem: <bytes>},  # only differing f_/j_ stems
+             "modules": {stem: <bytes>}}  # only differing m_ stems
+
+        Buckets are omitted when empty.  An empty top-level dict means
+        "current source matches the baseline — no patch needed."
+        """
+        overrides: dict = {}
+
+        # Entry script
+        with open(scr.script_path, "rb") as f:
+            new_entry = marshal.dumps(compile(f.read(), scr.script, "exec"))
+        if new_entry != existing_embedded.get("entry"):
+            overrides["entry"] = new_entry
+
+        # Screens/<name>/ — f_*, j_*
+        new_screens: dict = {}
+        if os.path.isdir(scr.path):
+            existing_screens = existing_embedded.get("screens", {}) or {}
+            for fname in sorted(os.listdir(scr.path)):
+                if not fname.endswith(".py") or fname == "__init__.py":
+                    continue
+                stem = fname[:-3]
+                full = os.path.join(scr.path, fname)
+                with open(full, "rb") as f:
+                    new = marshal.dumps(compile(f.read(), full, "exec"))
+                if new != existing_screens.get(stem):
+                    new_screens[stem] = new
+        if new_screens:
+            overrides["screens"] = new_screens
+
+        # modules/<name>/ — m_*
+        new_modules: dict = {}
+        if os.path.isdir(scr.m_path):
+            existing_modules = existing_embedded.get("modules", {}) or {}
+            for fname in sorted(os.listdir(scr.m_path)):
+                if not fname.endswith(".py") or fname == "__init__.py":
+                    continue
+                stem = fname[:-3]
+                full = os.path.join(scr.m_path, fname)
+                with open(full, "rb") as f:
+                    new = marshal.dumps(compile(f.read(), full, "exec"))
+                if new != existing_modules.get(stem):
+                    new_modules[stem] = new
+        if new_modules:
+            overrides["modules"] = new_modules
+
+        return overrides
+
+    @classmethod
+    def _strip_viskpatch_trailer(cls, pyd_path: str) -> bool:
+        """Truncate any VISKPATCH trailer from *pyd_path*.
+
+        Returns ``True`` if a trailer was found and removed, ``False``
+        if the file had no trailer (no-op).  Idempotent — safe to call
+        on a fresh .pyd that's never been patched.
+        """
+        try:
+            with open(pyd_path, "rb") as f:
+                f.seek(0, 2)
+                size = f.tell()
+                if size < cls._VISKPATCH_HEADER_LEN:
+                    return False
+                f.seek(-cls._VISKPATCH_HEADER_LEN, 2)
+                header = f.read(cls._VISKPATCH_HEADER_LEN)
+                if header[-9:] != cls._VISKPATCH_MAGIC:
+                    return False
+                version = header[-10]
+                length = int.from_bytes(header[-14:-10], "big")
+                if version != cls._VISKPATCH_FORMAT_VERSION:
+                    return False
+                trailer_total = cls._VISKPATCH_HEADER_LEN + length
+                if size < trailer_total:
+                    return False
+        except OSError:
+            return False
+        with open(pyd_path, "r+b") as f:
+            f.truncate(size - trailer_total)
+        return True
+
+    def patch_screens(self) -> bool:
+        """Append VISKPATCH trailers to existing wrapper .pyds.
+
+        Patch-mode entry point.  For every screen in
+        ``self.release_targets``:
+
+          1. Locate the wrapper .pyd at ``runtime/<stem>.pyd``.  Hard
+             error if missing — patch mode requires a baseline full
+             release to patch against.
+          2. Strip any pre-existing trailer in place so the import in
+             the next step reads the baseline ``_EMBEDDED``, and so
+             the trailer we append replaces (not stacks on) any
+             previous patch.
+          3. Import the wrapper to read ``_EMBEDDED``.
+          4. Compile current source files and diff against
+             ``_EMBEDDED``.  Build an overrides dict containing only
+             the entries that differ.
+          5. If overrides are empty, skip (nothing to patch for this
+             screen).  Otherwise append the new VISKPATCH trailer.
+
+        After all screens are processed, prints a per-screen summary.
+        Returns ``False`` and a loud warning if every screen reported
+        zero changes (no point shipping an empty patch installer).
+        """
+        print("Patching screen wrappers:", flush=True)
+        any_changes = False
+
+        for scr in self.release_targets:
+            stem = os.path.splitext(scr.script)[0]
+            pyd_path = f"{self.runtime}/{stem}{_MOD_EXT}"
+
+            if not exists(pyd_path):
+                print(
+                    f"  Patch FAILED: missing base wrapper {pyd_path}\n"
+                    f"  Run a full release first (without --patch) to "
+                    f"produce the baseline binaries.",
+                    flush=True,
+                )
+                return False
+
+            # Strip first so the import reads baseline, not an old patch
+            self._strip_viskpatch_trailer(pyd_path)
+
+            try:
+                existing = self._read_embedded_from_pyd(pyd_path)
+            except Exception as exc:
+                print(
+                    f"  Patch FAILED: cannot read _EMBEDDED from "
+                    f"{pyd_path} ({exc}). The wrapper may be corrupt "
+                    f"or built with an incompatible Python.",
+                    flush=True,
+                )
+                return False
+
+            overrides = self._build_patch_overrides(scr, existing)
+            if not overrides:
+                print(f"  {scr.name}: no changes", flush=True)
+                continue
+
+            self._append_viskpatch_trailer(pyd_path, overrides)
+            size_kb = (sum(len(v) for v in overrides.get("screens", {}).values())
+                       + sum(len(v) for v in overrides.get("modules", {}).values())
+                       + len(overrides.get("entry", b""))) / 1024
+            changed = []
+            if "entry" in overrides:
+                changed.append("entry")
+            changed.extend(f"screens/{k}" for k in overrides.get("screens", {}))
+            changed.extend(f"modules/{k}" for k in overrides.get("modules", {}))
+            print(
+                f"  {scr.name}: patched ({size_kb:.1f} KB, "
+                f"{len(changed)} file(s): {', '.join(changed)})",
+                flush=True,
+            )
+            any_changes = True
+
+        if not any_changes:
+            print(
+                "\nNo screens had source changes to patch.  The patch "
+                "installer would be a no-op; aborting.  Edit source "
+                "files and re-run, or use a full release.",
+                flush=True,
+            )
+            return False
+        return True
+
     def _run_parallel(self, jobs: list, label: str, max_workers: int) -> bool:
         """Run a list of compile jobs concurrently with shared progress.
 
@@ -1492,6 +1758,9 @@ class Release(Project):
         if self.release_targets is None:
             return
 
+        if self.patch_mode:
+            return self._release_patch()
+
         release_start = time.monotonic()
         phase_times: dict[str, float] = {}
 
@@ -1611,7 +1880,92 @@ class Release(Project):
             )
             return
 
-        #%Installer & Uninstaller Generation
+        installer_t0 = self._build_installer(phase_times)
+        if installer_t0 is None:
+            return
+
+        # Release-complete banner moved out of clean() so it lands
+        # after the installer is actually ready (#137).
+        print(
+            f"\n\nReleased a new"
+            f"{' '+self.flag+' ' if self.flag else ' '}"
+            f"build of {self.title}!",
+            flush=True,
+        )
+        self._print_release_summary(
+            time.monotonic() - release_start, phase_times,
+        )
+
+    def _release_patch(self):
+        """Patch-mode entry point — append VISKPATCH trailers, rebuild
+        installer, no Nuitka compilation.
+
+        Requires a previous full release at ``dist/<pendix>/runtime/`` to
+        patch against.  Hard error if the runtime tree is missing.
+
+        Pre-flight is reduced: skip the compiler / patchelf / Nuitka
+        tool checks (none of those run in patch mode), but still verify
+        pyinstaller is available since the installer build needs it.
+        """
+        release_start = time.monotonic()
+        phase_times: dict[str, float] = {}
+
+        if not exists(self.runtime):
+            print(
+                f"\nPatch release FAILED: no baseline build at "
+                f"{self.runtime}.  Run a full release (without --patch) "
+                f"to produce the baseline, then re-run --patch to ship "
+                f"source-level fixes on top of it.",
+                flush=True,
+            )
+            return
+
+        # Only pyinstaller is needed for patch mode; skip compiler and
+        # nuitka checks since we don't compile anything.
+        if not self._check_tools():
+            return
+
+        os.makedirs(self.location, exist_ok=True)
+
+        print(f"\n{self.title} Patch Release", flush=True)
+
+        # Patch screen wrappers in place
+        t0 = time.monotonic()
+        if not self.patch_screens():
+            return
+        phase_times["Patch"] = time.monotonic() - t0
+
+        # Refresh loose files (Icons, Images, project.json, top-level
+        # Screens/*.pyc, modules/*.pyc).  In-place — runtime/<X>.pyd
+        # wrappers we just patched are NOT touched by clean().
+        print("Refreshing screen data and resources", flush=True)
+        self.clean()
+
+        # Build the installer using the same flow as a full release.
+        installer_t0 = self._build_installer(phase_times)
+        if installer_t0 is None:
+            return
+
+        print(
+            f"\n\nReleased a"
+            f"{' '+self.flag+' ' if self.flag else ' '}"
+            f"PATCH for {self.title}!",
+            flush=True,
+        )
+        self._print_release_summary(
+            time.monotonic() - release_start, phase_times,
+        )
+
+    def _build_installer(self, phase_times: dict) -> float | None:
+        """Build the uninstaller + binaries.zip + installer.
+
+        Shared between full release and ``--patch`` mode.  Records
+        the elapsed time in ``phase_times["Installer"]``.  Returns the
+        installer-phase start timestamp (callers ignore the return,
+        but keeping it lets the caller distinguish failure (``None``)
+        from success.
+        """
+        installer_t0 = time.monotonic()
         binaries_zip = f"{self.location}binaries.zip"
 
         #Resolve icon for installer and uninstaller
@@ -1665,7 +2019,7 @@ class Release(Project):
             label="Uninstaller",
         )
         if cache_uninstaller is None:
-            return
+            return None
 
         #Copy uninstaller into build output so it ends up in binaries.zip
         uninst_dest_name = "Uninstaller.exe" if sys.platform == "win32" else "Uninstaller"
@@ -1688,7 +2042,7 @@ class Release(Project):
             label="Base installer",
         )
         if cache_base is None:
-            return
+            return None
 
         #Concatenate: cached base exe + binaries.zip = final installer
         installer_name = f"{self.pendix}_Installer"
@@ -1716,15 +2070,4 @@ class Release(Project):
         shutil.move(final_installer, downloads_installer)
         print(f"Installer ready: {downloads_installer}", flush=True)
         phase_times["Installer"] = time.monotonic() - installer_t0
-
-        # Release-complete banner moved out of clean() so it lands
-        # after the installer is actually ready (#137).
-        print(
-            f"\n\nReleased a new"
-            f"{' '+self.flag+' ' if self.flag else ' '}"
-            f"build of {self.title}!",
-            flush=True,
-        )
-        self._print_release_summary(
-            time.monotonic() - release_start, phase_times,
-        )
+        return installer_t0
