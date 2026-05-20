@@ -611,39 +611,6 @@ class Release(Project):
 
         return True
 
-    def _modules_for_release(self) -> list[tuple[str, str]]:
-        """Return ``[(screen_name, modules_subdir_path), ...]`` for every
-        release-targeted screen that has a ``modules/<screen>/`` package.
-
-        Screens without a corresponding modules directory contribute
-        nothing (they have no per-screen logic to ship externally).
-        """
-        modules_root = os.path.join(self.p_project, "modules")
-        if not os.path.isdir(modules_root):
-            return []
-        out: list[tuple[str, str]] = []
-        for scr in self.release_targets:
-            path = os.path.join(modules_root, scr.name)
-            if os.path.isdir(path):
-                out.append((scr.name, path))
-        return out
-
-    def _screens_for_release(self) -> list[tuple[str, str]]:
-        """Return ``[(screen_name, screens_subdir_path), ...]`` for every
-        release-targeted screen that has a ``Screens/<screen>/`` UI
-        sub-package holding f_* section files.  Screens without one
-        (single-file lrfEditor-style screens) contribute nothing.
-        """
-        screens_root = os.path.join(self.p_project, "Screens")
-        if not os.path.isdir(screens_root):
-            return []
-        out: list[tuple[str, str]] = []
-        for scr in self.release_targets:
-            path = os.path.join(screens_root, scr.name)
-            if os.path.isdir(path):
-                out.append((scr.name, path))
-        return out
-
     # ── Onefile bootstrap injection ───────────────────────────────────────
 
     _BOOTSTRAP_BANNER = (
@@ -692,32 +659,24 @@ class Release(Project):
     def _compile_targets(self) -> list[str]:
         """Every external compile target this release will produce.
 
-        Used by each phase to construct ``--nofollow-import-to`` flags
-        for every target except the one *this* compile is building.  The
-        universal rule: every member must be either ``--include-package``
-        (or an entry script) or ``--nofollow-import-to`` for every
-        Nuitka invocation — never both, never neither.
+        Used by each phase to construct ``--nofollow-import-to`` flags so
+        a compile doesn't bundle anything that ships as its own artifact.
 
         Members:
-          * Every shared package (``compile_shared`` ships these)
-          * ``Screens`` — every tabbed screen .pyd lands under here
-          * ``modules`` — every per-screen modules .pyd lands under here
+          * Every shared package (``compile_shared`` ships these as
+            ``<pkg>.pyd`` at the install root)
+          * ``Screens`` / ``modules`` — top-level packages whose loose
+            framework files (``Screens/defaults.pyc``, ``modules/menu.pyc``,
+            ...) ship separately via :meth:`clean`.  Nuitka's
+            ``--nofollow-import-to=Screens`` cascades to the whole
+            package, so per-screen ``Screens.<name>`` / ``modules.<name>``
+            entries are unnecessary — the old per-screen entries existed
+            only for the standalone-.exe bundling dance, which the
+            always-Host model removed (no more ``_compile_screen_exe``).
         """
         targets = list(self.shared_pkg_names)
         targets.append("Screens")
         targets.append("modules")
-        # Per-screen dotted entries so entry .exe compiles (which call
-        # _nofollow_flags() without exclude_self) don't freeze a stub
-        # ``Screens.<name>`` or ``modules.<name>`` package alongside
-        # the on-disk ``.pyd``.  An entry script's
-        # ``import Screens.<name>.f_xxx`` otherwise causes Nuitka
-        # to bundle just the subpackage's ``__init__.py`` reference,
-        # which shadows the real on-disk ``.pyd`` at runtime and
-        # produces an ImportError on the f_*/m_* submodule lookup.
-        for name, _path in self._screens_for_release():
-            targets.append(f"Screens.{name}")
-        for name, _path in self._modules_for_release():
-            targets.append(f"modules.{name}")
         return targets
 
     # Runtime-only filter: distribution names of build/dev tools we
