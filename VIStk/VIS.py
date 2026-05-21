@@ -207,6 +207,7 @@ def __main__():
             note:str=""
             release_groups:list[str]=[]
             release_screens:list[str]=[]
+            patch_mode: bool = False
             argstart = 2
 
             if len(inp) >= 3:
@@ -257,13 +258,17 @@ def __main__():
                                 return None
                             release_screens = [s.strip() for s in args[i+1].split(",") if s.strip()]
                             i += 2
+                        case "Patch" | "patch" | "P" | "p" | "-patch" | "-Patch":
+                            patch_mode = True
+                            i += 1
                         case _:
                             print(f"Unknown Argument \"{args[i]}\"")
                             return None
 
             rel = Release(flag, type, note,
                           release_groups=release_groups or None,
-                          release_screens=release_screens or None)
+                          release_screens=release_screens or None,
+                          patch_mode=patch_mode)
             rel.release()
             rel.restoreAll()
 
