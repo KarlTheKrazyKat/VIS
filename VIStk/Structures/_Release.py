@@ -511,10 +511,11 @@ class Release(Project):
         parts.append(f"--output-dir={self.build_dir}")
         parts.append(f"--output-filename={self.title}{_EXE_EXT}")
 
-        # TEMP DEBUG: console disabled so startup errors are visible.
-        # Revert before shipping.
-        # if sys.platform == "win32":
-        #     parts.append("--windows-console-mode=disable")
+        # The Host .exe ships GUI-subsystem (no console window/flash on
+        # shortcut or double-click launch).  Its console-subsystem CLI twin,
+        # <title>.com, is produced from this same build below (PE-patched).
+        if sys.platform == "win32":
+            parts.append("--windows-console-mode=disable")
 
         parts.append("--assume-yes-for-downloads")
         parts.extend(self.extra_nuitka_args)
@@ -528,6 +529,22 @@ class Release(Project):
         with self._merge_lock:
             if not self._place_exe_output(entry_script, self.title):
                 return False, "merge into runtime/ failed"
+
+        # Two-binary CLI packaging (Windows): the Host .exe is GUI-subsystem
+        # (no console flash on shortcut/double-click launch).  Ship a
+        # console-subsystem twin named ``<title>.com`` so a typed command
+        # resolves to it first (PATHEXT lists .COM before .EXE) and gets the
+        # shell-waits + stdin/stdout the CLI exchange needs.  The two are
+        # byte-identical except the PE subsystem field, so copy + patch one
+        # byte instead of compiling twice.
+        if sys.platform == "win32":
+            exe_path = os.path.join(self.runtime, f"{self.title}{_EXE_EXT}")
+            com_path = os.path.join(self.runtime, f"{self.title}.com")
+            try:
+                shutil.copy2(exe_path, com_path)
+                self._patch_pe_subsystem(com_path, 3)  # 3 = console (CUI)
+            except Exception as e:
+                return False, f"failed to build {self.title}.com: {e}"
         return True, ""
 
     def _place_exe_output(self, entry_script: str, exe_basename: str) -> bool:
@@ -573,6 +590,21 @@ class Release(Project):
                     src = os.path.join(dirpath, f)
                     shutil.copy2(src, os.path.join(dest, f))
         return True
+
+    @staticmethod
+    def _patch_pe_subsystem(path: str, subsystem: int) -> None:
+        """Set the PE Subsystem field (2 = GUI, 3 = console) in *path*.
+
+        The Subsystem field sits at optional-header offset 68 for both PE32
+        and PE32+ — i.e. ``e_lfanew + 4 (PE sig) + 20 (COFF header) + 68``.
+        Flipping it turns a Nuitka GUI build into a console build (the shell
+        waits for it and stdin/stdout are attached) without a second compile.
+        """
+        with open(path, "r+b") as f:
+            f.seek(0x3C)
+            e_lfanew = int.from_bytes(f.read(4), "little")
+            f.seek(e_lfanew + 92)
+            f.write(int(subsystem).to_bytes(2, "little"))
 
     def compile_screens(self, mode="all"):
         """Compile each screen's wrapper .pyd and (optionally) the Host .exe.
@@ -1427,17 +1459,56 @@ class Release(Project):
         # compiles the package's __init__.py and silently drops every
         # submodule from the resulting .pyd — see _compile_one_shared.
         resolved: list[tuple[str, str]] = []
+        single_file: list[tuple[str, str]] = []  # (pkg, source .py path)
         for pkg in packages:
             try:
                 mod = __import__(pkg)
-                resolved.append((pkg, os.path.dirname(mod.__file__)))
             except Exception:
                 print(f"  Skipping {pkg} — not importable", flush=True)
+                continue
+            mod_file = getattr(mod, "__file__", None)
+            if not mod_file:
+                print(f"  Skipping {pkg} — no __file__", flush=True)
+                continue
+            # Classify by the basename of ``__file__``: a real package's
+            # ``__file__`` is its ``__init__.py`` (dirname = the package dir).
+            # A single-file module's ``__file__`` IS the module, so dirname
+            # would resolve to site-packages and ship the WHOLE directory.
+            # NB: ``__path__`` is NOT a reliable signal — ``six`` fakes a
+            # ``__path__`` on itself to support ``six.moves`` yet is a single
+            # file, so we key off the ``__init__`` basename instead.
+            if os.path.basename(mod_file).startswith("__init__."):
+                resolved.append((pkg, os.path.dirname(mod_file)))
+            else:
+                single_file.append((pkg, mod_file))
 
-        if not resolved:
+        if not resolved and not single_file:
             return True
 
         os.makedirs(self.runtime, exist_ok=True)
+
+        # Single-file pure-Python modules (six, ...): compile the one source
+        # file to ``runtime/<pkg>.pyc``.  Python's SourcelessFileLoader
+        # imports a bare ``<name>.pyc`` on sys.path directly, so the Host
+        # picks it up with no path injection.  These must NOT go through the
+        # directory-ship or Nuitka ``--include-package`` paths, which both
+        # assume a package directory (and would bundle all of site-packages).
+        if single_file:
+            import py_compile
+            for pkg, src in single_file:
+                self._step += 1
+                self._cat_index += 1
+                prefix = (f"  [{self._step}/{self._total_steps}] "
+                          f"{self._category} {self._cat_index}/{self._cat_count} - {pkg}")
+                if src.endswith(".py"):
+                    dest = os.path.join(self.runtime, f"{pkg}.pyc")
+                    py_compile.compile(src, cfile=dest, doraise=True)
+                    print(f"{prefix} compiled (single-file -> .pyc)", flush=True)
+                else:
+                    # Single-file binary extension (.pyd/.so) — ship as-is.
+                    dest = os.path.join(self.runtime, os.path.basename(src))
+                    shutil.copy2(src, dest)
+                    print(f"{prefix} copied (single-file)", flush=True)
 
         # Split: directory-shipped (binary extensions) vs compile-to-pyd.
         dir_shipped: list[tuple[str, str]] = []
@@ -1468,7 +1539,7 @@ class Release(Project):
                     py = os.path.join(walk_root, f)
                     py_compile.compile(py, cfile=py + "c", doraise=True)
                     os.remove(py)
-            print(f"{prefix} copied (binary extensions, .py→.pyc)", flush=True)
+            print(f"{prefix} copied (binary extensions, .py->.pyc)", flush=True)
 
         if not to_compile:
             return True
