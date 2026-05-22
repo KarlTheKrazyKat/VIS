@@ -112,13 +112,15 @@ def host_ping(*_):
             (f"pong from Host pid={os.getpid()} open_windows={nwin}",))
 
 
-def cmd_ping(fargs):
-    """Producer for ``--ping``: returns the initial continuation, which runs
-    on H."""
+def cmd_ping(args):
+    """Producer for the ``ping`` command: returns the initial continuation,
+    which runs on H."""
     return (host_ping, ())
 
 
-def register_native(handler) -> None:
-    """Register VIStk's built-in Host-level CLI commands on *handler* (an
-    :class:`~VIStk.Objects._ArgHandler.ArgHandler`)."""
-    handler.newFlag("ping", cmd_ping)
+# Built-in (VIStk-supplied) Host-level CLI commands, keyed by bare subcommand
+# name -- invoked as ``<project> ping`` (not ``--ping``).  A project may
+# extend the per-instance copy the Host makes (``host._cli_commands``).
+NATIVE_COMMANDS = {
+    "ping": cmd_ping,
+}

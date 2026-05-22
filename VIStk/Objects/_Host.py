@@ -52,13 +52,12 @@ class Host:
         self._startup_screen: str | None = self._resolve_startup_screen()
         self._startup_args: list[str] = self._resolve_startup_args()
 
-        # Host-level CLI commands: VIStk-supplied "native" commands plus any
-        # the project registers on ``self._cli_handler``.  Created before the
-        # lock check so a secondary launch can resolve a CLI command.
-        from VIStk.Objects._ArgHandler import ArgHandler
+        # Host-level CLI commands as bare subcommands (``<project> ping``,
+        # not ``--ping``): a dict of name -> producer, copied from VIStk's
+        # native commands (a project may extend ``self._cli_commands``).
+        # Created before the lock check so a secondary launch can resolve one.
         from VIStk.Objects import _cli as _cli_mod
-        self._cli_handler = ArgHandler()
-        _cli_mod.register_native(self._cli_handler)
+        self._cli_commands = dict(_cli_mod.NATIVE_COMMANDS)
 
         # POSIX: a process launched from a terminal holds that terminal for
         # its whole life (there is no Windows-style GUI subsystem).  A GUI
@@ -251,19 +250,21 @@ class Host:
         return self._startup_screen is None and bool(self._startup_args)
 
     def _run_cli_client(self) -> None:
-        """Resolve the CLI command and run the exchange with the running Host.
+        """Resolve the CLI subcommand and run the exchange with the Host.
 
-        ``ArgHandler.handle`` returns None when nothing matched -> print a
-        usage error.  Otherwise the matched command's function returns the
-        initial continuation, which runs on the Host.
+        The first positional arg is the command name (``<project> ping``).
+        An unknown command prints a usage error; otherwise the command's
+        producer returns the initial continuation, which runs on the Host.
         """
-        results = self._cli_handler.handle(sys.argv)
-        if results is None:
-            self._cli_usage_error()
+        cmd = self._startup_args[0].lower()
+        producer = self._cli_commands.get(cmd)
+        if producer is None:
+            self._cli_usage_error(cmd)
             return
-        if not results:
-            return  # matched but produced no continuation; nothing to run
-        self._cli_exchange(results[0])
+        initial = producer(self._startup_args[1:])
+        if initial is None:
+            return  # recognized, but nothing to run
+        self._cli_exchange(initial)
 
     def _cli_exchange(self, initial) -> None:
         """T side of the continuation-passing exchange.
@@ -333,10 +334,11 @@ class Host:
             except Exception:
                 pass
 
-    def _cli_usage_error(self) -> None:
+    def _cli_usage_error(self, cmd: str = "") -> None:
         """Print an unrecognized-command message listing known commands."""
-        cmd = " ".join(sys.argv[1:]).strip()
-        known = ", ".join(f"--{flag[1]}" for flag in self._cli_handler.flags)
+        if not cmd:
+            cmd = " ".join(sys.argv[1:]).strip()
+        known = ", ".join(sorted(self._cli_commands))
         sys.stderr.write(
             f"{self.Project.title}: unrecognized command: {cmd}\n")
         if known:
