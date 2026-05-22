@@ -745,52 +745,28 @@ The License/EULA page, `\r` quiet-mode progress bar, and `metadata.installer_ico
 
 ## Planned
 
-### 0.5.2 Screen Isolation
+### 0.5.2 Screen Isolation (per-tab namespaces, wrapper `.pyd`s, always-Host)
 
-Tabbed screens now own their `Screens/<screen>/` and `modules/<screen>/` trees in the compiled `.pyd`. The Host stops being a code-bundle for every screen in the project. Cross-screen imports between siblings become visible (linter warning) instead of silently working.
+Implemented in **PR #141** (merged to `master`, pending PyPI release). Isolates each open tab's Python state and collapses the per-screen build to a single wrapper `.pyd`.
 
-**Per-screen package inclusion**
+**Per-tab namespaces**
 
-- `compile_screens(mode="pyd")` adds `--include-package=Screens.<n>` and `--include-package=modules.<n>` for every tabbed screen.
-- `compile_host()` drops the unconditional `--include-package=modules` and `--include-package=Screens`. Host bundle shrinks accordingly.
-- Both screen and host builds gain `--nofollow-import-to=<pkg>` for every entry in `hidden_imports` so shared deps (`pywomlib`, `VIStk`, `shared`) aren't duplicated into each `.pyd`.
+- Each open tab gets an isolated namespace registered as `Screens.<name>__tab<id>` / `modules.<name>__tab<id>`, built by `TabManager._build_namespace` via a routing `__import__` that redirects absolute imports to the per-tab variants.
+- A `_PerTabProxy` stands in for the top-level `Screens` / `modules` bindings, so attribute access (`Screens.<X>.f_wonum.build`) walks into the per-tab namespace instead of the shared package.
+- Fixes the bug where two tabs of the same screen shared module-level state (`StringVar`s, global widget refs, loaded data).
 
-`shared/` **convention**
+**Wrapper `.pyd` build**
 
-- New top-level `shared/` package alongside `modules/` and `Screens/`. Adding `"shared"` to `hidden_imports` gets it compiled to `Shared/shared.pyd` by `compile_shared()` — no `_Release.py` changes needed past the per-screen flags above; the existing hidden-imports loop handles it.
-- `VIS new` scaffolds an empty `shared/__init__.py` so the convention shows up in fresh projects.
+- The release pipeline collapses each screen's three former artifacts (entry `.pyd` + `Screens/<name>.pyd` + `modules/<name>.pyd`) into a single wrapper `runtime/<stem>.pyd` holding marshalled bytecode for the entry script and every `f_` / `j_` / `m_` in an `_EMBEDDED` dict.
+- `TabManager` reads code from `_EMBEDDED` in release mode and from source files in dev mode (discriminated by `scr.script_path`).
+- `_compile_one_screen_package` / `_compile_one_module` and the `--include-package` / `--nofollow-import-to` dance they required are removed; `runtime/` is auto-wiped at the start of every full release.
 
-**Cross-screen import linter**
+**Always-Host model**
 
-- New `VIStk/Structures/_Lint.py` provides `lint_screen_imports(screen)`. Walks the screen's entry script + `Screens/<n>/` + `modules/<n>/`, parses with `ast`, flags imports of `modules.<other>` / `Screens.<other>` where `<other>` is not the current screen.
-- `VIS release` runs the linter for every screen before compilation. Warnings are printed; build continues. `--strict` upgrades to errors and aborts.
-- Standalone screens skip the lint — `--follow-imports` resolves their references statically at build time.
+- Standalone per-screen `.exe`s are dropped — every screen opens through the Host as a tab or chromeless `DetachedWindow`; one `.exe` ships per project (the Host).
+- The `release` field on `Screen` gates Start Menu shortcut creation (installer change).
 
-**Subset releases now truly isolate**
-
-- `VIS release -Screens X` no longer bundles excluded screens' `modules/<other>/` and `Screens/<other>/` trees into the Host binary.
-- Bundle size shrinks proportionally to the number of screens excluded.
-- Per-customer or per-role installers can deliver genuinely different code surfaces, not just different visible tab lists.
-
-**Lazy screen loading**
-
-- A tabbed screen's code now enters memory only when the user opens the tab for the first time. Cold-start time and resident memory both drop in proportion to the number of unopened screens.
-- `modules.<screen>.m_<screen>` hook lookup ordering is unchanged — the Host still consults the screen's hooks module first and falls back to the screen script. The lookup just happens after the `.pyd` is loaded.
-
-`clean()` **documentation update**
-
-- `docs/source/structures.rst` "Compilation order" section updated to reflect that `--include-package=modules` / `--include-package=Screens` are now per-screen, not Host-level.
-- `clean()` description gains the line about moving the runtime into `.Runtime/` (long-standing behavior, was missing from the doc).
-
-**Migration notes for existing projects**
-
-- Project-level shared files at `modules/<n>.py` or `Screens/<n>.py` (not under a screen subdirectory) need to move to `shared/<n>.py` and be re-imported as `shared.<n>`. PYWOM has four such files: `modules/menu.py`, `modules/config.py`, `Screens/styles.py`, `Screens/root.py`.
-- Cross-screen imports between sibling screens generate linter warnings; existing builds still succeed in default warn mode. PYWOM's AssetManagerManual is the only existing offender; it's standalone-mode so the linter exempts it.
-
-**Out of scope**
-
-- Auto-rewrite of cross-screen imports — linter flags only.
-- Per-screen access control on `shared/` — possible future addition.
+> Note: an earlier "Screen Isolation" plan (a cross-screen import linter `_Lint.py`, a `shared/` package convention, per-screen `--include-package`) was **superseded** by the per-tab-namespace + wrapper-`.pyd` design above and is **not** part of #141 — the linter / `shared/` convention remain possible future work.
 
 ---
 
