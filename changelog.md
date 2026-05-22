@@ -731,9 +731,21 @@ The License/EULA page, `\r` quiet-mode progress bar, and `metadata.installer_ico
 - **Color palette feature** — tracked separately for a later 0.5.x or 0.6.x
 - `is_dirty` **auto-generated** `on_quit` — `confirm_discard` covers the manual case; the auto-wrapper can land later without an API break
 
-### 0.5.1 Screen Isolation
+### 0.5.1 Release Pipeline & Host Runtime
 
-**Released.**
+**Released.** Hardens the cross-platform release toolchain, flattens the install layout, and wires `loop()` into the Host's update path. No new public API.
+
+- **Per-platform C compiler selection (#83):** forces MSVC on Windows so Nuitka doesn't fall back to its bundled zig toolchain (fixed the `init_fs_encoding` / `marshal data too short` launch crash, #35).
+- **Pre-flight checks (#84, #88):** `Release._check_compiler()` / `_check_tools()` run before any compilation and abort with the exact install command when MSVC / gcc / pip / nuitka / pyinstaller are missing. The old per-release `pip install --upgrade` pass is gone.
+- **Per-flag Nuitka build cache (#91):** `dist/` becomes deliverables-only; Nuitka's `.build/` / `.dist/` move to `build/<pendix>/`, so `-f Windows` and `-f Linux` builds no longer stomp each other's caches.
+- **Dropped the PyInstaller launcher shims (#36, #37, #105):** Host and screen binaries stay at the install root; `VIStk/Structures/Launcher.py` deleted as dead code. ~30 MB smaller per install.
+- **Uninstaller actually uninstalls (#34):** schedules a self-deleting `.bat` in `%TEMP%` that clears every directory at the install root except `Settings/`.
+
+---
+
+## Planned
+
+### 0.5.2 Screen Isolation
 
 Tabbed screens now own their `Screens/<screen>/` and `modules/<screen>/` trees in the compiled `.pyd`. The Host stops being a code-bundle for every screen in the project. Cross-screen imports between siblings become visible (linter warning) instead of silently working.
 
@@ -782,9 +794,9 @@ Tabbed screens now own their `Screens/<screen>/` and `modules/<screen>/` trees i
 
 ---
 
-### 0.5.2 Single-Instance Host, CLI Commands & Cross-Platform Packaging
+### 0.5.3 Single-Instance Host, CLI Commands & Cross-Platform Packaging
 
-**Released.** Built on PR #143 (`host-single-instance`). One Host per project/user, a non-GUI **CLI command** path invoked as a bare subcommand (`<project> <command>`), and the cross-platform packaging to ship it.
+Built on PR #143 (`host-single-instance`) — implemented and verified, not yet released. One Host per project/user, a non-GUI **CLI command** path invoked as a bare subcommand (`<project> <command>`), and the cross-platform packaging to ship it.
 
 **Single-instance Host**
 
@@ -815,8 +827,6 @@ Tabbed screens now own their `Screens/<screen>/` and `modules/<screen>/` trees i
 - `compile_shared()` shipped *all* of `site-packages` when a `hidden_imports` entry was a single-file module (e.g. `six` → `os.path.dirname(six.py)` resolves to site-packages). Single-file modules are now detected and shipped as one sourceless `runtime/<pkg>.pyc`.
 
 ---
-
-## Planned
 
 ### 0.6.X Application Settings
 
