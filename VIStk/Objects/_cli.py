@@ -93,34 +93,13 @@ def send_msg(conn, msg: dict) -> None:
     conn.sendall(len(data).to_bytes(4, "big") + data)
 
 
-# -- native (VIStk-supplied) CLI commands -------------------------------------
+# -- generic continuation helper (commands themselves live in the project) ----
 
 def print_line(text: str):
-    """T-side: print *text* to the terminal. Terminal of the chain (no
-    continuation)."""
+    """Terminal-side helper: print *text* to the terminal.  A terminal end of
+    a continuation chain (returns no further continuation) -- handy as the
+    last step of a project command's chain.
+
+    VIStk ships no commands of its own; a project defines them as
+    ``commands/c_<name>.py`` files (each with a ``_c_<name>(args)`` entry)."""
     print(text)
-
-
-def host_ping(*_):
-    """H-side: report from the running Host. Runs on the main thread, so it
-    can read live Host state. Returns a T-side print continuation."""
-    import os
-    from VIStk.Objects._Host import _HOST_INSTANCE
-    host = _HOST_INSTANCE
-    nwin = len(host.detached_windows) if host is not None else 0
-    return (print_line,
-            (f"pong from Host pid={os.getpid()} open_windows={nwin}",))
-
-
-def cmd_ping(args):
-    """Producer for the ``ping`` command: returns the initial continuation,
-    which runs on H."""
-    return (host_ping, ())
-
-
-# Built-in (VIStk-supplied) Host-level CLI commands, keyed by bare subcommand
-# name -- invoked as ``<project> ping`` (not ``--ping``).  A project may
-# extend the per-instance copy the Host makes (``host._cli_commands``).
-NATIVE_COMMANDS = {
-    "ping": cmd_ping,
-}

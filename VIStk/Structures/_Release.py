@@ -1545,6 +1545,85 @@ class Release(Project):
             return True
         return self._compile_shared_parallel(to_compile)
 
+    def _project_has_commands(self) -> bool:
+        """True if the project ships a ``commands/`` package with ``c_*.py``."""
+        d = os.path.join(self.p_project, "commands")
+        try:
+            return os.path.isdir(d) and any(
+                f.startswith("c_") and f.endswith(".py")
+                for f in os.listdir(d)
+            )
+        except OSError:
+            return False
+
+    def compile_commands(self) -> bool:
+        """Compile the project's ``commands/`` package to runtime/commands.pyd.
+
+        Each ``commands/c_<name>.py`` is a Host CLI command (entry
+        ``_c_<name>``).  Its ``__init__.py`` is regenerated with a STATIC
+        ``__all__`` (the command manifest) in a build copy, then Nuitka
+        ``--module`` compiled, so the frozen Host doesn't have to scan a
+        directory that no longer exists on disk.  No-op when there is no
+        ``commands/``.
+        """
+        src = os.path.join(self.p_project, "commands")
+        if not self._project_has_commands():
+            return True
+
+        self._step += 1
+        self._cat_index += 1
+        prefix = (f"  [{self._step}/{self._total_steps}] "
+                  f"{self._category} {self._cat_index}/{self._cat_count} - commands")
+
+        names = sorted(
+            f[:-3] for f in os.listdir(src)
+            if f.startswith("c_") and f.endswith(".py")
+        )
+        # Build copy with a STATIC ``__all__`` baked into __init__.py (the
+        # dynamic dir-scan can't see files bundled inside the .pyd at runtime).
+        build_parent = os.path.join(self.build_dir, "commands_build")
+        build_pkg = os.path.join(build_parent, "commands")
+        if exists(build_parent):
+            shutil.rmtree(build_parent, ignore_errors=True)
+        shutil.copytree(
+            src, build_pkg,
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"),
+        )
+        with open(os.path.join(build_pkg, "__init__.py"), "w",
+                  encoding="utf-8") as f:
+            f.write('"""Project CLI commands (compiled).\n\n'
+                    'Static command manifest baked by VIS release.\n"""\n')
+            f.write("__all__ = %r\n" % (names,))
+
+        parts = [
+            sys.executable, "-m", "nuitka", "--module",
+            *self._compiler_args(),
+            "--include-package=commands",
+            f"--output-dir={self.build_dir}",
+            "--assume-yes-for-downloads",
+            *self._nofollow_flags(exclude_self="commands"),
+            build_pkg,
+        ]
+        # Run from the build parent so ``--include-package=commands`` resolves
+        # the build copy, not the source ``commands/`` in the project root
+        # (both on the path collide -> NuitkaOptimizationError "duplicate
+        # locals name").
+        ok, err = self._run_nuitka_silent(parts, build_parent)
+        if not ok:
+            self._status(f"{prefix} FAILED: {err}", newline=True)
+            return False
+        built = glob.glob(f"{self.build_dir}commands*{_MOD_EXT}")
+        if not built:
+            self._status(f"{prefix} no {_MOD_EXT} produced", newline=True)
+            return False
+        os.makedirs(self.runtime, exist_ok=True)
+        dst = os.path.join(self.runtime, f"commands{_MOD_EXT}")
+        if exists(dst):
+            os.remove(dst)
+        shutil.move(built[0], dst)
+        print(f"{prefix} compiled (commands.pyd)", flush=True)
+        return True
+
     def clean(self):
         """Appends project data to dist folder.
 
@@ -1837,6 +1916,10 @@ class Release(Project):
             if pkg not in shared_pkgs:
                 shared_pkgs.append(pkg)
         pkg_count = len(shared_pkgs)
+        # The project's `commands/` package (if any) compiles to one extra
+        # `commands.pyd` within the Required Packages phase.
+        if self._project_has_commands():
+            pkg_count += 1
 
         # Every release target produces one wrapper .pyd — tabbed and
         # standalone alike — so the Host can open it as a tab.  Under
@@ -1863,6 +1946,10 @@ class Release(Project):
         if not self.compile_shared():
             self._status("", newline=True)
             print(f"\nRelease FAILED during Required Packages.", flush=True)
+            return
+        if not self.compile_commands():
+            self._status("", newline=True)
+            print(f"\nRelease FAILED during Required Packages (commands).", flush=True)
             return
         phase_times["Required Packages"] = time.monotonic() - t0
 

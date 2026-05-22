@@ -52,12 +52,9 @@ class Host:
         self._startup_screen: str | None = self._resolve_startup_screen()
         self._startup_args: list[str] = self._resolve_startup_args()
 
-        # Host-level CLI commands as bare subcommands (``<project> ping``,
-        # not ``--ping``): a dict of name -> producer, copied from VIStk's
-        # native commands (a project may extend ``self._cli_commands``).
-        # Created before the lock check so a secondary launch can resolve one.
-        from VIStk.Objects import _cli as _cli_mod
-        self._cli_commands = dict(_cli_mod.NATIVE_COMMANDS)
+        # Host-level CLI commands are discovered lazily from the project's
+        # ``commands`` package (``commands/c_<name>.py`` -> ``_c_<name>``) when
+        # a CLI invocation is resolved below -- see :meth:`_run_cli_client`.
 
         # POSIX: a process launched from a terminal holds that terminal for
         # its whole life (there is no Windows-style GUI subsystem).  A GUI
@@ -252,19 +249,47 @@ class Host:
     def _run_cli_client(self) -> None:
         """Resolve the CLI subcommand and run the exchange with the Host.
 
-        The first positional arg is the command name (``<project> ping``).
-        An unknown command prints a usage error; otherwise the command's
-        producer returns the initial continuation, which runs on the Host.
+        The first positional arg is the command name (``<project> ping`` ->
+        ``commands/c_ping.py``).  The command's ``_c_<name>(args)`` entry is
+        the initial continuation: it runs on the Host and returns a
+        terminal-side continuation (or None).  Unknown command -> usage error.
         """
         cmd = self._startup_args[0].lower()
-        producer = self._cli_commands.get(cmd)
-        if producer is None:
+        entry = self._resolve_command(cmd)
+        if entry is None:
             self._cli_usage_error(cmd)
             return
-        initial = producer(self._startup_args[1:])
-        if initial is None:
-            return  # recognized, but nothing to run
-        self._cli_exchange(initial)
+        # Continuation is (callable, args) called as callable(*args); the
+        # command entry takes the remaining args as a single list parameter
+        # (`_c_<name>(args)`), so wrap that list in a 1-tuple.
+        self._cli_exchange((entry, (self._startup_args[1:],)))
+
+    @staticmethod
+    def _resolve_command(cmd: str):
+        """Import ``commands.c_<cmd>`` and return its ``_c_<cmd>`` entry, or
+        None.  Lazy -- only the invoked command module is imported."""
+        import importlib
+        try:
+            mod = importlib.import_module(f"commands.c_{cmd}")
+        except Exception:
+            return None
+        entry = getattr(mod, f"_c_{cmd}", None)
+        return entry if callable(entry) else None
+
+    @staticmethod
+    def _command_names() -> list:
+        """Available command names from ``commands.__all__`` -- the manifest,
+        built dynamically in dev and baked static into ``commands.pyd`` by the
+        release build."""
+        import importlib
+        try:
+            pkg = importlib.import_module("commands")
+        except Exception:
+            return []
+        return sorted(
+            m[2:] for m in (getattr(pkg, "__all__", []) or [])
+            if isinstance(m, str) and m.startswith("c_")
+        )
 
     def _cli_exchange(self, initial) -> None:
         """T side of the continuation-passing exchange.
@@ -338,7 +363,7 @@ class Host:
         """Print an unrecognized-command message listing known commands."""
         if not cmd:
             cmd = " ".join(sys.argv[1:]).strip()
-        known = ", ".join(sorted(self._cli_commands))
+        known = ", ".join(self._command_names())
         sys.stderr.write(
             f"{self.Project.title}: unrecognized command: {cmd}\n")
         if known:
