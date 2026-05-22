@@ -159,17 +159,30 @@ class Host:
     _LOCK_CONNECT_TIMEOUT = 0.5
 
     def _compute_lock_port(self) -> int:
-        """Stable port from project title + OS user.
+        """Stable port from project title + OS user + run mode.
 
         Same inputs → same port, so the primary and a later forwarder
-        independently agree where to talk without a shared file.  Keyed
-        by user so two accounts on one machine each run their own Host.
+        independently agree where to talk without a shared file.  Keyed by
+        user so two accounts on one machine each run their own Host, and by
+        run mode (dev source vs compiled app) so a ``python .VIS/Host.py``
+        dev Host and a compiled ``<title>.exe`` are separate single-instance
+        domains.  Conceptually they are different apps that merely share
+        data: launching one is not "a second instance" of the other (#151).
+
+        Mode is read from the executable's basename: a dev run is launched
+        by a Python interpreter (``python``/``pythonw``/``python3``), a
+        compiled run by the app's own binary.  This survives editable
+        installs (the dev exe is still ``python``) and onefile builds
+        (``sys.executable`` is the app binary in both standalone and onefile).
         """
         try:
             user = getpass.getuser()
         except Exception:
             user = ""
-        key = f"{self.Project.title}\x00{user}".encode("utf-8")
+        mode = ("dev"
+                if Path(sys.executable).name.lower().startswith("python")
+                else "compiled")
+        key = f"{self.Project.title}\x00{user}\x00{mode}".encode("utf-8")
         h = int.from_bytes(hashlib.sha256(key).digest()[:4], "big")
         span = self._LOCK_PORT_HIGH - self._LOCK_PORT_LOW
         return self._LOCK_PORT_LOW + (h % span)
