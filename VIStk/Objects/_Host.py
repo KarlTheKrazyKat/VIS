@@ -3,6 +3,7 @@ from __future__ import annotations
 import getpass
 import hashlib
 import json
+import os
 import queue
 import socket
 import sys
@@ -58,6 +59,15 @@ class Host:
         from VIStk.Objects import _cli as _cli_mod
         self._cli_handler = ArgHandler()
         _cli_mod.register_native(self._cli_handler)
+
+        # POSIX: a process launched from a terminal holds that terminal for
+        # its whole life (there is no Windows-style GUI subsystem).  A GUI
+        # launch should free the shell immediately, so daemonize (fork +
+        # setsid) before any threads or Tk exist.  CLI commands stay in the
+        # foreground so their stdio works and the shell waits — the Linux
+        # mirror of the console ``.com`` (#152).
+        if sys.platform != "win32" and not self._is_cli_invocation():
+            self._daemonize()
 
         # Single-instance: a per-project/user localhost port is the mutex.
         # If another Host already holds it we are a secondary launch.  A GUI
@@ -464,6 +474,40 @@ class Host:
                 sock.close()
             except Exception:
                 pass
+
+    def _daemonize(self) -> None:
+        """Detach the primary GUI Host from the launching terminal (POSIX).
+
+        Single ``fork`` + ``setsid``: the parent exits so the shell prompt
+        returns immediately, and the child starts a new session with no
+        controlling terminal and keeps running as the Host.  stdout/stderr
+        are redirected to a log so GUI startup errors aren't lost; stdin to
+        /dev/null.  Runs before the lock socket, Tk root, and listener
+        thread exist, so the fork is single-threaded and pre-Tk.
+
+        Mirrors the Windows GUI subsystem (the shell doesn't wait for a GUI
+        launch); CLI commands skip this and stay foreground (#152).
+        """
+        try:
+            if os.fork() > 0:
+                os._exit(0)          # parent: release the terminal
+        except OSError:
+            return                   # fork unavailable — stay foreground
+        os.setsid()                  # new session, drop controlling tty
+        import tempfile
+        log_path = os.path.join(tempfile.gettempdir(),
+                                f"{self.Project.title}_host.log")
+        try:
+            devnull = os.open(os.devnull, os.O_RDONLY)
+            os.dup2(devnull, 0)
+            os.close(devnull)
+            logfd = os.open(log_path,
+                            os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+            os.dup2(logfd, 1)
+            os.dup2(logfd, 2)
+            os.close(logfd)
+        except OSError:
+            pass
 
     # ── Navigation ─────────────────────────────────────────────────────────────
 
