@@ -51,16 +51,31 @@ class Host:
         self._startup_screen: str | None = self._resolve_startup_screen()
         self._startup_args: list[str] = self._resolve_startup_args()
 
+        # Host-level CLI commands: VIStk-supplied "native" commands plus any
+        # the project registers on ``self._cli_handler``.  Created before the
+        # lock check so a secondary launch can resolve a CLI command.
+        from VIStk.Objects._ArgHandler import ArgHandler
+        from VIStk.Objects import _cli as _cli_mod
+        self._cli_handler = ArgHandler()
+        _cli_mod.register_native(self._cli_handler)
+
         # Single-instance: a per-project/user localhost port is the mutex.
-        # If another Host already holds it, forward our open request to it
-        # and go inert — the entry script's ``while host.Active`` loop sees
-        # ``Active == False`` and exits without showing a window.
+        # If another Host already holds it we are a secondary launch.  A GUI
+        # request (a screen name, or no args = bring-to-front) is forwarded
+        # and we go inert.  A CLI request (args that resolve to a Host-level
+        # command, no screen) runs a continuation-passing exchange with the
+        # running Host, prints its result here, then goes inert.  Either way
+        # the entry script's ``while host.Active`` loop sees ``Active == False``
+        # and exits without showing a window.
         self._lock_sock: socket.socket | None = None
         self._listener_thread: threading.Thread | None = None
         self._ipc_queue: queue.SimpleQueue = queue.SimpleQueue()
         self._lock_port: int = self._compute_lock_port()
         if not self._acquire_lock():
-            self._forward_to_primary(self._startup_screen, self._startup_args)
+            if self._is_cli_invocation():
+                self._run_cli_client()
+            else:
+                self._forward_to_primary(self._startup_screen, self._startup_args)
             self.Active = False
             _HOST_INSTANCE = self
             return
@@ -201,6 +216,109 @@ class Host:
         except OSError:
             return False
 
+    # ── CLI client (secondary instance: T side of the exchange) ──────────────
+
+    def _is_cli_invocation(self) -> bool:
+        """True when this launch is a Host-level CLI command, not a GUI launch.
+
+        CLI = no recognized screen name but command-line args present.  A
+        recognized screen (with or without ``--flags``) and a bare launch
+        (no args = bring-to-front) are GUI.
+        """
+        return self._startup_screen is None and bool(self._startup_args)
+
+    def _run_cli_client(self) -> None:
+        """Resolve the CLI command and run the exchange with the running Host.
+
+        ``ArgHandler.handle`` returns None when nothing matched -> print a
+        usage error.  Otherwise the matched command's function returns the
+        initial continuation, which runs on the Host.
+        """
+        results = self._cli_handler.handle(sys.argv)
+        if results is None:
+            self._cli_usage_error()
+            return
+        if not results:
+            return  # matched but produced no continuation; nothing to run
+        self._cli_exchange(results[0])
+
+    def _cli_exchange(self, initial) -> None:
+        """T side of the continuation-passing exchange.
+
+        Opens one duplex connection to the running Host, sends the initial
+        ``(callable, args)`` continuation, then pumps replies: each reply is
+        either a ``call`` to run locally (its return value, if any, is a new
+        continuation sent back to the Host) or ``done``.  Exits when no
+        request is outstanding -- the running call produced no further
+        continuation.
+        """
+        from VIStk.Objects import _cli
+        try:
+            conn = socket.create_connection(
+                ("127.0.0.1", self._lock_port),
+                timeout=self._LOCK_CONNECT_TIMEOUT,
+            )
+        except OSError:
+            sys.stderr.write(
+                f"{self.Project.title}: could not reach the running instance\n")
+            return
+        conn.settimeout(None)  # connect timeout only; the exchange blocks
+
+        replies: queue.SimpleQueue = queue.SimpleQueue()
+
+        def _reader():
+            while True:
+                m = _cli.recv_msg(conn)
+                replies.put(m)
+                if m is None:
+                    break
+
+        threading.Thread(
+            target=_reader, daemon=True,
+            name=f"VIStk-CLI-reader-{self.Project.title}",
+        ).start()
+
+        outstanding = 0
+        try:
+            _cli.send_msg(conn, _cli.serialize_call(initial))
+            outstanding += 1
+            while outstanding > 0:
+                try:
+                    m = replies.get(timeout=30)
+                except queue.Empty:
+                    sys.stderr.write(
+                        f"{self.Project.title}: timed out waiting for the "
+                        "running instance\n")
+                    break
+                if m is None:
+                    break  # Host closed the connection
+                outstanding -= 1
+                if m.get("kind") != "call":
+                    continue  # "done" (or unknown) -- request satisfied
+                try:
+                    out = _cli.run_call(m)
+                except Exception:
+                    import traceback
+                    traceback.print_exc()
+                    out = None
+                if out is not None:
+                    _cli.send_msg(conn, _cli.serialize_call(out))
+                    outstanding += 1
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    def _cli_usage_error(self) -> None:
+        """Print an unrecognized-command message listing known commands."""
+        cmd = " ".join(sys.argv[1:]).strip()
+        known = ", ".join(f"--{flag[1]}" for flag in self._cli_handler.flags)
+        sys.stderr.write(
+            f"{self.Project.title}: unrecognized command: {cmd}\n")
+        if known:
+            sys.stderr.write(f"known commands: {known}\n")
+
     def _start_ipc_listener(self) -> None:
         """Spawn the daemon thread that accepts forwarded requests."""
         if self._lock_sock is None:
@@ -212,30 +330,53 @@ class Host:
         self._listener_thread.start()
 
     def _ipc_accept_loop(self) -> None:
-        """Accept connections, parse one request each, queue for the main
-        loop.  Runs on a background thread — does NOT touch Tk; it only
-        puts onto ``_ipc_queue``, which :meth:`update` drains."""
+        """Accept connections; hand each to a per-connection handler thread.
+
+        Runs on a background thread.  A GUI forward is one-shot, but a CLI
+        exchange keeps its connection open as the reply channel, so each
+        connection gets its own thread rather than being read inline here.
+        """
         while self._lock_sock is not None:
             try:
                 conn, _addr = self._lock_sock.accept()
             except OSError:
                 break  # socket closed during shutdown
-            with conn:
-                try:
-                    raw_len = self._recv_exact(conn, 4)
-                    if raw_len is None:
-                        continue
-                    length = int.from_bytes(raw_len, "big")
-                    # Payloads are tiny JSON; cap to reject junk/hostile.
-                    if length <= 0 or length > 64 * 1024:
-                        continue
-                    data = self._recv_exact(conn, length)
-                    if data is None:
-                        continue
-                    msg = json.loads(data.decode("utf-8"))
-                except Exception:
-                    continue
-                self._ipc_queue.put((msg.get("screen"), msg.get("args") or []))
+            threading.Thread(
+                target=self._handle_conn, args=(conn,), daemon=True,
+                name=f"VIStk-Host-conn-{self.Project.title}",
+            ).start()
+
+    def _handle_conn(self, conn: socket.socket) -> None:
+        """Read framed requests off *conn* and queue them for the main loop.
+
+        A GUI forward (``{"screen","args"}``) is a single message: queue it
+        and close.  A CLI ``call`` keeps the connection open as the reply
+        channel -- queue the call, then loop reading the continuations T
+        sends back, until T disconnects.  Never touches Tk; the main-thread
+        :meth:`_drain_ipc_queue` runs the calls and writes replies on *conn*.
+        """
+        from VIStk.Objects import _cli
+        try:
+            msg = _cli.recv_msg(conn)
+            if msg is None:
+                return
+            if msg.get("kind") == "call":
+                self._ipc_queue.put(("cli", msg, conn))
+                while True:
+                    m = _cli.recv_msg(conn)
+                    if m is None:
+                        break
+                    self._ipc_queue.put(("cli", m, conn))
+            else:
+                self._ipc_queue.put(
+                    ("open", msg.get("screen"), msg.get("args") or []))
+        except Exception:
+            pass
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
     @staticmethod
     def _recv_exact(conn: socket.socket, n: int) -> bytes | None:
@@ -249,20 +390,43 @@ class Host:
         return buf
 
     def _drain_ipc_queue(self) -> None:
-        """Process forwarded open requests on the Tk main loop.
+        """Process queued requests on the Tk main loop.
 
-        Called from :meth:`update`.  Opening a screen and touching
-        windows must happen on the main thread, hence the queue handoff
-        from the listener thread.
+        Called from :meth:`update`.  Opening a screen, touching windows, and
+        running CLI calls all happen here on the main thread, hence the queue
+        handoff from the connection handler threads.
+
+        Items are tagged: ``("open", screen, args)`` for a GUI forward, and
+        ``("cli", call_msg, conn)`` for a CLI call (whose result is written
+        back to *conn* as the reply, or ``done`` when there is no
+        continuation).
         """
+        from VIStk.Objects import _cli
         try:
             while True:
-                screen_name, args = self._ipc_queue.get_nowait()
-                if screen_name:
-                    self.open(screen_name, args)
-                # Surface the running app: a relaunch should bring a
-                # window forward, not silently no-op.
-                self._raise_a_window()
+                item = self._ipc_queue.get_nowait()
+                tag = item[0]
+                if tag == "open":
+                    _, screen_name, args = item
+                    if screen_name:
+                        self.open(screen_name, args)
+                    # Surface the running app: a relaunch should bring a
+                    # window forward, not silently no-op.
+                    self._raise_a_window()
+                elif tag == "cli":
+                    _, msg, conn = item
+                    try:
+                        out = _cli.run_call(msg)
+                    except Exception:
+                        import traceback
+                        traceback.print_exc()
+                        out = None
+                    reply = (_cli.serialize_call(out)
+                             if out is not None else _cli.DONE)
+                    try:
+                        _cli.send_msg(conn, reply)
+                    except Exception:
+                        pass
         except queue.Empty:
             pass
 
