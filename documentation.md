@@ -1276,54 +1276,42 @@ handler.handle(sys.argv)
 
 ---
 
-### IPC — Sending Screen Names from External Scripts
+### Single-Instance Host & Open-Request Forwarding
 
-When the Host is running, any script in the same project can open a screen without going through `Screen.load()` by calling `send_to_host()` directly.
+The always-Host model runs **one Host per project (per OS user)**. The first launch becomes the primary Host and binds a per-project/user `127.0.0.1` port that doubles as the single-instance mutex. A later `<project>.exe <Screen>` launch fails to bind, **forwards** its open request to the running Host over that port, and exits — the running Host opens the screen and raises a window. There is no second process.
 
-```python
-from VIStk.Structures import send_to_host
+The lock port is derived from `title + user + mode`, where *mode* is `dev` (running `python .VIS/Host.py`) or `compiled` (a frozen `<title>.exe`). A dev Host and a compiled Host are therefore **separate single-instance domains** and run side by side without colliding; each CLI client (below) routes to its own.
 
-# Open a screen in the running Host
-send_to_host("MyApp", "WorkOrders")
+### Host CLI Commands
 
-# Send the quit signal to stop the Host
-send_to_host("MyApp", "__VIS_QUIT__")
+A project can expose **non-GUI commands** that run inside the always-Host, invoked as a **bare subcommand**:
+
+```
+WOM ping
 ```
 
-#### `send_to_host(project_title, message)`
+There is no mode flag. The first word is resolved against the **screen registry first** (a screen name launches the GUI), then the **command registry**; an unrecognized first word prints a usage error listing the known commands.
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `project_title` | `str` | The project `title` as stored in `project.json` |
-| `message` | `str` | Screen name to open, or one of the reserved control messages below |
-
-Returns `True` if the message was delivered, `False` if no Host port file was found or the connection failed.
-
-**Reserved control messages:**
-
-| Message | Effect |
-|---------|--------|
-| `"__VIS_QUIT__"` | Gracefully shuts down the Host |
-| `"__VIS_CLOSE__:<name>"` | Asks the Host to close the named tab or Toplevel |
+**Defining a command** — one file per command, `commands/c_<name>.py`, with an entry `_c_<name>(args)` (mirrors the `_m_<name>` screen-hook convention):
 
 ```python
-from VIStk.Structures import send_to_host
+# commands/c_ping.py
+import os
+from VIStk.Objects._cli import print_line
 
-send_to_host("MyApp", "WorkOrders")               # open a screen
-send_to_host("MyApp", "__VIS_QUIT__")             # stop the Host
-send_to_host("MyApp", "__VIS_CLOSE__:Settings")   # close one screen
+def _c_ping(args):                 # runs ON the running Host
+    return (print_line, (f"pong from Host pid={os.getpid()}",))
 ```
 
-`Screen.close()` is a convenience wrapper around the `__VIS_CLOSE__` message:
+- `_c_<name>(args)` runs **on the running Host** (so it can read live Host state). `args` is the list of words after the command name.
+- It returns a `(callable, args)` **continuation** for the terminal side to run next — or `None` to end the exchange. `VIStk.Objects._cli.print_line` is a generic terminal helper that prints a line.
+- VIStk ships **no** commands of its own; commands live in the project.
 
-```python
-project = Project()
-project.getScreen("Settings").close()   # asks Host to close the Settings screen
-```
+**Discovery:** `commands.__all__` is the manifest. In dev, `commands/__init__.py` scans for `c_*.py`; `VIS release` bakes a static `__all__` into `commands.pyd`. The Host imports `commands.c_<name>` lazily on demand.
 
-**How it works:** The Host writes its TCP port number to `%TEMP%/<ProjectTitle>_vis_host.port` on startup and deletes it on shutdown. `send_to_host()` reads that file, connects to `127.0.0.1:<port>`, and sends the message as UTF-8 text. The Host receives it on its IPC listener thread and schedules the appropriate action on the main thread via its call queue.
+**Transport (continuation-passing two-pump):** the terminal-launched instance (**T**) and the running Host (**H**) each run a queue + pump + socket bridge. A continuation crosses the socket **by reference** (`module:qualname`, re-imported on the far side — both ends are the same binary); closures can't cross and args must be JSON-serializable. Every message gets exactly one reply, so T terminates when its queue is empty and nothing is outstanding. **H-side functions must not block** (they run on the Tk loop); **T-side functions may block** (e.g. `input()`).
 
-This is the mechanism used by `VIS stop`, `VIS <ProjectName>`, and `Screen.load()` when a Host is detected.
+**Packaging:** on Windows the build produces two binaries — `<title>.exe` (GUI subsystem, no console flash) and `<title>.com` (console subsystem, so the shell waits and stdio works); typed `<title>` resolves to `.com` first via `PATHEXT`. On Linux a GUI launch daemonizes (`fork`+`setsid`) so the terminal is freed, while CLI commands stay foreground.
 
 ---
 

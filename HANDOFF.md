@@ -76,10 +76,10 @@ PYWOM `master`: **`a71ffef`** — `commands/__init__.py` + sample `commands/c_pi
 
 ## Remaining TODO (docs + verification — pick up here)
 
-- [ ] Verify the compiled `commands.pyd` build (the in-progress `VIS release`) + compiled `WOM ping`.
+- [x] Verify the compiled `commands.pyd` build (the in-progress `VIS release`) + compiled `WOM ping`. *(Done: rebuilt on Windows; `WOM.com ping` → `pong from Host pid=… open_windows=1`.)*
 - [ ] WSL: re-verify `WOM ping` end-to-end with the commands feature (reinstall serene VIStk into `~/dev`).
-- [ ] Update **issue #144** to the final command model.
-- [ ] **PYWOM `CLAUDE.md`**: add the `commands/c_*.py` + `_c_<name>` convention to the VIStk conventions section (after "CLI / IPC Args"). It's the synced agent-instructions file.
-- [ ] **VIStk `changelog.md` + `documentation.md`** (and Sphinx `docs/source` if desired): document the CLI command model, two-binary, dev/compiled split, daemonize. (WOMDOCS just links to VIStk GitHub pages — nothing needed there.)
-- [ ] **PYWOM `changelog.md`**: entry for the `commands/` feature.
+- [x] Update **issue #144** to the final command model.
+- [x] **PYWOM `CLAUDE.md`**: add the `commands/c_*.py` + `_c_<name>` convention to the VIStk conventions section (after "CLI / IPC Args"). It's the synced agent-instructions file. *(Done in `f7416bf`.)*
+- [x] **VIStk `changelog.md` + `documentation.md`** (and Sphinx `docs/source` if desired): document the CLI command model, two-binary, dev/compiled split, daemonize. (WOMDOCS just links to VIStk GitHub pages — nothing needed there.) *(changelog 0.5.2 + documentation Host CLI Commands; also de-duplicated changelog and promoted 0.5.1 Screen Isolation to Released.)*
+- [x] **PYWOM `changelog.md`**: entry for the `commands/` feature.
 - [ ] When ready: merge PR #143 (closes #150/#151/#152), then the pywom commands work is consistent with VIStk master.
