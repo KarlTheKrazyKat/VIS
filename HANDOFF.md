@@ -1,6 +1,6 @@
 # Session Handoff — Host CLI mode + project commands
 
-**Date:** 2026-05-22
+**Date:** 2026-05-22 (cont. 2026-05-23: `is_compiled()` fix + compiled verification from arbitrary CWD)
 **Branch (VIStk):** `host-single-instance` (PR #143, KarlTheKrazyKat/VIS) — **open, do not merge yet**
 **Repo (project):** KarlTheKrazyKat/PYWOM `master`
 **Resume on another box:** `git fetch && git checkout host-single-instance` (VIStk) + pull PYWOM `master`. Everything is on GitHub.
@@ -28,7 +28,8 @@ A non-GUI **CLI command** path for the always-Host model, plus the cross-platfor
 ### Cross-platform packaging
 - **Windows two-binary:** `WOM.exe` (PE subsystem 2 = GUI, no console flash) + `WOM.com` (subsystem 3 = console, shell waits + stdio). Built by copying the exe and patching the PE subsystem byte (`_Release._patch_pe_subsystem`). Typed `wom` resolves to `.com` via PATHEXT.
 - **Linux daemonize:** a GUI launch `fork`+`setsid`s so the terminal is freed and the Host runs detached; CLI commands stay foreground. (`Host._daemonize`, guarded `sys.platform != "win32"`.)
-- **dev/compiled lock-domain split:** the single-instance port now keys on `title + user + mode`, where mode = `dev`/`compiled` from `Path(sys.executable).name` (python vs the app binary). So a `python .VIS/Host.py` dev Host and a compiled `WOM.exe` run side by side without colliding, and each CLI client routes to its own.
+- **dev/compiled lock-domain split:** the single-instance port now keys on `title + user + mode`, where mode = `dev`/`compiled` (via `is_compiled()`, below). So a `python .VIS/Host.py` dev Host and a compiled `WOM.exe` run side by side without colliding, and each CLI client routes to its own.
+- **Compiled-mode detection fix (`is_compiled()`, commit `0ba0a16`):** Nuitka `--standalone` (what VIS ships) does NOT set `sys.frozen`, so `getPath()` fell back to `os.getcwd()` — a compiled Host or CLI command launched from any directory without the project's `.VIS/` returned `None` and the Host entry script died on `import modules.*` before it could route. CLI is always typed from an arbitrary CWD, so this blocked the whole feature in release builds (the GUI dodged it only because shortcuts set "Start in"). Fixed with one `_VINFO.is_compiled()` helper (executable basename: `python*` ⇒ dev) routed through `getPath`, `Host._compute_lock_port`, `Host._register_startup`, `Screen.load`, and the `host.txt` template — single source of truth, replacing the `sys.frozen` checks that misfire under `--standalone`.
 
 ---
 
@@ -42,6 +43,7 @@ A non-GUI **CLI command** path for the always-Host model, plus the cross-platfor
 | `3f348c7` | Linux: daemonize the primary GUI Host |
 | `3e82919` | CLI: bare-subcommand format (`WOM ping`, not `--ping`) |
 | `a70d203` | CLI commands: project-defined `commands/c_*.py`, drop built-in ping; `_Release.compile_commands()` -> `commands.pyd` |
+| `0ba0a16` | `is_compiled()` helper: detect compiled mode by exe name (not `sys.frozen`) — fixes CLI from arbitrary CWD under Nuitka `--standalone`; consolidates the dev/compiled split |
 
 PYWOM `master`: **`a71ffef`** — `commands/__init__.py` + sample `commands/c_ping.py`.
 
@@ -60,7 +62,7 @@ PYWOM `master`: **`a71ffef`** — `commands/__init__.py` + sample `commands/c_pi
 ## Verification status
 
 - **Dev (Windows source):** `WOM ping` -> `pong from Host pid=…`; unknown command -> usage error listing known commands. ✓
-- **Compiled (Windows):** CLI roundtrip both sides, two-binary subsystems (2/3), dev (59825) + compiled (60676) Hosts coexisting, each CLI routing to its own. ✓ (from the pre-commands build)
+- **Compiled (Windows):** Full rebuild (13m, exit 0) with `commands.pyd` + the `is_compiled()` fix, installed by extracting `dist/binaries.zip` to the install dir (mimics the GUI installer). GUI `WOM.exe` primary launched **from `C:\`** (no project `.VIS` in CWD), bound lock port 60676; `WOM.com ping` → `pong from Host pid=… open_windows=1`; unknown command → `WOM: unrecognized command: … / known commands: ping`. Two-binary subsystems 2/3. **All from an arbitrary CWD** — the pre-fix build crashed here on `import modules.menu`. ✓
 - **Linux (WSL2):** GUI launch daemonizes (terminal freed, Host detached); `ping` foreground roundtrip. ✓
 - **commands.pyd (compiled):** ⏳ a `VIS release` is finishing as of this writing — verify `runtime/commands.pyd` exists and compiled `WOM ping` works. The commands compile had a bug (source/copy package collision) fixed in `a70d203` by running Nuitka from the build-copy parent; manual compile of `commands.pyd` succeeded.
 
