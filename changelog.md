@@ -777,7 +777,8 @@ Built on PR #143 (`host-single-instance`) — implemented and verified, not yet 
 **Single-instance Host**
 
 - Binding a per-project/user `127.0.0.1` port is the mutex: the first launch is the primary Host; a later `<project>.exe <Screen>` forwards its open request to the running Host (which raises the window) and exits — no second process.
-- **dev/compiled lock domains (#151):** the port keys on `title + user + mode`, where mode is `dev` vs `compiled` (from `Path(sys.executable).name`). A `python .VIS/Host.py` dev Host and a compiled `<title>.exe` are separate single-instance domains and run side by side; each CLI client routes to its own.
+- **dev/compiled lock domains (#151):** the port keys on `title + user + mode`, where mode is `dev` vs `compiled` (via `is_compiled()`, below). A `python .VIS/Host.py` dev Host and a compiled `<title>.exe` are separate single-instance domains and run side by side; each CLI client routes to its own.
+- **Compiled-mode detection (`is_compiled()`):** one helper in `_VINFO` answers the question every dev/compiled call site actually asks — *is `sys.executable` the bundled app binary, or a python interpreter?* — keyed on the executable basename (`python*` ⇒ dev). It replaces `sys.frozen` at the sites that misfired under Nuitka `--standalone` (which, unlike PyInstaller / Nuitka-onefile, does **not** set `sys.frozen`): `getPath()` — so a CLI command typed in an arbitrary directory still finds `.VIS/` instead of the Host entry script dying on `import modules.*` before it can route — plus `Host._register_startup` (run-at-login command) and `Screen.load` (no-spawn guard). `_compute_lock_port` and the `host.txt` template route through it too, so there's a single source of truth.
 
 **Host CLI commands**
 

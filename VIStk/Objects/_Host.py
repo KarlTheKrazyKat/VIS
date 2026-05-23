@@ -13,6 +13,7 @@ from pathlib import Path
 from tkinter import Tk
 
 from VIStk.Structures._Project import Project
+from VIStk.Structures._VINFO import is_compiled
 
 # Module-level singleton reference — set by Host.__init__, cleared on quit.
 _HOST_INSTANCE: "Host | None" = None
@@ -185,9 +186,7 @@ class Host:
             user = getpass.getuser()
         except Exception:
             user = ""
-        mode = ("dev"
-                if Path(sys.executable).name.lower().startswith("python")
-                else "compiled")
+        mode = "compiled" if is_compiled() else "dev"
         key = f"{self.Project.title}\x00{user}\x00{mode}".encode("utf-8")
         h = int.from_bytes(hashlib.sha256(key).digest()[:4], "big")
         span = self._LOCK_PORT_HIGH - self._LOCK_PORT_LOW
@@ -810,7 +809,7 @@ class Host:
             import winreg
             key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
             app_name = self.Project.title + "Host"
-            if getattr(sys, 'frozen', False):
+            if is_compiled():
                 cmd = f'"{sys.executable}"'
             else:
                 exe = sys.executable

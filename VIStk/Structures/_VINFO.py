@@ -18,11 +18,40 @@ def unzip_without_overwrite(src_path, dst_dir):
             if not os.path.exists(file_path):
                 zf.extract(member, dst_dir)
 
+def is_compiled() -> bool:
+    """True when running as the project's bundled app binary rather than
+    under a python interpreter.
+
+    The discriminator is the running executable's basename: a dev run is
+    launched by ``python`` / ``pythonw`` (any ``python*`` name), a release
+    runs the bundled binary (``WOM.exe``, ``WOM.com``, ``WOM`` on POSIX,
+    ...).  This is the single source of truth for the compiled-vs-dev
+    split — the same check ``Host._compute_lock_port`` uses — because it
+    answers the question every such call site actually asks: "is
+    ``sys.executable`` the app binary (so its directory is the install
+    root, it can't spawn a second Host, etc.)?"
+
+    Preferred over ``sys.frozen``: Nuitka's ``--standalone`` mode (what VIS
+    ships) does NOT set ``sys.frozen`` — that flag is a PyInstaller /
+    Nuitka-onefile convention.  A frozen-only check therefore misfires in a
+    normal release, e.g. ``getPath`` falling back to ``os.getcwd()`` for a
+    CLI command typed in an arbitrary directory.
+    """
+    return not os.path.basename(sys.executable).lower().startswith("python")
+
+
 def getPath()->str:
     """Searches for .VIS folder, starting from the executable directory
-    when running as a compiled (frozen) app, or from CWD otherwise.
+    when running as a compiled app, or from CWD otherwise.
+
+    Compiled detection goes through :func:`is_compiled` (executable name)
+    rather than ``sys.frozen`` — the latter is unset under Nuitka
+    ``--standalone`` (what VIS ships), so a frozen-only gate makes a
+    standalone build launched from an arbitrary CWD (e.g. any CLI command
+    typed in a terminal) fall back to ``os.getcwd()``, fail to find
+    ``.VIS/``, and die importing the project's packages before it can run.
     """
-    if getattr(sys, 'frozen', False):
+    if is_compiled():
         start = os.path.dirname(sys.executable)
     else:
         start = os.getcwd()
