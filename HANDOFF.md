@@ -73,13 +73,15 @@ PYWOM `master`: **`a71ffef`** — `commands/__init__.py` + sample `commands/c_pi
 - **VIStk install (Windows site-packages):** currently the `serene-rubin` worktree code (this session). Restore master with `pip install C:\Users\bmiCAD\Documents\VIStk` (the main checkout) when done.
 - **WSL:** dev venv `~/dev` currently has the `serene-rubin` VIStk; restore via `PYWOM.sh`'s pip lines (installs from `C:\…\Documents\VIStk` = master) or `pip install /mnt/c/.../serene-rubin-9e2c88` to keep this session's code. The `~/wnet` mount is **not persistent** (the `/etc/fstab` line is a note, not a real entry) — remount with `sudo mount -t drvfs '\\192.168.1.34\Library' ~/wnet` (passwordless sudo). `PYWOM.sh` rsyncs pywom to `~/build/PYWOM` before `VIS release -f Linux` (network-drive compile workaround).
 - The user installs via the **GUI installer** (quiet is broken, #149). The no-flash two-binary build is installed at `C:\Users\bmiCAD\AppData\Local\bmicad\WOM`.
+- **Current install state (2026-05-23):** the install dir holds the **fixed build** — `dist/binaries.zip` from the 2026-05-23 release (with `is_compiled()`), extracted there manually to mimic the installer for testing. A matching `WOM-Windows_Installer.exe` (also the fixed build) is in `~/Downloads` if a clean GUI reinstall is preferred.
+- **Local hook note (this machine only):** the user-settings `PostToolUse` skill-suggestion hook was converted from a `prompt` type to a command hook (`~/.claude/hooks/skill_hint.py`) so it stays silent on non-`.py` edits (was halting the turn on every doc/config edit). Backup at `~/.claude/settings.json.bak`. Not repo state.
 
 ---
 
 ## Remaining TODO (docs + verification — pick up here)
 
 - [x] Verify the compiled `commands.pyd` build (the in-progress `VIS release`) + compiled `WOM ping`. *(Done: rebuilt on Windows; `WOM.com ping` → `pong from Host pid=… open_windows=1`.)*
-- [ ] WSL: re-verify `WOM ping` end-to-end with the commands feature (reinstall serene VIStk into `~/dev`).
+- [ ] WSL: re-verify `WOM ping` end-to-end with the commands feature (reinstall fixed VIStk into `~/dev`). **Deferred to manual testing (2026-05-23).** `is_compiled()` is platform-agnostic and Windows-compiled is verified from an arbitrary CWD; Linux is correct-by-construction (`python3`⇒dev, `WOM`⇒compiled). WSL env as of probe: `~/dev` venv present, `~/wnet` not mounted, no `~/build/PYWOM` yet.
 - [x] Update **issue #144** to the final command model.
 - [x] **PYWOM `CLAUDE.md`**: add the `commands/c_*.py` + `_c_<name>` convention to the VIStk conventions section (after "CLI / IPC Args"). It's the synced agent-instructions file. *(Done in `f7416bf`.)*
 - [x] **VIStk `changelog.md` + `documentation.md`** (and Sphinx `docs/source` if desired): document the CLI command model, two-binary, dev/compiled split, daemonize. (WOMDOCS just links to VIStk GitHub pages — nothing needed there.) *(changelog 0.5.2 + documentation Host CLI Commands; also de-duplicated changelog and promoted 0.5.1 Screen Isolation to Released.)*
