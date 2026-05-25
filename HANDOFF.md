@@ -47,7 +47,7 @@ A non-GUI **CLI command** path for the always-Host model, plus the cross-platfor
 | `9ff6655` | CLI runs **headless** when no Host is up (`Host._cli_run_local`) instead of launching the GUI — the command still executes in-process (`_HOST_INSTANCE` None ⇒ graceful degrade) |
 | `b7329b5` | Installer: stop creating the legacy empty hidden `.Runtime` dir (no per-screen exes under always-Host) — `.VIS` stays hidden (getPath needs `runtime/.VIS/project.json`) |
 | `4543936` | Uninstaller: read `install_log.json` + assets from the `runtime/` layout (was probing the install root → "no install_log.json found") |
-| `b7c50db` | Installer: include `release=true` **tabbed** screens (e.g. Landing) in Start Menu shortcuts — the loop only saw `selected_screens`, missing host-bundled tabbed screens (`_start_menu_screens`) |
+| `b7c50db` → reverted by `29817c1` | (Tried adding `release=true` tabbed screens to Start Menu shortcuts; **reverted** — Landing is the default screen, already opened by the main-app shortcut, so a Landing shortcut is redundant. Original `selected_screens` loop is correct: main app + release standalones = WOM, AssetManager, FloorView.) |
 
 PYWOM `master`: **`a71ffef`** — `commands/__init__.py` + sample `commands/c_ping.py`.
 
