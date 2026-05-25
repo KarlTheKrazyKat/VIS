@@ -58,22 +58,31 @@ handler.handle(sys.argv)
 # ── Locate install_log.json ──────────────────────────────────────────────────
 
 def _find_install_log():
-    """Return the parsed install_log.json dict and its parent directory."""
+    """Return the parsed install_log.json dict and the install ROOT.
+
+    Everything an install ships now lives under ``<root>/runtime/`` (the
+    Host exe, ``.VIS/``, ``Icons/``, ``Images/``, screen ``.pyd``s), so the
+    log is at ``<root>/runtime/.VIS/install_log.json``.  The returned
+    location is the install ROOT — the dir holding ``runtime/`` and this
+    ``Uninstaller.exe`` — matching ``log["install_location"]``; callers join
+    ``runtime/`` onto the paths the log records relative to it.
+    """
     if custom_path:
-        log_path = os.path.join(custom_path, ".VIS", "install_log.json")
+        base = custom_path
     elif getattr(sys, "frozen", False):
-        # Running as compiled exe — log is in same directory as exe
-        log_path = os.path.join(os.path.dirname(sys.executable), ".VIS", "install_log.json")
+        # Uninstaller.exe sits at the install root.
+        base = os.path.dirname(sys.executable)
     else:
         # Development fallback
-        log_path = os.path.join(os.path.dirname(__file__), ".VIS", "install_log.json")
+        base = os.path.dirname(__file__)
 
+    log_path = os.path.join(base, "runtime", ".VIS", "install_log.json")
     if not os.path.exists(log_path):
         return None, None
 
     with open(log_path, "r") as f:
         log = json.load(f)
-    return log, os.path.dirname(log_path)
+    return log, base
 
 
 # ── Core uninstall logic ─────────────────────────────────────────────────────
@@ -164,19 +173,19 @@ def remove_installed_files(log, location, progress_fn=None):
     """
     steps = []
 
-    # Screen executables
+    # Screen executables (recorded relative to runtime/)
     for scr in log.get("screens", []):
         exe = scr.get("executable", "")
         if exe:
-            steps.append(("file", os.path.join(location, exe), exe))
+            steps.append(("file", os.path.join(location, "runtime", exe), exe))
 
     # Directories (reversed so _internal/sub comes before _internal)
     dirs = sorted(log.get("directories", []), key=len, reverse=True)
     for d in dirs:
-        steps.append(("dir", os.path.join(location, d), d))
+        steps.append(("dir", os.path.join(location, "runtime", d), d))
 
     # install_log.json itself
-    steps.append(("file", os.path.join(location, ".VIS", "install_log.json"), ".VIS/install_log.json"))
+    steps.append(("file", os.path.join(location, "runtime", ".VIS", "install_log.json"), "runtime/.VIS/install_log.json"))
 
     total = len(steps)
     for i, (kind, path, label) in enumerate(steps):
@@ -411,7 +420,7 @@ _icon_ext = ".ico" if sys.platform == "win32" else ".xbm"
 if log is not None:
     try:
         _install_dir = log.get("install_location", location)
-        _vis_json = os.path.join(_install_dir, ".VIS", "project.json")
+        _vis_json = os.path.join(_install_dir, "runtime", ".VIS", "project.json")
         with open(_vis_json) as _f:
             _pinfo = json.load(_f)
         _ptitle = list(_pinfo.keys())[0]
@@ -419,7 +428,7 @@ if log is not None:
         _icon_name = (_pinfo[_ptitle].get("defaults", {}).get("uninstaller_icon")
                       or _pinfo[_ptitle].get("defaults", {}).get("icon", "VIS"))
         _icon_ext = ".ico" if sys.platform == "win32" else ".xbm"
-        _icon_path = os.path.join(_install_dir, "Icons", _icon_name + _icon_ext)
+        _icon_path = os.path.join(_install_dir, "runtime", "Icons", _icon_name + _icon_ext)
         if os.path.exists(_icon_path):
             d_icon = Image.open(_icon_path)
             _icon_photo = PIL.ImageTk.PhotoImage(d_icon)
@@ -509,7 +518,7 @@ for idx, scr in enumerate(installed_screens):
         _scr_info = _pinfo[_ptitle]["Screens"].get(name, {})
         _scr_icon_name = _scr_info.get("icon")
         if _scr_icon_name:
-            _scr_icon_path = os.path.join(_install_dir, "Icons", _scr_icon_name + _icon_ext)
+            _scr_icon_path = os.path.join(_install_dir, "runtime", "Icons", _scr_icon_name + _icon_ext)
             if os.path.exists(_scr_icon_path):
                 _scr_img = Image.open(_scr_icon_path)
     except Exception:
