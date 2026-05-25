@@ -169,7 +169,11 @@ class VINFO():
             info[self.title]["release_info"]["location"] = "./dist/"
             info[self.title]["release_info"]["hidden_imports"] = ["PIL._tkinter_finder"]
 
-            info[self.title]["host"] = {"script": ".VIS/Host.py"}
+            # ``add_to_path`` (default False, not prompted): when True a
+            # release installer adds the install's runtime/ dir to the user
+            # PATH so the project's Host CLI commands are callable anywhere.
+            info[self.title]["host"] = {"script": ".VIS/Host.py",
+                                        "add_to_path": False}
 
             with open(wd+"/.VIS/project.json","w") as f:
                 json.dump(info,f,indent=4)

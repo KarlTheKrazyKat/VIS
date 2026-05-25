@@ -445,7 +445,7 @@ def _group_of(screen_name: str) -> str | None:
     return None
 
 def write_install_log(location, selected_screens, desktop_shortcuts,
-                      start_menu_shortcuts=None):
+                      start_menu_shortcuts=None, path_entry=""):
     """Write install_log.json recording what was installed."""
     directories = [".VIS", "Icons", "Images"]
 
@@ -497,6 +497,7 @@ def write_install_log(location, selected_screens, desktop_shortcuts,
         "start_menu_shortcuts": list(start_menu_shortcuts or []),
         "directories": directories,
         "registry_key": registry_key,
+        "path_entry": path_entry,
     }
 
     log_path = os.path.join(location, "runtime", ".VIS", "install_log.json")
@@ -547,6 +548,74 @@ def register_uninstall(location):
             winreg.SetValueEx(key, "NoRepair", 0, winreg.REG_DWORD, 1)
     except Exception:
         pass
+
+
+def _broadcast_env_change():
+    """Notify running processes that the environment changed, so newly
+    launched shells pick up a PATH edit without a logout/restart."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        HWND_BROADCAST = 0xFFFF
+        WM_SETTINGCHANGE = 0x001A
+        SMTO_ABORTIFHUNG = 0x0002
+        ctypes.windll.user32.SendMessageTimeoutW(
+            HWND_BROADCAST, WM_SETTINGCHANGE, 0, "Environment",
+            SMTO_ABORTIFHUNG, 5000, ctypes.byref(ctypes.c_ulong()))
+    except Exception:
+        pass
+
+
+def add_runtime_to_path(location):
+    """Add ``<install>/runtime`` to the user's PATH when the project opts in
+    via ``host.add_to_path`` in project.json.
+
+    Per-user only (``HKCU\\Environment`` on Windows, ``~/.profile`` on POSIX)
+    — no admin needed, matching the per-user ``%LOCALAPPDATA%`` install — so
+    a user can call the Host CLI (e.g. ``WOM ping``) from any directory.
+    Returns the directory added so the install log can record it for a clean
+    removal on uninstall; returns ``""`` when nothing changed.
+    """
+    if not info[title].get("host", {}).get("add_to_path", False):
+        return ""
+    runtime_dir = os.path.join(location, "runtime")
+    if sys.platform == "win32":
+        try:
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment", 0,
+                                winreg.KEY_READ | winreg.KEY_SET_VALUE) as key:
+                try:
+                    cur, typ = winreg.QueryValueEx(key, "Path")
+                except FileNotFoundError:
+                    cur, typ = "", winreg.REG_EXPAND_SZ
+                entries = [p for p in cur.split(os.pathsep) if p]
+                norm = os.path.normcase(os.path.normpath(runtime_dir))
+                if not any(os.path.normcase(os.path.normpath(p)) == norm
+                           for p in entries):
+                    entries.append(runtime_dir)
+                    winreg.SetValueEx(key, "Path", 0, typ,
+                                      os.pathsep.join(entries))
+                    _broadcast_env_change()
+            print(f"  Added to PATH: {runtime_dir}")
+            return runtime_dir
+        except Exception as exc:
+            print(f"  Warning: could not add runtime to PATH: {exc}")
+            return ""
+    # POSIX: idempotently append an export to ~/.profile.
+    try:
+        profile = os.path.expanduser("~/.profile")
+        marker = f"# VIS:{title} runtime PATH"
+        existing = ""
+        if os.path.exists(profile):
+            with open(profile, "r", encoding="utf-8") as f:
+                existing = f.read()
+        if marker not in existing:
+            with open(profile, "a", encoding="utf-8") as f:
+                f.write(f'\nexport PATH="{runtime_dir}:$PATH"  {marker}\n')
+        return runtime_dir
+    except Exception:
+        return ""
 
 
 def verify_installation(location, arc) -> list[str]:
@@ -832,7 +901,9 @@ if QUIET is True:
                  install_root=True)
         q_start_menu.append(name)
 
-    write_install_log(location, cinstalls, dinstalls, q_start_menu)
+    q_path_entry = add_runtime_to_path(location)
+    write_install_log(location, cinstalls, dinstalls, q_start_menu,
+                      path_entry=q_path_entry)
     register_uninstall(location)
     print("Installation complete.")
     archive.close()
@@ -1695,8 +1766,9 @@ def binstall(desktop:list[str], selected_screens:list[str]):
     # Write install log and register in Add/Remove Programs
     file_label.config(text="Registering installation...")
     root.update()
+    path_entry = add_runtime_to_path(location)
     write_install_log(location, selected_screens, actual_shortcuts,
-                      start_menu_shortcuts)
+                      start_menu_shortcuts, path_entry=path_entry)
     register_uninstall(location)
 
     _log_write(f"install complete: {len(files_to_extract)} files, "

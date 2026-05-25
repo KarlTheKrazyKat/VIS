@@ -165,6 +165,58 @@ def remove_registry_entry(log):
         pass
 
 
+def _broadcast_env_change():
+    """Notify running processes that the environment changed (PATH edit)."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        HWND_BROADCAST = 0xFFFF
+        WM_SETTINGCHANGE = 0x001A
+        SMTO_ABORTIFHUNG = 0x0002
+        ctypes.windll.user32.SendMessageTimeoutW(
+            HWND_BROADCAST, WM_SETTINGCHANGE, 0, "Environment",
+            SMTO_ABORTIFHUNG, 5000, ctypes.byref(ctypes.c_ulong()))
+    except Exception:
+        pass
+
+
+def remove_runtime_from_path(log):
+    """Remove the install's runtime dir from the user's PATH, if the install
+    added it (recorded as ``path_entry`` in the install log)."""
+    entry = log.get("path_entry", "")
+    if not entry:
+        return
+    if sys.platform == "win32":
+        try:
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment", 0,
+                                winreg.KEY_READ | winreg.KEY_SET_VALUE) as key:
+                try:
+                    cur, typ = winreg.QueryValueEx(key, "Path")
+                except FileNotFoundError:
+                    return
+                norm = os.path.normcase(os.path.normpath(entry))
+                kept = [p for p in cur.split(os.pathsep)
+                        if p and os.path.normcase(os.path.normpath(p)) != norm]
+                winreg.SetValueEx(key, "Path", 0, typ, os.pathsep.join(kept))
+            _broadcast_env_change()
+        except Exception:
+            pass
+    else:
+        try:
+            profile = os.path.expanduser("~/.profile")
+            if not os.path.exists(profile):
+                return
+            marker = f"# VIS:{log.get('app_name','')} runtime PATH"
+            with open(profile, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+            with open(profile, "w", encoding="utf-8") as f:
+                f.writelines(ln for ln in lines if marker not in ln)
+        except Exception:
+            pass
+
+
 def remove_installed_files(log, location, progress_fn=None):
     """Remove screen executables, directories, and install_log.json.
 
@@ -386,6 +438,9 @@ if QUIET:
 
     remove_registry_entry(log)
     print("  Removed registry entry")
+
+    remove_runtime_from_path(log)
+    print("  Removed runtime from PATH")
 
     def _print_progress(step, total, label):
         print(f"  [{step}/{total}] {label}")
@@ -616,6 +671,7 @@ def _do_uninstall():
         progress_label.config(text="Removing registry entry...")
         root.update()
         remove_registry_entry(filtered_log)
+        remove_runtime_from_path(filtered_log)
 
     def _gui_progress(step, total, label):
         progress_label.config(text=label)
