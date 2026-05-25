@@ -334,7 +334,7 @@ def shortcut(name: str, location, screen: str | None = None,
 # through extal(), which conditionally chmods extensionless Linux files.
 _dir_prefixes = (
     "runtime/.VIS/", "runtime/Images/", "runtime/Icons/",
-    "runtime/Screens/", "runtime/modules/", "runtime/.Runtime/",
+    "runtime/Screens/", "runtime/modules/",
     "runtime/Shared/",
     "runtime/tcl/", "runtime/tcl8/", "runtime/tk/",
 )
@@ -351,22 +351,21 @@ def extal(file, location):
 def adjacents(location):
     """Pre-create dot-dirs inside runtime/ with hidden attribute on Windows.
 
-    .VIS and .Runtime are hidden so Explorer doesn't show them by default.
-    Images and Icons get pre-created for parity; archive.extract() would
-    auto-create them anyway.  All four live under runtime/ now (the new
-    layout); Uninstaller.exe and LICENSE remain at the install root.
+    .VIS is hidden so Explorer doesn't show it by default.  Images and Icons
+    get pre-created for parity; archive.extract() would auto-create them
+    anyway.  Uninstaller.exe and LICENSE remain at the install root.
+
+    The legacy ``.Runtime`` dir (the old per-screen-exe location) is no
+    longer created: under the always-Host model there are no per-screen
+    exes, so it was only ever an empty hidden folder.
     """
     runtime_root = os.path.join(location, "runtime")
     vis_dir = os.path.join(runtime_root, ".VIS")
-    dot_runtime = os.path.join(runtime_root, ".Runtime")
     os.makedirs(vis_dir, exist_ok=True)
     os.makedirs(os.path.join(runtime_root, "Images"), exist_ok=True)
     os.makedirs(os.path.join(runtime_root, "Icons"), exist_ok=True)
-    os.makedirs(dot_runtime, exist_ok=True)
     if sys.platform == "win32":
         subprocess.call(["attrib", "+h", vis_dir],
-                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        subprocess.call(["attrib", "+h", dot_runtime],
                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
@@ -435,7 +434,7 @@ def _group_of(screen_name: str) -> str | None:
 def write_install_log(location, selected_screens, desktop_shortcuts,
                       start_menu_shortcuts=None):
     """Write install_log.json recording what was installed."""
-    directories = [".VIS", "Icons", "Images", ".Runtime"]
+    directories = [".VIS", "Icons", "Images"]
 
     # Build screen list with versions.
     #
@@ -695,7 +694,7 @@ if QUIET is True:
     # Collect files to install.  Archive entries now use the runtime/
     # layout: all .exes and shared runtime files live under runtime/,
     # only Uninstaller.exe and LICENSE sit at archive root.
-    _base_prefixes_q = ("runtime/.VIS/", "runtime/Images/", "runtime/Icons/", "runtime/.Runtime/")
+    _base_prefixes_q = ("runtime/.VIS/", "runtime/Images/", "runtime/Icons/")
     _host_prefixes_q = ("runtime/Screens/", "runtime/modules/", "runtime/Shared/")
     # In quiet mode with no screens specified, install everything
     host_selected_q = (not cinstalls) or (title in cinstalls)
