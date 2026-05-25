@@ -44,6 +44,7 @@ A non-GUI **CLI command** path for the always-Host model, plus the cross-platfor
 | `3e82919` | CLI: bare-subcommand format (`WOM ping`, not `--ping`) |
 | `a70d203` | CLI commands: project-defined `commands/c_*.py`, drop built-in ping; `_Release.compile_commands()` -> `commands.pyd` |
 | `0ba0a16` | `is_compiled()` helper: detect compiled mode by exe name (not `sys.frozen`) — fixes CLI from arbitrary CWD under Nuitka `--standalone`; consolidates the dev/compiled split |
+| `9ff6655` | CLI runs **headless** when no Host is up (`Host._cli_run_local`) instead of launching the GUI — the command still executes in-process (`_HOST_INSTANCE` None ⇒ graceful degrade) |
 
 PYWOM `master`: **`a71ffef`** — `commands/__init__.py` + sample `commands/c_ping.py`.
 
@@ -63,6 +64,7 @@ PYWOM `master`: **`a71ffef`** — `commands/__init__.py` + sample `commands/c_pi
 
 - **Dev (Windows source):** `WOM ping` -> `pong from Host pid=…`; unknown command -> usage error listing known commands. ✓
 - **Compiled (Windows):** Full rebuild (13m, exit 0) with `commands.pyd` + the `is_compiled()` fix, installed by extracting `dist/binaries.zip` to the install dir (mimics the GUI installer). GUI `WOM.exe` primary launched **from `C:\`** (no project `.VIS` in CWD), bound lock port 60676; `WOM.com ping` → `pong from Host pid=… open_windows=1`; unknown command → `WOM: unrecognized command: … / known commands: ping`. Two-binary subsystems 2/3. **All from an arbitrary CWD** — the pre-fix build crashed here on `import modules.menu`. ✓
+- **Compiled (Windows) — no-Host CLI (`9ff6655`):** with no Host running, `WOM.com ping` from `C:\` → `pong … open_windows=0`, returns immediately, **no GUI / no lingering process** (was launching the GUI); unknown command → usage error; and with a GUI host up, `WOM.com ping` → remote `open_windows=1` (host-running path intact). ✓
 - **Linux (WSL2):** GUI launch daemonizes (terminal freed, Host detached); `ping` foreground roundtrip. ✓
 - **commands.pyd (compiled):** ⏳ a `VIS release` is finishing as of this writing — verify `runtime/commands.pyd` exists and compiled `WOM ping` works. The commands compile had a bug (source/copy package collision) fixed in `a70d203` by running Nuitka from the build-copy parent; manual compile of `commands.pyd` succeeded.
 
