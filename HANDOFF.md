@@ -49,8 +49,9 @@ A non-GUI **CLI command** path for the always-Host model, plus the cross-platfor
 | `4543936` | Uninstaller: read `install_log.json` + assets from the `runtime/` layout (was probing the install root → "no install_log.json found") |
 | `b7c50db` → reverted by `29817c1` | (Tried adding `release=true` tabbed screens to Start Menu shortcuts; **reverted** — Landing is the default screen, already opened by the main-app shortcut, so a Landing shortcut is redundant. Original `selected_screens` loop is correct: main app + release standalones = WOM, AssetManager, FloorView.) |
 | `f47856d` | Installer: **also** drop the launcher set (WOM/AssetManager/FloorView) in the install root via `shortcut(install_root=True)` — additive, Start Menu + desktop opt-in unchanged; uninstaller's install-root sweep removes them |
+| `d824881` | Installer: optional **`host.add_to_path`** — adds `<install>/runtime` to the user PATH (HKCU `Environment` / `~/.profile`) + `WM_SETTINGCHANGE` so Host CLI (`WOM ping`) works anywhere; recorded as `install_log.path_entry`; uninstaller removes it on full uninstall; VINFO seeds it `false` (no prompt) |
 
-PYWOM `master`: **`a71ffef`** — `commands/__init__.py` + sample `commands/c_ping.py`.
+PYWOM `master`: **`a71ffef`** — `commands/__init__.py` + sample `commands/c_ping.py`. **`5df7ea2`** — `host.add_to_path=true` (opt into the PATH feature for WOM).
 
 ---
 
