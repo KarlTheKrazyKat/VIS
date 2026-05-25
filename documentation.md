@@ -1297,14 +1297,13 @@ There is no mode flag. The first word (and its **aliases**) is resolved against 
 ```python
 # commands/c_ping.py
 import os
-from VIStk.Objects._cli import print_line
 
 def _c_ping(args):                 # runs ON the running Host
-    return (print_line, (f"pong from Host pid={os.getpid()}",))
+    return (print, (f"pong from Host pid={os.getpid()}",))
 ```
 
 - `_c_<name>(args)` runs **on the running Host** (so it can read live Host state). `args` is the list of words after the command name.
-- It returns a `(callable, args)` **continuation** for the terminal side to run next — or `None` to end the exchange. `VIStk.Objects._cli.print_line` is a generic terminal helper that prints a line.
+- It returns a `(callable, args)` **continuation** for the terminal side to run next — or `None` to end the exchange. The callable can be any importable function; to print, end the chain with the builtin `print` (it crosses the socket as `builtins:print`).
 - VIStk ships **no** commands of its own; commands live in the project.
 
 **Discovery:** `commands.__all__` is the manifest. In dev, `commands/__init__.py` scans for `c_*.py`; `VIS release` bakes a static `__all__` into `commands.pyd`. The Host imports `commands.c_<name>` lazily on demand.

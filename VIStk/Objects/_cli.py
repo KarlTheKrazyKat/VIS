@@ -15,6 +15,10 @@ Wire messages (length-prefixed JSON, 4-byte big-endian length):
 
 ``H``-side functions run on the Tk main loop -- they must NOT block.
 ``T``-side functions run on T's own pump and may block (``input()`` etc.).
+
+A continuation's callable can be ANY importable function -- there is no need
+for VIStk-supplied wrappers.  To print terminal-side, end a chain with the
+builtin directly: ``return (print, (text,))`` (it crosses as ``builtins:print``).
 """
 from __future__ import annotations
 
@@ -91,15 +95,3 @@ def send_msg(conn, msg: dict) -> None:
     """Frame and send one JSON message."""
     data = json.dumps(msg).encode("utf-8")
     conn.sendall(len(data).to_bytes(4, "big") + data)
-
-
-# -- generic continuation helper (commands themselves live in the project) ----
-
-def print_line(text: str):
-    """Terminal-side helper: print *text* to the terminal.  A terminal end of
-    a continuation chain (returns no further continuation) -- handy as the
-    last step of a project command's chain.
-
-    VIStk ships no commands of its own; a project defines them as
-    ``commands/c_<name>.py`` files (each with a ``_c_<name>(args)`` entry)."""
-    print(text)

@@ -785,7 +785,7 @@ Built on PR #143 (`host-single-instance`) — implemented and verified, not yet 
 - Invoke as a **bare subcommand**: `<project> <command>` (e.g. `WOM ping`) — no mode flag. A registered screen name still launches the GUI (the screen registry is checked first); any other first word is a command, and an unknown one prints a usage error listing `commands.__all__`.
 - A command is a project file **`commands/c_<name>.py`** with an entry **`_c_<name>(args)`** (mirrors the `_m_<name>` convention). `_c_<name>` runs **on the running Host** and returns a `(callable, args)` continuation for the terminal side, or `None`; `args` is the words after the command name.
 - Discovery via **`commands.__all__`** — built dynamically in dev (`commands/__init__.py` scans `c_*.py`), baked **static** into `commands.pyd` by `VIS release`. The Host imports `commands.c_<name>` lazily.
-- VIStk ships **no** commands. `VIStk.Objects._cli` is the transport plus the generic `print_line` terminal helper.
+- VIStk ships **no** commands. `VIStk.Objects._cli` is just the transport — a continuation prints terminal-side by ending with the builtin `print` (it crosses as `builtins:print`); no VIStk wrapper needed.
 - **No Host running:** a CLI command still runs — in-process and **headless** (no Tk, no socket; `Host._cli_run_local`), and never launches the GUI as a side effect of being the first instance. The continuation chain executes locally with `_HOST_INSTANCE` left `None`, so commands that read live Host state degrade gracefully (e.g. `ping` reports `open_windows=0`). An unknown command still prints the usage error.
 
 **CLI help, aliases & screen intercepts**
