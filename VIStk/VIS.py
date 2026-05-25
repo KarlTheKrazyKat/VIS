@@ -18,7 +18,55 @@ def unzip_without_overwrite(src_path, dst_dir):
             if not os.path.exists(file_path):
                 zf.extract(member, dst_dir)
 
+
+def _is_cli_launch(extra) -> bool:
+    """True when ``VIS <project> *extra`` is a CLI invocation (the Host prints
+    and exits) rather than a GUI launch (the Host runs its event loop).
+
+    ``--help`` / ``-h``, or a first non-flag token that isn't a registered
+    screen (i.e. a command), is CLI.  A bare run or a screen name is GUI.
+    """
+    if any(a in ("--help", "-h") for a in extra):
+        return True
+    try:
+        proj = Project()
+    except Exception:
+        return False
+    for a in extra:
+        if not a.startswith("-"):
+            return proj.getScreen(a) is None
+    return False
+
+
+def _run_project(extra):
+    """Run the project's Host in dev with *extra* forwarded.
+
+    A CLI invocation runs to completion with inherited stdio (output shows,
+    the shell waits); a GUI launch is detached so the terminal is freed.
+    """
+    host_path = str(Path(getPath()) / ".VIS" / "Host.py")
+    cmd = [sys.executable, host_path, *extra]
+    if _is_cli_launch(extra):
+        subprocess.run(cmd)
+    else:
+        subprocess.Popen(cmd)
+
+
 def __main__():
+    # `VIS <ProjectName> [args]` runs the project's Host in dev.  Forward
+    # everything -- including --help -- so the project's own CLI answers,
+    # instead of VIS's --help / command dispatch capturing it.  Guarded by
+    # getPath() so Project() is only built inside an existing project (VINFO
+    # otherwise prompts to CREATE one, e.g. for `VIS new`).
+    if len(inp) >= 2 and getPath() is not None:
+        try:
+            _proj_title = Project().title
+        except Exception:
+            _proj_title = None
+        if inp[1] == _proj_title:
+            _run_project(inp[2:])
+            return
+
     if any(a in ("--help", "-h") for a in inp[1:]):
         from VIStk.Structures._Help import contextual_help
         contextual_help([a for a in inp if a not in ("--help", "-h")])
@@ -273,11 +321,6 @@ def __main__():
             rel.restoreAll()
 
         case _:
-            project = Project()
-            if inp[1] == project.title:
-                # VIS <ProjectName> [ScreenName] — launch Host subprocess
-                host_path = str(Path(getPath()) / ".VIS" / "Host.py")
-                extra_args = inp[2:]  # screen name if provided
-                subprocess.Popen([sys.executable, host_path] + extra_args)
-            else:
-                print(f"Unknown command: \"{inp[1]}\". Run 'VIS -v' for version info.")
+            # `VIS <ProjectName> ...` (dev project run) is handled at the top
+            # of __main__; anything reaching here is an unknown command.
+            print(f"Unknown command: \"{inp[1]}\". Run 'VIS --help' for usage.")
