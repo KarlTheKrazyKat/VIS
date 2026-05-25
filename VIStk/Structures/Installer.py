@@ -431,6 +431,30 @@ def _group_of(screen_name: str) -> str | None:
             return gname
     return None
 
+def _start_menu_screens(installed):
+    """Screens that get an auto-created Start Menu shortcut: the project
+    itself plus every installed ``release=true`` screen.
+
+    *installed* is the list of installed components (the GUI's
+    ``selected_screens`` / quiet's ``cinstalls``).  Standalone release
+    screens appear there directly, but a ``release=true`` *tabbed* screen
+    is installed as part of the host bundle (``title`` in *installed*) and
+    isn't listed individually — so the host's tabbed screens are folded in
+    before the release filter, otherwise a tabbed launch point such as the
+    project's landing screen would never get a shortcut.
+    """
+    names = list(installed)
+    if title in installed:
+        for sname, scfg in info[title]["Screens"].items():
+            if scfg.get("tabbed") and sname not in names:
+                names.append(sname)
+    return [
+        name for name in names
+        if name == title
+        or bool(info[title]["Screens"].get(name, {}).get("release"))
+    ]
+
+
 def write_install_log(location, selected_screens, desktop_shortcuts,
                       start_menu_shortcuts=None):
     """Write install_log.json recording what was installed."""
@@ -804,15 +828,12 @@ if QUIET is True:
         print(f"  Creating shortcut: {i}")
         shortcut(i, location, screen=(None if i == title else i))
 
-    # Start Menu shortcuts: project + every installed release=true screen.
+    # Start Menu shortcuts: project + every installed release=true screen
+    # (including release=true tabbed screens bundled with the host).
     q_start_menu = []
-    for name in cinstalls:
-        is_project = (name == title)
-        is_release = bool(info[title]["Screens"].get(name, {}).get("release"))
-        if not (is_project or is_release):
-            continue
+    for name in _start_menu_screens(cinstalls):
         print(f"  Start Menu shortcut: {name}")
-        shortcut(name, location, screen=(None if is_project else name),
+        shortcut(name, location, screen=(None if name == title else name),
                  start_menu=True)
         q_start_menu.append(name)
 
@@ -1662,14 +1683,10 @@ def binstall(desktop:list[str], selected_screens:list[str]):
     # double-click), so they're created automatically rather than via
     # the opt-in desktop page.
     start_menu_shortcuts = []
-    for name in selected_screens:
-        is_project = (name == title)
-        is_release = bool(info[title]["Screens"].get(name, {}).get("release"))
-        if not (is_project or is_release):
-            continue
+    for name in _start_menu_screens(selected_screens):
         file_label.config(text=f"Start Menu: {name}")
         root.update()
-        shortcut(name, location, screen=(None if is_project else name),
+        shortcut(name, location, screen=(None if name == title else name),
                  start_menu=True)
         start_menu_shortcuts.append(name)
 
