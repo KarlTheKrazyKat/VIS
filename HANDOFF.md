@@ -51,8 +51,13 @@ A non-GUI **CLI command** path for the always-Host model, plus the cross-platfor
 | `f47856d` | Installer: **also** drop the launcher set (WOM/AssetManager/FloorView) in the install root via `shortcut(install_root=True)` — additive, Start Menu + desktop opt-in unchanged; uninstaller's install-root sweep removes them |
 | `d824881` | Installer: optional **`host.add_to_path`** — adds `<install>/runtime` to the user PATH (HKCU `Environment` / `~/.profile`) + `WM_SETTINGCHANGE` so Host CLI (`WOM ping`) works anywhere; recorded as `install_log.path_entry`; uninstaller removes it on full uninstall; VINFO seeds it `false` (no prompt) |
 | `437f61d` | Build fix: `_resolve_runtime_deps` now parses **bare PEP 508 version specifiers** (`foo>=1`), so gcsa's whole `google*` subtree is bundled into `pywomlib.pyd` — fixes runtime `No module named 'google'` when a screen imports `pywomlib.library` (deps 9 → 40). `isidentifier()` guard drops malformed top-levels |
+| `d8e142b` | CLI **`--help`** listing + long help + command/screen **aliases** (`__help__` / `__alias__`; `_cli_registry` + `_resolve_startup` replacing `_resolve_startup_screen`/`_args`) |
+| `4d4b59b` | CLI **screen intercepts** (Option 2): `c_<Screen>.py`'s `_c_<Screen>(args)` → `None` (launch orig) / `list` (launch transformed) / `(callable,args)` (terminal CLI response, no launch), via `Host._run_screen_intercept` |
+| `ef3e794` | docs: CLI help/alias/intercept (documentation.md + changelog 0.5.3) |
 
-PYWOM `master`: **`a71ffef`** — `commands/__init__.py` + sample `commands/c_ping.py`. **`5df7ea2`** — `host.add_to_path=true` (opt into the PATH feature for WOM).
+PYWOM `master`: **`a71ffef`** — `commands/__init__.py` + sample `commands/c_ping.py`. **`5df7ea2`** — `host.add_to_path=true` (opt into the PATH feature for WOM). **`ce1193e`** — c_ping `__help__`/`__alias__='pong'` demo. **`379d9e7`** — CLAUDE.md CLI help/alias/intercept conventions (synced to user-global + WOMDOCS).
+
+> **CLI help/alias/intercept feature (`d8e142b`, `4d4b59b`) is dev-tested only — NOT yet verified in a compiled build.** A full `VIS release` is still needed to confirm `WOM --help` / `WOM pong` / intercepts work from `commands.pyd` + `VIStk.pyd`.
 
 ---
 
