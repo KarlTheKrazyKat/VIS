@@ -45,6 +45,9 @@ A non-GUI **CLI command** path for the always-Host model, plus the cross-platfor
 | `a70d203` | CLI commands: project-defined `commands/c_*.py`, drop built-in ping; `_Release.compile_commands()` -> `commands.pyd` |
 | `0ba0a16` | `is_compiled()` helper: detect compiled mode by exe name (not `sys.frozen`) — fixes CLI from arbitrary CWD under Nuitka `--standalone`; consolidates the dev/compiled split |
 | `9ff6655` | CLI runs **headless** when no Host is up (`Host._cli_run_local`) instead of launching the GUI — the command still executes in-process (`_HOST_INSTANCE` None ⇒ graceful degrade) |
+| `b7329b5` | Installer: stop creating the legacy empty hidden `.Runtime` dir (no per-screen exes under always-Host) — `.VIS` stays hidden (getPath needs `runtime/.VIS/project.json`) |
+| `4543936` | Uninstaller: read `install_log.json` + assets from the `runtime/` layout (was probing the install root → "no install_log.json found") |
+| `b7c50db` | Installer: include `release=true` **tabbed** screens (e.g. Landing) in Start Menu shortcuts — the loop only saw `selected_screens`, missing host-bundled tabbed screens (`_start_menu_screens`) |
 
 PYWOM `master`: **`a71ffef`** — `commands/__init__.py` + sample `commands/c_ping.py`.
 
