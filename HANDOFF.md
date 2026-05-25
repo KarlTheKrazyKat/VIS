@@ -48,6 +48,7 @@ A non-GUI **CLI command** path for the always-Host model, plus the cross-platfor
 | `b7329b5` | Installer: stop creating the legacy empty hidden `.Runtime` dir (no per-screen exes under always-Host) — `.VIS` stays hidden (getPath needs `runtime/.VIS/project.json`) |
 | `4543936` | Uninstaller: read `install_log.json` + assets from the `runtime/` layout (was probing the install root → "no install_log.json found") |
 | `b7c50db` → reverted by `29817c1` | (Tried adding `release=true` tabbed screens to Start Menu shortcuts; **reverted** — Landing is the default screen, already opened by the main-app shortcut, so a Landing shortcut is redundant. Original `selected_screens` loop is correct: main app + release standalones = WOM, AssetManager, FloorView.) |
+| `f47856d` | Installer: **also** drop the launcher set (WOM/AssetManager/FloorView) in the install root via `shortcut(install_root=True)` — additive, Start Menu + desktop opt-in unchanged; uninstaller's install-root sweep removes them |
 
 PYWOM `master`: **`a71ffef`** — `commands/__init__.py` + sample `commands/c_ping.py`.
 
