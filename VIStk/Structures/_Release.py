@@ -843,7 +843,13 @@ class Release(Project):
                 head, _, marker = req.partition(";")
                 if "extra ==" in marker:
                     continue   # extras-only dep; not a runtime requirement
-                dep_name = head.split("[")[0].split("(")[0].split()[0].strip()
+                # Strip PEP 508 version specifiers / extras to get the bare
+                # distribution name.  The old split only handled the
+                # parenthesised form ``foo (>=1)``; a bare specifier like
+                # ``google-api-python-client>=1.8`` (what gcsa declares) leaked
+                # the version into the name, so the dep — and its whole subtree
+                # (e.g. the entire ``google`` namespace) — was silently dropped.
+                dep_name = _re.split(r"[<>=!~;\s\[\(]", head, maxsplit=1)[0].strip()
                 if not dep_name:
                     continue
                 norm = dep_name.lower().replace("_", "-")
@@ -852,7 +858,11 @@ class Release(Project):
                 seen_dists.add(norm)
                 queue.append(dep_name)
                 for top in self._dist_to_top_levels(dep_name):
-                    if top not in seen_tops:
+                    # Guard against malformed entries (e.g. a stray
+                    # "pkg/subdir" from a bad top_level.txt) that would become
+                    # an invalid ``--follow-import-to`` argument and could
+                    # break the Nuitka build.
+                    if top.isidentifier() and top not in seen_tops:
                         seen_tops.add(top)
                         top_levels.append(top)
         return top_levels
