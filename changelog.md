@@ -788,6 +788,12 @@ Built on PR #143 (`host-single-instance`) — implemented and verified, not yet 
 - VIStk ships **no** commands. `VIStk.Objects._cli` is the transport plus the generic `print_line` terminal helper.
 - **No Host running:** a CLI command still runs — in-process and **headless** (no Tk, no socket; `Host._cli_run_local`), and never launches the GUI as a side effect of being the first instance. The continuation chain executes locally with `_HOST_INSTANCE` left `None`, so commands that read live Host state degrade gracefully (e.g. `ping` reports `open_windows=0`). An unknown command still prints the usage error.
 
+**CLI help, aliases & screen intercepts**
+
+- **`--help` / `-h`:** `<project> --help` lists every screen and command as `name | alias…` + short help; `<project> <cmd> --help` prints the long help. A `c_*.py` documents itself with **`__help__`** (a list of strings: `[0]` short, `[-1]` long; one string ⇒ short == long). Answered terminal-side before any Host/lock — no running Host needed. Screens with no `c_<Screen>.py` get auto help `Launches the <Screen> screen.`; missing command help degrades to `(no description)`.
+- **Aliases (`__alias__`):** a str or list on a `c_*.py` gives a command **or** a screen alternate names — `__alias__ = "pong"` in `c_ping.py` makes `WOM ping` == `WOM pong`; `__alias__ = "ewo"` in `c_WorderEditor.py` makes `WOM ewo` open WorderEditor. Resolution: exact name (screen → command) first, then alias, case-insensitive; real names beat aliases. `_resolve_startup` (replacing `_resolve_startup_screen`/`_args`) routes the first non-flag token through this registry.
+- **Screen intercepts (`_c_<Screen>`, Option 2):** a `c_<Screen>.py` may add an `_c_<Screen>(args)` intercept that runs on the Host before the screen opens — return `None` → launch with the original args, a `list` → launch with transformed args, a `(callable, args)` continuation → run terminal-side as a CLI response and do **not** open the screen (e.g. arg validation). Host-running routes through `Host._run_screen_intercept` over the exchange; no-Host runs it in-process, then becomes the GUI Host with the resulting args (or stays headless for a continuation). `_resolve_command(<screen>)` doubles as the intercept lookup.
+
 **CLI transport — continuation-passing two-pump**
 
 - Two roles, same shape: **H** (running Host, Tk loop) and **T** (terminal-launched). Each has a queue, a pump, and a socket bridge.

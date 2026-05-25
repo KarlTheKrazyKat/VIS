@@ -1290,7 +1290,7 @@ A project can expose **non-GUI commands** that run inside the always-Host, invok
 WOM ping
 ```
 
-There is no mode flag. The first word is resolved against the **screen registry first** (a screen name launches the GUI), then the **command registry**; an unrecognized first word prints a usage error listing the known commands.
+There is no mode flag. The first word (and its **aliases**) is resolved against the screens first (a screen name launches the GUI), then the commands (which run on the Host); an unrecognized word prints a usage error. `<title> --help` lists every command/screen, and `<title> <command> --help` shows one command's long help (see below).
 
 **Defining a command** — one file per command, `commands/c_<name>.py`, with an entry `_c_<name>(args)` (mirrors the `_m_<name>` screen-hook convention):
 
@@ -1308,6 +1308,18 @@ def _c_ping(args):                 # runs ON the running Host
 - VIStk ships **no** commands of its own; commands live in the project.
 
 **Discovery:** `commands.__all__` is the manifest. In dev, `commands/__init__.py` scans for `c_*.py`; `VIS release` bakes a static `__all__` into `commands.pyd`. The Host imports `commands.c_<name>` lazily on demand.
+
+**Help (`--help` / `-h`):** `<title> --help` prints the full listing — every screen and command, each as `name | alias1 | alias2` plus its short help; `<title> <command> --help` prints that command's long help. A command/screen documents itself with a module-level **`__help__`** list of strings: `[0]` is the short help, `[-1]` the long (one string ⇒ short == long). `--help` is answered terminal-side before any Host/lock, so it needs no running Host. Screens with no `c_<Screen>.py` get an auto short help, `Launches the <Screen> screen.`.
+
+**Aliases (`__alias__`):** a module-level **`__alias__`** (a string or a list) on a `commands/c_*.py` gives a command — or a screen — alternate names. `__alias__ = "pong"` in `c_ping.py` makes `WOM ping` and `WOM pong` equivalent; `__alias__ = "ewo"` in `c_WorderEditor.py` makes `WOM ewo` open the WorderEditor screen. Resolution tries the exact name (screen, then command), then aliases, case-insensitively; real names always beat aliases.
+
+**Screens as commands & intercepts:** `WOM <Screen>` launches a screen (its `ArgHandler` consumes any `--Flag value` args). A `commands/c_<Screen>.py` may augment a screen with `__help__` / `__alias__` and — optionally — an **`_c_<Screen>(args)` intercept** that runs on the Host before the screen opens:
+
+- return `None` → open the screen with the **original** args;
+- return a **list** → open the screen with those (transformed) args;
+- return a `(callable, args)` **continuation** → run it terminal-side as a CLI response and do **not** open the screen (e.g. reject invalid args).
+
+So `WOM ewo pf 254` can run `_c_WorderEditor(['pf','254'])`, convert `pf 254` into a work-order number, and open WorderEditor with `['--won', '<wonum>']`. (An augmenting file may define only `__help__` / `__alias__` and no `_c_<Screen>` — then the screen just launches normally with custom help/aliases.)
 
 **Transport (continuation-passing two-pump):** the terminal-launched instance (**T**) and the running Host (**H**) each run a queue + pump + socket bridge. A continuation crosses the socket **by reference** (`module:qualname`, re-imported on the far side — both ends are the same binary); closures can't cross and args must be JSON-serializable. Every message gets exactly one reply, so T terminates when its queue is empty and nothing is outstanding. **H-side functions must not block** (they run on the Tk loop); **T-side functions may block** (e.g. `input()`).
 
