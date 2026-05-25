@@ -50,8 +50,17 @@ class Host:
         # exe).  Resolve it (and any trailing CLI args) BEFORE creating any
         # Tk object, so the single-instance forward path can hand the
         # request to a running Host and exit without spinning up a root.
-        self._startup_screen: str | None = self._resolve_startup_screen()
-        self._startup_args: list[str] = self._resolve_startup_args()
+        self._startup_screen, self._startup_args = self._resolve_startup()
+
+        # ``--help`` / ``-h`` is pure terminal output (the full command listing
+        # for a bare ``--help``, or one command's long help) — it needs no
+        # Host, lock, or daemonize, so handle it first and go inert.
+        _help_token, _, _help_flag = self._cli_tokens()
+        if _help_flag:
+            print(self._cli_help_text(_help_token))
+            self.Active = False
+            _HOST_INSTANCE = self
+            return
 
         # Host-level CLI commands are discovered lazily from the project's
         # ``commands`` package (``commands/c_<name>.py`` -> ``_c_<name>``) when
@@ -136,41 +145,32 @@ class Host:
         # later launches.
         self._start_ipc_listener()
 
-    def _resolve_startup_screen(self) -> str | None:
-        """Return the screen name passed on the command line, or None.
+    def _resolve_startup(self) -> tuple:
+        """Resolve the launch into ``(startup_screen, startup_args)``.
 
-        Walks ``sys.argv[1:]`` (Python skips ``argv[0]`` = script path in
-        dev mode; frozen builds get the exe path as ``argv[0]``).  Only
-        returns a name that matches a registered screen — unknown args
-        fall through and the project's ``default_screen`` is used.
+        The first non-flag word is the command/screen token, resolved through
+        the CLI registry so aliases work (a screen alias launches its screen,
+        a command alias runs its command):
+
+          * token is a **screen** (or screen alias) → ``(name, args)`` — a GUI
+            launch/forward; the screen's ``ArgHandler`` consumes ``args``.
+          * token is a **command** (or command alias) → ``(None, [name, *args])``
+            — a CLI invocation (``_is_cli_invocation`` is then true).
+          * unknown token → ``(None, [token, *args])`` so the CLI path emits a
+            usage error.
+          * no token (bare launch) → ``(None, [])`` — bring the Host forward.
+
+        ``--help`` / ``-h`` is handled in ``__init__`` before this is consulted.
         """
-        for arg in sys.argv[1:]:
-            if arg.startswith("-"):
-                continue
-            # Ignore the host script path itself if it appears in argv
-            if arg.endswith(".py") and Path(arg).name.lower() == "host.py":
-                continue
-            if self.Project.getScreen(arg) is not None:
-                return arg
-        return None
-
-    def _resolve_startup_args(self) -> list[str]:
-        """CLI args to forward alongside the startup screen.
-
-        Everything in ``sys.argv[1:]`` except the host script path and
-        the resolved startup screen name — i.e. the ``--Flag value``
-        pairs a screen's ``ArgHandler`` would consume.  Captured here so
-        the single-instance forward path can hand them to the running
-        Host along with the screen name.
-        """
-        out: list[str] = []
-        for arg in sys.argv[1:]:
-            if arg.endswith(".py") and Path(arg).name.lower() == "host.py":
-                continue
-            if arg == self._startup_screen:
-                continue
-            out.append(arg)
-        return out
+        token, args, _help = self._cli_tokens()
+        kind, name = self._resolve_token(token)
+        if kind == "screen":
+            return name, args
+        if kind == "command":
+            return None, [name, *args]
+        if token is not None:
+            return None, [token, *args]
+        return None, []
 
     # ── Single instance (localhost socket mutex + open-request forwarding) ──────
     #
@@ -308,6 +308,146 @@ class Host:
             m[2:] for m in (getattr(pkg, "__all__", []) or [])
             if isinstance(m, str) and m.startswith("c_")
         )
+
+    # ── CLI registry: screens + commands, aliases, help ──────────────────────
+    #
+    # A CLI token can name a project SCREEN (``wom WorderEditor``) or a
+    # standalone COMMAND (``wom ping``).  Either may carry ``__help__`` and
+    # ``__alias__`` (and, for a screen, an ``_c_<Screen>`` intercept) via a
+    # ``commands/c_<name>.py`` file.  ``__help__`` is a list of strings,
+    # ``[0]`` short / ``[-1]`` long; ``__alias__`` is a str or list.
+
+    @staticmethod
+    def _as_list(val) -> list:
+        """Normalize a str | list | None attribute to a list."""
+        if val is None:
+            return []
+        return [val] if isinstance(val, str) else list(val)
+
+    def _screen_names(self) -> list:
+        """Every screen name the project knows."""
+        try:
+            from VIStk.Structures._Group import Group
+            return [s.name for s in self.Project.Groups[Group.ALL].screenlist]
+        except Exception:
+            return []
+
+    @staticmethod
+    def _command_module(name: str):
+        """Import ``commands.c_<name>`` and return the module, or None."""
+        import importlib
+        try:
+            return importlib.import_module(f"commands.c_{name}")
+        except Exception:
+            return None
+
+    @staticmethod
+    def _iter_command_modules():
+        """Yield ``(name, module)`` for each ``commands/c_<name>.py``."""
+        import importlib
+        try:
+            pkg = importlib.import_module("commands")
+        except Exception:
+            return
+        for m in (getattr(pkg, "__all__", []) or []):
+            if not (isinstance(m, str) and m.startswith("c_")):
+                continue
+            try:
+                mod = importlib.import_module(f"commands.{m}")
+            except Exception:
+                continue
+            yield m[2:], mod
+
+    def _cli_registry(self) -> tuple:
+        """Build the unified CLI registry.
+
+        Returns ``(entries, alias_map)``:
+          * ``entries[name] = {"kind": "screen"|"command", "aliases": [...],
+            "help": [short, ..., long]}``
+          * ``alias_map[lower(name_or_alias)] = canonical_name`` (real names
+            win; first alias wins on collision).
+
+        Screens come from the project; a ``commands/c_<Screen>.py`` augments
+        one with custom ``__help__`` / ``__alias__`` (+ optional intercept).
+        A ``commands/c_<name>.py`` whose name is not a screen is a standalone
+        command.  Screens with no augmenting file get auto help.
+        """
+        entries: dict = {}
+        screen_set = set(self._screen_names())
+        for sname in self._screen_names():
+            mod = self._command_module(sname)
+            aliases = self._as_list(getattr(mod, "__alias__", None)) if mod else []
+            help_ = self._as_list(getattr(mod, "__help__", None)) if mod else []
+            if not help_:
+                help_ = [f"Launches the {sname} screen."]
+            entries[sname] = {"kind": "screen", "aliases": aliases, "help": help_}
+        for cname, mod in self._iter_command_modules():
+            if cname in screen_set:
+                continue  # screen augmentation, already folded in above
+            aliases = self._as_list(getattr(mod, "__alias__", None))
+            help_ = self._as_list(getattr(mod, "__help__", None)) or ["(no description)"]
+            entries[cname] = {"kind": "command", "aliases": aliases, "help": help_}
+        alias_map: dict = {}
+        for name in entries:
+            alias_map.setdefault(name.lower(), name)
+        for name, info in entries.items():
+            for a in info["aliases"]:
+                alias_map.setdefault(a.lower(), name)  # real names already set
+        return entries, alias_map
+
+    def _resolve_token(self, token: str) -> tuple:
+        """Resolve a CLI token to ``(kind, name)`` or ``(None, None)``.
+
+        Exact name (screen or command) first, then alias; case-insensitive
+        fallback.  Real names always beat aliases."""
+        if not token:
+            return None, None
+        entries, alias_map = self._cli_registry()
+        if token in entries:
+            return entries[token]["kind"], token
+        name = alias_map.get(token.lower())
+        if name:
+            return entries[name]["kind"], name
+        return None, None
+
+    def _cli_help_text(self, token) -> str:
+        """Help output: the full listing (``token`` falsy) or one command's
+        long help (``__help__[-1]``)."""
+        entries, alias_map = self._cli_registry()
+        if not token:
+            lines = []
+            for name in sorted(entries, key=str.lower):
+                info = entries[name]
+                head = " | ".join([name] + info["aliases"])
+                lines.append(f"{head}\n\t{info['help'][0]}")
+            return "\n".join(lines)
+        name = token if token in entries else alias_map.get(token.lower())
+        if not name or name not in entries:
+            known = ", ".join(sorted(entries, key=str.lower))
+            return (f"{self.Project.title}: unrecognized command: {token}\n"
+                    f"known: {known}")
+        return entries[name]["help"][-1]
+
+    def _cli_tokens(self) -> tuple:
+        """Parse ``sys.argv`` into ``(token, args, help_flag)``.
+
+        ``token`` = first non-flag word (the command/screen name); ``args`` =
+        the rest (screen ``--Flag value`` pairs preserved); ``help_flag`` =
+        ``--help`` / ``-h`` present anywhere."""
+        token = None
+        args: list = []
+        help_flag = False
+        for arg in sys.argv[1:]:
+            if arg.endswith(".py") and Path(arg).name.lower() == "host.py":
+                continue
+            if arg in ("--help", "-h"):
+                help_flag = True
+                continue
+            if token is None and not arg.startswith("-"):
+                token = arg
+            else:
+                args.append(arg)
+        return token, args, help_flag
 
     def _cli_exchange(self, initial) -> None:
         """T side of the continuation-passing exchange.
