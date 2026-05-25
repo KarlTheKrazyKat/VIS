@@ -262,7 +262,7 @@ def _start_menu_dir():
 
 
 def shortcut(name: str, location, screen: str | None = None,
-             start_menu: bool = False):
+             start_menu: bool = False, install_root: bool = False):
     """Create a shortcut that launches the Host, optionally opening *screen*.
 
     Under the always-Host model there are no per-screen executables —
@@ -278,6 +278,10 @@ def shortcut(name: str, location, screen: str | None = None,
                      opens the default screen.
         start_menu:  True → Start Menu (``Programs/<title>/``); False →
                      Desktop.
+        install_root: True → place the .lnk in the install root
+                     (``location``) itself, a clickable launcher set inside
+                     the install folder.  Takes precedence over
+                     ``start_menu``.
     """
     ext = ".exe" if sys.platform == "win32" else ""
     host_exe = os.path.join(location, "runtime", f"{title}{ext}")
@@ -293,7 +297,12 @@ def shortcut(name: str, location, screen: str | None = None,
                  if icon_name else None)
 
     if sys.platform == "win32":
-        folder = _start_menu_dir() if start_menu else winshell.desktop()
+        if install_root:
+            folder = location
+        elif start_menu:
+            folder = _start_menu_dir()
+        else:
+            folder = winshell.desktop()
         os.makedirs(folder, exist_ok=True)
         kwargs = dict(
             Path=os.path.join(folder, f"{name}.lnk"),
@@ -306,8 +315,12 @@ def shortcut(name: str, location, screen: str | None = None,
             kwargs["Icon"] = (icon_path, 0)
         winshell.CreateShortcut(**kwargs)
     else:
-        folder = (_start_menu_dir() if start_menu
-                  else str(platformdirs.user_desktop_path()))
+        if install_root:
+            folder = location
+        elif start_menu:
+            folder = _start_menu_dir()
+        else:
+            folder = str(platformdirs.user_desktop_path())
         os.makedirs(folder, exist_ok=True)
         exec_line = host_exe + (f" {screen}" if screen else "")
         lines = ["[Desktop Entry]\n", f"Name={name}\n"]
@@ -814,6 +827,9 @@ if QUIET is True:
         print(f"  Start Menu shortcut: {name}")
         shortcut(name, location, screen=(None if is_project else name),
                  start_menu=True)
+        # Same launcher set also dropped in the install root itself.
+        shortcut(name, location, screen=(None if is_project else name),
+                 install_root=True)
         q_start_menu.append(name)
 
     write_install_log(location, cinstalls, dinstalls, q_start_menu)
@@ -1671,6 +1687,9 @@ def binstall(desktop:list[str], selected_screens:list[str]):
         root.update()
         shortcut(name, location, screen=(None if is_project else name),
                  start_menu=True)
+        # Same launcher set also dropped in the install root itself.
+        shortcut(name, location, screen=(None if is_project else name),
+                 install_root=True)
         start_menu_shortcuts.append(name)
 
     # Write install log and register in Add/Remove Programs
