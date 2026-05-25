@@ -87,6 +87,25 @@ class Host:
             _HOST_INSTANCE = self
             return
 
+        # We hold the lock → no Host was running.  A console command must
+        # still RUN, but must NEVER spin up the GUI as a side effect of
+        # being the first instance.  Run the command's continuation chain
+        # in-process (no Tk, no socket) and go inert, releasing the lock.
+        # _HOST_INSTANCE is left None so commands see "no live Host" and
+        # degrade gracefully (e.g. ping reports open_windows=0) rather than
+        # touching this half-built instance.  An unknown command still
+        # reports a usage error.
+        if self._is_cli_invocation():
+            cmd = self._startup_args[0].lower()
+            entry = self._resolve_command(cmd)
+            if entry is None:
+                self._cli_usage_error(cmd)
+            else:
+                self._cli_run_local((entry, (self._startup_args[1:],)))
+            self._close_lock()
+            self.Active = False
+            return
+
         self.root = Tk()
         self.root.withdraw()
 
@@ -367,6 +386,35 @@ class Host:
             f"{self.Project.title}: unrecognized command: {cmd}\n")
         if known:
             sys.stderr.write(f"known commands: {known}\n")
+
+    def _cli_run_local(self, initial) -> None:
+        """Run a CLI command's continuation chain in THIS process.
+
+        Used when no Host is running: the command still executes, just with
+        no GUI and no socket.  Both ends of the cross-process exchange
+        collapse into one process, so the chain runs sequentially — call
+        each ``(fn, args)`` continuation and follow its return value (a new
+        continuation, or None to stop).  The in-process mirror of
+        :meth:`_cli_exchange`, minus the serialization (the callables are
+        already real objects here, not ``module:qualname`` references).
+
+        Commands run with ``_HOST_INSTANCE`` still None, so any that read
+        live Host state see "no Host" and degrade gracefully (e.g. ping
+        reports ``open_windows=0``) rather than touching this half-built
+        instance.
+        """
+        cont = initial
+        while cont is not None:
+            try:
+                fn, fn_args = cont
+            except (TypeError, ValueError):
+                break  # malformed continuation — end the chain
+            try:
+                cont = fn(*fn_args)
+            except Exception:
+                import traceback
+                traceback.print_exc()
+                break
 
     def _start_ipc_listener(self) -> None:
         """Spawn the daemon thread that accepts forwarded requests."""
