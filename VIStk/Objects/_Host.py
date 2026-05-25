@@ -90,6 +90,12 @@ class Host:
         if not self._acquire_lock():
             if self._is_cli_invocation():
                 self._run_cli_client()
+            elif self._startup_screen and self._resolve_command(self._startup_screen):
+                # Screen with a c_<Screen>.py intercept: run _c_<Screen> on the
+                # running Host, which transforms/validates the args and opens
+                # the screen, or returns a terminal-side CLI response.
+                self._cli_exchange((self._run_screen_intercept,
+                                    (self._startup_screen, self._startup_args)))
             else:
                 self._forward_to_primary(self._startup_screen, self._startup_args)
             self.Active = False
@@ -114,6 +120,29 @@ class Host:
             self._close_lock()
             self.Active = False
             return
+
+        # Screen with a c_<Screen>.py intercept, no Host running: run the
+        # intercept in-process before becoming the GUI Host.  A (callable,
+        # args) return is a terminal-side CLI response — run it and stay
+        # headless (don't open a window); a list transforms the launch args;
+        # None keeps the original args.  The GUI then opens _startup_screen
+        # with _startup_args on its first update().
+        if self._startup_screen:
+            _icept = self._resolve_command(self._startup_screen)
+            if _icept is not None:
+                try:
+                    _res = _icept(list(self._startup_args))
+                except Exception:
+                    import traceback
+                    traceback.print_exc()
+                    _res = None
+                if isinstance(_res, tuple):
+                    self._cli_run_local(_res)
+                    self._close_lock()
+                    self.Active = False
+                    return
+                if isinstance(_res, list):
+                    self._startup_args = _res
 
         self.root = Tk()
         self.root.withdraw()
@@ -281,6 +310,35 @@ class Host:
         # command entry takes the remaining args as a single list parameter
         # (`_c_<name>(args)`), so wrap that list in a 1-tuple.
         self._cli_exchange((entry, (self._startup_args[1:],)))
+
+    @staticmethod
+    def _run_screen_intercept(screen: str, args: list):
+        """Host-side screen intercept: run ``commands.c_<screen>._c_<screen>``
+        and act on its return (Option 2).
+
+        Runs on the Host via the CLI exchange (``run_call`` on the Tk main
+        loop), so it can open the screen.  ``_c_<screen>(args)`` returns:
+
+          * ``None``  → open the screen with the original args.
+          * ``list``  → open the screen with the (transformed) args.
+          * ``(callable, args)`` → returned to the terminal, which runs it as a
+            CLI response; the screen is NOT opened (e.g. arg validation failed).
+        """
+        host = _HOST_INSTANCE
+        entry = Host._resolve_command(screen)
+        try:
+            result = entry(list(args)) if entry else None
+        except Exception:
+            import traceback
+            traceback.print_exc()
+            result = None
+        if isinstance(result, tuple):
+            return result  # terminal-side CLI response; no screen launch
+        launch_args = result if isinstance(result, list) else list(args)
+        if host is not None:
+            host.open(screen, launch_args)
+            host._raise_a_window()
+        return None  # DONE — screen opened (or no Host to open it)
 
     @staticmethod
     def _resolve_command(cmd: str):
