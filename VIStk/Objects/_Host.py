@@ -66,14 +66,20 @@ class Host:
         # ``commands`` package (``commands/c_<name>.py`` -> ``_c_<name>``) when
         # a CLI invocation is resolved below -- see :meth:`_run_cli_client`.
 
-        # POSIX: a process launched from a terminal holds that terminal for
-        # its whole life (there is no Windows-style GUI subsystem).  A GUI
-        # launch should free the shell immediately, so daemonize (fork +
-        # setsid) before any threads or Tk exist.  CLI commands stay in the
-        # foreground so their stdio works and the shell waits — the Linux
-        # mirror of the console ``.com`` (#152).
-        if sys.platform != "win32" and not self._is_cli_invocation():
-            self._daemonize()
+        # Free the terminal for GUI launches before any threads / Tk exist.
+        # The console twin (POSIX entry / Windows .com) is terminal-attached
+        # so its CLI stdio flows to the shell; a GUI launch should release
+        # the shell immediately.  POSIX: fork + setsid (#152).  Windows:
+        # re-exec the sibling .exe (subsystem 2 = no console attachment,
+        # the GUI mirror of the console .com).  CLI invocations stay
+        # foreground on both platforms so their stdio works and the shell
+        # waits.
+        if not self._is_cli_invocation():
+            if sys.platform == "win32":
+                if self._reexec_as_gui_exe():
+                    os._exit(0)
+            else:
+                self._daemonize()
 
         # Single-instance: a per-project/user localhost port is the mutex.
         # If another Host already holds it we are a secondary launch.  A GUI
@@ -795,6 +801,55 @@ class Host:
             os.close(logfd)
         except OSError:
             pass
+
+    def _reexec_as_gui_exe(self) -> bool:
+        """Detach the primary GUI Host from the terminal (Windows).
+
+        The console twin (``<title>.com``, PE subsystem 3) is attached to
+        the launching terminal — a GUI launch should free the shell.
+        Re-launch the GUI ``<title>.exe`` (PE subsystem 2 = no console
+        attachment) with the same argv and exit, mirroring the POSIX
+        ``fork`` + ``setsid`` of :meth:`_daemonize`.  ``DETACHED_PROCESS``
+        means the new process has no parent console; ``CREATE_NEW_PROCESS_GROUP``
+        isolates it from Ctrl-C in the terminal.  stdout/stderr go to a
+        log in tempdir so startup errors aren't dropped (a subsystem-2
+        process has no console to print to).
+
+        Returns ``True`` if the .exe was spawned (caller must exit
+        immediately so the shell prompt returns).  Returns ``False`` when
+        no re-exec is possible / wanted — already running as a .exe, dev
+        mode under python.exe, .exe sibling missing — and the caller
+        falls through to running in place (worse experience, but better
+        than failing the launch).
+        """
+        if sys.platform != "win32":
+            return False
+        base, ext = os.path.splitext(sys.executable)
+        if ext.lower() != ".com":
+            return False
+        exe_path = base + ".exe"
+        if not os.path.exists(exe_path):
+            return False
+        import tempfile, subprocess
+        log_path = os.path.join(tempfile.gettempdir(),
+                                f"{self.Project.title}_host.log")
+        try:
+            log_fd = open(log_path, "ab")
+            try:
+                subprocess.Popen(
+                    [exe_path, *sys.argv[1:]],
+                    creationflags=(subprocess.DETACHED_PROCESS
+                                   | subprocess.CREATE_NEW_PROCESS_GROUP),
+                    stdin=subprocess.DEVNULL,
+                    stdout=log_fd,
+                    stderr=log_fd,
+                    close_fds=True,
+                )
+            finally:
+                log_fd.close()  # the .exe has its own duplicated handle
+        except OSError:
+            return False
+        return True
 
     # ── Navigation ─────────────────────────────────────────────────────────────
 
