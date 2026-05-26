@@ -588,7 +588,15 @@ class TabManager(Frame):
         mod = importlib.import_module(stem)
         embedded = mod._EMBEDDED
 
-        overrides = self._read_viskpatch(mod.__file__) if mod.__file__ else None
+        # mod.__file__ / mod.__spec__.origin report the SOURCE name (.py)
+        # placed in the install dir under Nuitka --module, not the actual
+        # extension module's path on disk.  That file doesn't exist, so
+        # _read_viskpatch(mod.__file__) silently OSErrors and we ship
+        # baseline _EMBEDDED — i.e., patches never apply.  Resolve to the
+        # real extension file by trying each platform extension suffix
+        # alongside the reported __file__.
+        pyd_path = self._resolve_extension_path(mod)
+        overrides = self._read_viskpatch(pyd_path) if pyd_path else None
         if overrides:
             # Shallow merge — "entry" replaces wholesale, sub-dicts
             # ("screens" / "modules") merge per-stem.  Avoid mutating
@@ -621,6 +629,33 @@ class TabManager(Frame):
     # Header is the last 22 bytes of the file.  Read backward from EOF:
     # check magic first, then unpack the rest, then read the payload
     # that sits immediately before the header.
+    @staticmethod
+    def _resolve_extension_path(mod) -> str | None:
+        """Return the on-disk path of *mod*'s extension module file, or
+        ``None`` if it can't be located.
+
+        Under Nuitka ``--module``, ``mod.__file__`` and ``mod.__spec__.origin``
+        report the ORIGINAL ``.py`` source name placed in the install
+        directory — not the actual ``.pyd`` / ``.so`` that was loaded.  The
+        reported file usually doesn't exist on disk.  Probe the dir of the
+        reported path for each platform extension suffix
+        (``importlib.machinery.EXTENSION_SUFFIXES``: ``.pyd``, ``.cp313-...so``,
+        ``.so``, …) and return the first match.
+        """
+        import importlib.machinery
+        reported = getattr(mod, "__file__", None) or getattr(
+            getattr(mod, "__spec__", None), "origin", None)
+        if reported and os.path.exists(reported):
+            return reported  # the rare case where __file__ is honest
+        if not reported:
+            return None
+        base = os.path.splitext(reported)[0]  # strip ".py" (or whatever)
+        for suffix in importlib.machinery.EXTENSION_SUFFIXES:
+            candidate = base + suffix
+            if os.path.exists(candidate):
+                return candidate
+        return None
+
     _VISKPATCH_MAGIC = b"VISKPATCH"
     _VISKPATCH_HEADER_LEN = 22   # 4+4+4+1+9
     _VISKPATCH_FORMAT_VERSION = 1
