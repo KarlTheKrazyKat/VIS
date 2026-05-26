@@ -60,7 +60,7 @@ A non-GUI **CLI command** path for the always-Host model, plus the cross-platfor
 
 PYWOM `master`: **`a71ffef`** — `commands/__init__.py` + sample `commands/c_ping.py`. **`5df7ea2`** — `host.add_to_path=true` (opt into the PATH feature for WOM). **`ce1193e`** — c_ping `__help__`/`__alias__='pong'` demo. **`379d9e7`** — CLAUDE.md CLI help/alias/intercept conventions (synced to user-global + WOMDOCS).
 
-> **CLI help/alias/intercept feature (`d8e142b`, `4d4b59b`) is dev-tested only — NOT yet verified in a compiled build.** A full `VIS release` is still needed to confirm `WOM --help` / `WOM pong` / intercepts work from `commands.pyd` + `VIStk.pyd`.
+> ~~**CLI help/alias/intercept feature (`d8e142b`, `4d4b59b`) is dev-tested only — NOT yet verified in a compiled build.**~~ **Compiled-verified 2026-05-26** after full `VIS release -F Windows` (16m 51s) and a fresh install over an empty `bmicad/WOM`. See "Verification status" below.
 
 ---
 
@@ -79,6 +79,12 @@ PYWOM `master`: **`a71ffef`** — `commands/__init__.py` + sample `commands/c_pi
 - **Dev (Windows source):** `WOM ping` -> `pong from Host pid=…`; unknown command -> usage error listing known commands. ✓
 - **Compiled (Windows):** Full rebuild (13m, exit 0) with `commands.pyd` + the `is_compiled()` fix, installed by extracting `dist/binaries.zip` to the install dir (mimics the GUI installer). GUI `WOM.exe` primary launched **from `C:\`** (no project `.VIS` in CWD), bound lock port 60676; `WOM.com ping` → `pong from Host pid=… open_windows=1`; unknown command → `WOM: unrecognized command: … / known commands: ping`. Two-binary subsystems 2/3. **All from an arbitrary CWD** — the pre-fix build crashed here on `import modules.menu`. ✓
 - **Compiled (Windows) — no-Host CLI (`9ff6655`):** with no Host running, `WOM.com ping` from `C:\` → `pong … open_windows=0`, returns immediately, **no GUI / no lingering process** (was launching the GUI); unknown command → usage error; and with a GUI host up, `WOM.com ping` → remote `open_windows=1` (host-running path intact). ✓
+- **Compiled (Windows) — CLI help/alias/intercept (2026-05-26, fresh install):** Full rebuild #2 (16m 51s) + clean GUI install over empty `bmicad/WOM`. From `/tmp` (arbitrary CWD):
+  - `WOM.com --help` lists all 17 screens + commands with aliases inline (`ping | pong`, `WorderEditor | ewo`) and custom short help from `c_WorderEditor.py`. ✓
+  - `WOM.com ping --help`, `WOM.com pong --help`, `WOM.com ewo --help` all print the file's long help (alias→canonical resolution works in both directions). ✓
+  - **Headless (no Host):** `WOM.com ping` and `WOM.com pong` → `pong … open_windows=0` in fresh process; `WOM.com bogus` → `unrecognized command: bogus / known commands: WorderEditor, ping`. ✓
+  - **Host-running:** `WOM.com ping` and `WOM.com pong` both → `pong from Host pid=4792 open_windows=1` (matched the running `WOM.exe` pid → alias routes through the live Host, not a new process). ✓
+  - This covers `d8e142b` (`--help` + aliases), `4d4b59b` (screen intercepts), `82c3eaa` (drop `print_line`, `builtins:print` crosses by reference and prints terminal-side), and `c0c9b47` (irrelevant in compiled; dev only).
 - **Linux (WSL2):** GUI launch daemonizes (terminal freed, Host detached); `ping` foreground roundtrip. ✓
 - **commands.pyd (compiled):** ⏳ a `VIS release` is finishing as of this writing — verify `runtime/commands.pyd` exists and compiled `WOM ping` works. The commands compile had a bug (source/copy package collision) fixed in `a70d203` by running Nuitka from the build-copy parent; manual compile of `commands.pyd` succeeded.
 
