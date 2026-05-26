@@ -54,6 +54,9 @@ A non-GUI **CLI command** path for the always-Host model, plus the cross-platfor
 | `d8e142b` | CLI **`--help`** listing + long help + command/screen **aliases** (`__help__` / `__alias__`; `_cli_registry` + `_resolve_startup` replacing `_resolve_startup_screen`/`_args`) |
 | `4d4b59b` | CLI **screen intercepts** (Option 2): `c_<Screen>.py`'s `_c_<Screen>(args)` → `None` (launch orig) / `list` (launch transformed) / `(callable,args)` (terminal CLI response, no launch), via `Host._run_screen_intercept` |
 | `ef3e794` | docs: CLI help/alias/intercept (documentation.md + changelog 0.5.3) |
+| `82c3eaa` | refactor: drop the redundant `print_line` wrapper; continuations use the builtin `print` directly (resolves as `builtins:print`) |
+| `c0c9b47` | VIS launcher: `VIS <project> [args]` forwards everything to the Host (including `--help`), guarded by `getPath()` so `VIS new` etc. aren't swallowed |
+| `e480235` | **`VIS WOM <screen-alias>` no longer blocks the terminal** — `VIS.py:_is_cli_launch` now resolves screen aliases via cheap AST scan of `commands/c_*.py` (matches the Host's `_resolve_token`), so `ewo` → GUI launch (was CLI). Also: stale-Host AttributeErrors no longer fail silently — `_drain_ipc_queue` now sends `(print, (err_text,))` back to the terminal with a "restart the Host" hint instead of replying DONE |
 
 PYWOM `master`: **`a71ffef`** — `commands/__init__.py` + sample `commands/c_ping.py`. **`5df7ea2`** — `host.add_to_path=true` (opt into the PATH feature for WOM). **`ce1193e`** — c_ping `__help__`/`__alias__='pong'` demo. **`379d9e7`** — CLAUDE.md CLI help/alias/intercept conventions (synced to user-global + WOMDOCS).
 
