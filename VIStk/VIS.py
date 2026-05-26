@@ -19,12 +19,57 @@ def unzip_without_overwrite(src_path, dst_dir):
                 zf.extract(member, dst_dir)
 
 
+def _read_command_aliases(cmd_file: Path) -> list[str]:
+    """Cheaply extract ``__alias__`` from a ``c_*.py`` via AST (no import)."""
+    import ast
+    try:
+        tree = ast.parse(cmd_file.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and any(
+            isinstance(t, ast.Name) and t.id == "__alias__" for t in node.targets
+        ):
+            val = node.value
+            if isinstance(val, ast.Constant) and isinstance(val.value, str):
+                return [val.value]
+            if isinstance(val, (ast.List, ast.Tuple)):
+                return [e.value for e in val.elts
+                        if isinstance(e, ast.Constant) and isinstance(e.value, str)]
+    return []
+
+
+def _resolve_token_kind(proj, token: str) -> str:
+    """Mirror the Host's ``_resolve_token`` enough to classify ``token`` as a
+    ``"screen"`` (GUI launch) or ``"command"`` (CLI invocation).
+
+    A real screen name beats any alias.  A ``c_<Screen>.py`` file -- by stem
+    or by ``__alias__`` -- whose stem matches a known screen counts as a
+    screen (alias / intercept that ultimately opens the screen).  Anything
+    else known is a command; anything unknown is also treated as a command
+    so the terminal waits and can show the Host's error.
+    """
+    if proj.getScreen(token) is not None:
+        return "screen"
+    cmds_dir = Path(getPath()) / "commands"
+    if cmds_dir.is_dir():
+        tok_lower = token.lower()
+        for cmd_file in cmds_dir.glob("c_*.py"):
+            stem = cmd_file.stem[2:]  # strip leading "c_"
+            if stem.lower() == tok_lower or any(
+                a.lower() == tok_lower for a in _read_command_aliases(cmd_file)
+            ):
+                return "screen" if proj.getScreen(stem) is not None else "command"
+    return "command"
+
+
 def _is_cli_launch(extra) -> bool:
     """True when ``VIS <project> *extra`` is a CLI invocation (the Host prints
     and exits) rather than a GUI launch (the Host runs its event loop).
 
-    ``--help`` / ``-h``, or a first non-flag token that isn't a registered
-    screen (i.e. a command), is CLI.  A bare run or a screen name is GUI.
+    ``--help`` / ``-h``, or a first non-flag token that doesn't resolve to a
+    screen (by name, by screen alias, or by intercept), is CLI.  A bare run
+    or anything that resolves to a screen is GUI.
     """
     if any(a in ("--help", "-h") for a in extra):
         return True
@@ -34,7 +79,7 @@ def _is_cli_launch(extra) -> bool:
         return False
     for a in extra:
         if not a.startswith("-"):
-            return proj.getScreen(a) is None
+            return _resolve_token_kind(proj, a) != "screen"
     return False
 
 

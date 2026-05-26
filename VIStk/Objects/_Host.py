@@ -710,14 +710,29 @@ class Host:
                     self._raise_a_window()
                 elif tag == "cli":
                     _, msg, conn = item
+                    err_text: str | None = None
                     try:
                         out = _cli.run_call(msg)
-                    except Exception:
+                    except Exception as exc:
                         import traceback
                         traceback.print_exc()
                         out = None
-                    reply = (_cli.serialize_call(out)
-                             if out is not None else _cli.DONE)
+                        # Send the error back so the terminal sees something
+                        # instead of a silent DONE.  AttributeError on a Host
+                        # method usually means a stale Host (this Host's code
+                        # predates the function the new client just referenced).
+                        hint = ""
+                        if isinstance(exc, AttributeError) and "Host" in str(exc):
+                            hint = ("\n  (this Host is running stale VIStk; "
+                                    "restart it to pick up the new code.)")
+                        err_text = (f"{self.Project.title}: Host call failed: "
+                                    f"{type(exc).__name__}: {exc}{hint}")
+                    if err_text is not None:
+                        reply = _cli.serialize_call((print, (err_text,)))
+                    elif out is not None:
+                        reply = _cli.serialize_call(out)
+                    else:
+                        reply = _cli.DONE
                     try:
                         _cli.send_msg(conn, reply)
                     except Exception:
