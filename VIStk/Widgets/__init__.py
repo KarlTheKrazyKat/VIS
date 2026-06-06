@@ -13,6 +13,7 @@ from VIStk.Widgets._Tooltip import Tooltip
 from VIStk.Widgets._CollapsibleFrame import CollapsibleFrame
 from VIStk.Widgets._AutocompleteEntry import AutocompleteEntry
 from VIStk.Widgets._DateEntry import DateEntry
+from VIStk.Widgets._ContextMenu import ContextMenu
 
 
 __all__ = ["VISMenu",
@@ -31,4 +32,5 @@ __all__ = ["VISMenu",
            "CollapsibleFrame",
            "AutocompleteEntry",
            "DateEntry",
+           "ContextMenu",
            ]

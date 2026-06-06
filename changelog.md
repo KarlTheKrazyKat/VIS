@@ -812,6 +812,22 @@ Built on PR #143 (`host-single-instance`) — implemented and verified, not yet 
 
 ---
 
+### 0.5.4 ContextMenu Widget
+
+A reusable right-click popup menu so screens stop hand-coding the `tkinter.Menu` + `tk_popup` boilerplate (the pattern `TabBar` carries today).
+
+**`ContextMenu`**
+
+- Thin wrapper over the *native* `tkinter.Menu` — keyboard navigation, hover submenus, click-outside dismissal and screen-edge clipping all come from Tk for free. Renders as the classic system menu, not a ttk-themed widget.
+- Passing a `widget` auto-binds the right-click (`button="<Button-3>"` default); omit it and drive the menu manually via `show(event)` / `popup(x_root, y_root)`.
+- `items` may be a list of item-spec dicts **or** a callable `(event) -> list`, re-evaluated on every popup so the menu can reflect what was clicked (e.g. the step under the cursor).
+- Item spec reuses the VIStk menu convention shared with `HostMenu`: `{"label", "command"}` leaf, `{"label", "items": [...]}` cascade, `{"separator": True}`. Per-item extras: `"state": "disabled"`, `"accelerator"`, and `"checkbutton"` with `"variable"`.
+- `set_items(items)` swaps the source; owned `Menu` objects are rebuilt per popup and destroyed with the bound widget.
+
+> Note: this is the native-menu approach chosen for speed of delivery. A fully VIStk-styled context menu (custom `overrideredirect` Toplevel with themed rows, icons, hover highlights) remains possible future work — see the 1.0.0 tkinter-styles exploration.
+
+---
+
 ### 0.6.X Application Settings
 
 Settings stored per-project in `.VIS/settings.json`, accessed via `Project.settings`.
