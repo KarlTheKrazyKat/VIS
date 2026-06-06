@@ -23,6 +23,7 @@ class ScrollableFrame(ttk.Frame):
         self.canvas.configure(yscrollincrement=1)
         self._scroll_remaining = 0.0  # pixels still to travel (signed)
         self._scroll_anim = None      # pending after() id, or None when idle
+        self._scrollregion_job = None # pending scrollregion recompute, or None
         self.scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
         """The `ttk.Scrollbar`"""
         self.scrollable_frame = Frame(self.canvas)
@@ -33,12 +34,7 @@ class ScrollableFrame(ttk.Frame):
         """The Object ID of the Window Drawn to the Canvas"""
         self.bind("<Configure>", self.sizeFrame)
 
-        self.scrollable_frame.bind(
-            "<Configure>",
-            lambda e: self.canvas.configure(
-                scrollregion=self.canvas.bbox("all")
-            )
-        )
+        self.scrollable_frame.bind("<Configure>", self._on_inner_configure)
         self.canvas.configure(yscrollcommand=self.scrollbar.set)
 
         self.canvas.pack(side="left",fill="both",expand=True)
@@ -72,6 +68,22 @@ class ScrollableFrame(ttk.Frame):
         if active is not None:
             active.scroll(event)
 
+
+    def _on_inner_configure(self, event=None):
+        """Queue a single scrollregion recompute for the current idle cycle.
+
+        A burst of `<Configure>` events — e.g. a collapsing group that resizes
+        many rows at once — would otherwise run `bbox("all")` over every widget
+        on each intermediate resize. Coalescing them into one recompute at idle
+        keeps collapse/expand snappy on large frames.
+        """
+        if self._scrollregion_job is None:
+            self._scrollregion_job = self.after_idle(self._sync_scrollregion)
+
+    def _sync_scrollregion(self):
+        """Recompute the canvas scrollregion from the current content bounds."""
+        self._scrollregion_job = None
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
 
     def sizeFrame(self, event:Event):
         """Sizing the Frame"""
