@@ -26,8 +26,15 @@ class Host:
     it immediately, and manages ``DetachedWindow`` instances (Toplevels) for
     all visible application windows.
 
+    The Host lives exactly as long as its windows: it starts with the first
+    window, and once the last ``DetachedWindow`` closes it tears down the
+    root, releases the single-instance lock, and the driver loop exits (see
+    :meth:`_quit_if_no_windows`).  It is not a persistent background service
+    -- closing every window ends the process.
+
     Navigation routes through ``_HOST_INSTANCE`` in-process.  There is no
-    IPC layer and no system tray.
+    system tray; a localhost socket provides single-instance forwarding while
+    a Host is alive.
 
     Attributes:
         root                  (Tk):            The hidden Tk root.
@@ -173,6 +180,12 @@ class Host:
         # concern, handled by :meth:`_unique_display_name`.
 
         self._opened_default = False
+
+        # Self-terminate once every window is gone.  Set true the first time
+        # a DetachedWindow exists, so the Host quits when the list empties
+        # again -- but is NOT killed during startup before its first window
+        # has been created.
+        self._ever_had_window = False
 
         _HOST_INSTANCE = self
 
@@ -1097,6 +1110,31 @@ class Host:
         self._drain_ipc_queue()
         self._tick_screens()
         self.root.update()
+        self._quit_if_no_windows()
+
+    def _quit_if_no_windows(self):
+        """Shut the Host down once the last window has closed.
+
+        The Host owns no visible window of its own, so an empty
+        ``detached_windows`` list means nothing is on screen and there is no
+        reason to keep the hidden root (and the single-instance lock) alive.
+
+        ``_ever_had_window`` guards against quitting during startup, before
+        the first window has been created, and against quitting an idle Host
+        whose startup screen failed to open -- in both cases no window has
+        ever existed, so the list being empty is not "all windows closed".
+        """
+        if self.detached_windows:
+            self._ever_had_window = True
+            return
+        if not self._ever_had_window:
+            return
+        self.Active = False
+        self._close_lock()
+        try:
+            self.root.destroy()
+        except Exception:
+            pass
 
     def quit_host(self):
         """Close all DetachedWindows one by one, then shut down.
