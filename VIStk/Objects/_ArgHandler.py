@@ -54,8 +54,8 @@ class ArgHandler():
                             results.append(r)
             return results if matched else None
 
-        if len(args) > 1:
-            if args[0] == args[1]:
+        if len(args) >= 1:
+            if len(args) > 1 and args[0] == args[1]:
                 pargs = args[1:]
             else:
                 pargs = args
