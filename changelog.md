@@ -743,9 +743,11 @@ The License/EULA page, `\r` quiet-mode progress bar, and `metadata.installer_ico
 
 ---
 
+## Planned
+
 ### 0.5.2 Screen Isolation (per-tab namespaces, wrapper `.pyd`s, always-Host)
 
-**Released.** Implemented in **PR #141**. Isolates each open tab's Python state and collapses the per-screen build to a single wrapper `.pyd`.
+Implemented in **PR #141** (merged to `master`, pending PyPI release). Isolates each open tab's Python state and collapses the per-screen build to a single wrapper `.pyd`.
 
 **Per-tab namespaces**
 
@@ -768,8 +770,6 @@ The License/EULA page, `\r` quiet-mode progress bar, and `metadata.installer_ico
 
 ---
 
-## Planned
-
 ### 0.5.3 Single-Instance Host, CLI Commands & Cross-Platform Packaging
 
 Built on PR #143 (`host-single-instance`) — implemented and verified, not yet released. One Host per project/user, a non-GUI **CLI command** path invoked as a bare subcommand (`<project> <command>`), and the cross-platform packaging to ship it.
@@ -777,14 +777,22 @@ Built on PR #143 (`host-single-instance`) — implemented and verified, not yet 
 **Single-instance Host**
 
 - Binding a per-project/user `127.0.0.1` port is the mutex: the first launch is the primary Host; a later `<project>.exe <Screen>` forwards its open request to the running Host (which raises the window) and exits — no second process.
-- **dev/compiled lock domains (#151):** the port keys on `title + user + mode`, where mode is `dev` vs `compiled` (from `Path(sys.executable).name`). A `python .VIS/Host.py` dev Host and a compiled `<title>.exe` are separate single-instance domains and run side by side; each CLI client routes to its own.
+- **dev/compiled lock domains (#151):** the port keys on `title + user + mode`, where mode is `dev` vs `compiled` (via `is_compiled()`, below). A `python .VIS/Host.py` dev Host and a compiled `<title>.exe` are separate single-instance domains and run side by side; each CLI client routes to its own.
+- **Compiled-mode detection (`is_compiled()`):** one helper in `_VINFO` answers the question every dev/compiled call site actually asks — *is `sys.executable` the bundled app binary, or a python interpreter?* — keyed on the executable basename (`python*` ⇒ dev). It replaces `sys.frozen` at the sites that misfired under Nuitka `--standalone` (which, unlike PyInstaller / Nuitka-onefile, does **not** set `sys.frozen`): `getPath()` — so a CLI command typed in an arbitrary directory still finds `.VIS/` instead of the Host entry script dying on `import modules.*` before it can route — plus `Host._register_startup` (run-at-login command) and `Screen.load` (no-spawn guard). `_compute_lock_port` and the `host.txt` template route through it too, so there's a single source of truth.
 
 **Host CLI commands**
 
 - Invoke as a **bare subcommand**: `<project> <command>` (e.g. `WOM ping`) — no mode flag. A registered screen name still launches the GUI (the screen registry is checked first); any other first word is a command, and an unknown one prints a usage error listing `commands.__all__`.
 - A command is a project file **`commands/c_<name>.py`** with an entry **`_c_<name>(args)`** (mirrors the `_m_<name>` convention). `_c_<name>` runs **on the running Host** and returns a `(callable, args)` continuation for the terminal side, or `None`; `args` is the words after the command name.
 - Discovery via **`commands.__all__`** — built dynamically in dev (`commands/__init__.py` scans `c_*.py`), baked **static** into `commands.pyd` by `VIS release`. The Host imports `commands.c_<name>` lazily.
-- VIStk ships **no** commands. `VIStk.Objects._cli` is the transport plus the generic `print_line` terminal helper.
+- VIStk ships **no** commands. `VIStk.Objects._cli` is just the transport — a continuation prints terminal-side by ending with the builtin `print` (it crosses as `builtins:print`); no VIStk wrapper needed.
+- **No Host running:** a CLI command still runs — in-process and **headless** (no Tk, no socket; `Host._cli_run_local`), and never launches the GUI as a side effect of being the first instance. The continuation chain executes locally with `_HOST_INSTANCE` left `None`, so commands that read live Host state degrade gracefully (e.g. `ping` reports `open_windows=0`). An unknown command still prints the usage error.
+
+**CLI help, aliases & screen intercepts**
+
+- **`--help` / `-h`:** `<project> --help` lists every screen and command as `name | alias…` + short help; `<project> <cmd> --help` prints the long help. A `c_*.py` documents itself with **`__help__`** (a list of strings: `[0]` short, `[-1]` long; one string ⇒ short == long). Answered terminal-side before any Host/lock — no running Host needed. Screens with no `c_<Screen>.py` get auto help `Launches the <Screen> screen.`; missing command help degrades to `(no description)`.
+- **Aliases (`__alias__`):** a str or list on a `c_*.py` gives a command **or** a screen alternate names — `__alias__ = "pong"` in `c_ping.py` makes `WOM ping` == `WOM pong`; `__alias__ = "ewo"` in `c_WorderEditor.py` makes `WOM ewo` open WorderEditor. Resolution: exact name (screen → command) first, then alias, case-insensitive; real names beat aliases. `_resolve_startup` (replacing `_resolve_startup_screen`/`_args`) routes the first non-flag token through this registry.
+- **Screen intercepts (`_c_<Screen>`, Option 2):** a `c_<Screen>.py` may add an `_c_<Screen>(args)` intercept that runs on the Host before the screen opens — return `None` → launch with the original args, a `list` → launch with transformed args, a `(callable, args)` continuation → run terminal-side as a CLI response and do **not** open the screen (e.g. arg validation). Host-running routes through `Host._run_screen_intercept` over the exchange; no-Host runs it in-process, then becomes the GUI Host with the resulting args (or stays headless for a continuation). `_resolve_command(<screen>)` doubles as the intercept lookup.
 
 **CLI transport — continuation-passing two-pump**
 
@@ -801,6 +809,22 @@ Built on PR #143 (`host-single-instance`) — implemented and verified, not yet 
 **Shared-package fix (#150)**
 
 - `compile_shared()` shipped *all* of `site-packages` when a `hidden_imports` entry was a single-file module (e.g. `six` → `os.path.dirname(six.py)` resolves to site-packages). Single-file modules are now detected and shipped as one sourceless `runtime/<pkg>.pyc`.
+
+---
+
+### 0.5.4 ContextMenu Widget
+
+A reusable right-click popup menu so screens stop hand-coding the `tkinter.Menu` + `tk_popup` boilerplate (the pattern `TabBar` carries today).
+
+**`ContextMenu`**
+
+- Thin wrapper over the *native* `tkinter.Menu` — keyboard navigation, hover submenus, click-outside dismissal and screen-edge clipping all come from Tk for free. Renders as the classic system menu, not a ttk-themed widget.
+- Passing a `widget` auto-binds the right-click (`button="<Button-3>"` default); omit it and drive the menu manually via `show(event)` / `popup(x_root, y_root)`.
+- `items` may be a list of item-spec dicts **or** a callable `(event) -> list`, re-evaluated on every popup so the menu can reflect what was clicked (e.g. the step under the cursor).
+- Item spec reuses the VIStk menu convention shared with `HostMenu`: `{"label", "command"}` leaf, `{"label", "items": [...]}` cascade, `{"separator": True}`. Per-item extras: `"state": "disabled"`, `"accelerator"`, and `"checkbutton"` with `"variable"`.
+- `set_items(items)` swaps the source; owned `Menu` objects are rebuilt per popup and destroyed with the bound widget.
+
+> Note: this is the native-menu approach chosen for speed of delivery. A fully VIStk-styled context menu (custom `overrideredirect` Toplevel with themed rows, icons, hover highlights) remains possible future work — see the 1.0.0 tkinter-styles exploration.
 
 ---
 

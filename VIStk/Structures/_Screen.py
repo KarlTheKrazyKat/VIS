@@ -318,7 +318,7 @@ class Screen(VINFO):
         if _HOST_INSTANCE is not None:
             _HOST_INSTANCE.open(self.name)
             return
-        if getattr(sys, 'frozen', False):
+        if is_compiled():
             return  # compiled exe is the Host; can't spawn another
         host_path = str(Path(getPath()) / ".VIS" / "Host.py")
         subprocess.Popen([sys.executable, host_path, self.name])

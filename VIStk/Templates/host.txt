@@ -1,14 +1,16 @@
 import sys
 import os
-from VIStk.Structures._VINFO import getPath
+from VIStk.Structures._VINFO import getPath, is_compiled
 _proj = getPath()
 if _proj and _proj not in sys.path:
     sys.path.insert(0, _proj)
 
-# In the compiled (frozen) app, add Shared/ and Screens/ to sys.path so that
+# In the compiled app, add Shared/ and Screens/ to sys.path so that
 # shared .pyd packages (e.g. pywomlib, VIStk) and screen .pyd modules are
-# importable before any screen is loaded.
-if getattr(sys, 'frozen', False) and _proj:
+# importable before any screen is loaded.  is_compiled() keys off the
+# executable name, which (unlike sys.frozen) is reliable under Nuitka
+# --standalone — the mode VIS ships.
+if is_compiled() and _proj:
     for _sub in ("Shared", "Screens"):
         _p = os.path.join(_proj, _sub)
         if os.path.exists(_p) and _p not in sys.path:

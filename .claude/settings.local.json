@@ -23,7 +23,11 @@
       "Read(//l/WOM/PYWOM/**)",
       "Bash(vis PYWOM)",
       "WebSearch",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "Bash(grep -iv \"node_modules\\\\|build\\\\\\\\\\\\\\\\\\\\|worktrees\")",
+      "Bash(findstr /C:\"Location\" /C:\"Editable\" /C:\"Version\")",
+      "Bash(findstr /C:\"Editable project location\")",
+      "PowerShell(python -c \"import VIStk, os; print\\(os.path.dirname\\(VIStk.__file__\\)\\)\")"
     ]
   }
 }

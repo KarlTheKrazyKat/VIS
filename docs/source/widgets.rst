@@ -702,3 +702,56 @@ Both dialogs centre on the parent via ``WindowGeometry.center_on``
 (``bool`` for ``confirm``; ``"save" | "discard" | "cancel"`` for
 ``confirm_discard``). Closing the window or pressing Escape returns
 the negative outcome.
+
+----
+
+ContextMenu (0.5.4)
+-------------------
+
+Right-click popup menu wrapping :class:`tkinter.Menu` + ``tk_popup`` so
+screens stop re-rolling the bind/build/popup boilerplate. This is the
+*native* menu — keyboard navigation, hover submenus, click-outside
+dismissal and screen-edge clipping all come for free. It renders as the
+classic system menu, not a ttk-themed widget.
+
+.. code-block:: python
+
+    from VIStk.Widgets import ContextMenu
+
+    ContextMenu(my_tree, items=[
+        {"label": "Insert step", "command": insert_fn},
+        {"label": "Delete step", "command": delete_fn},
+        {"separator": True},
+        {"label": "Move", "items": [
+            {"label": "Up",   "command": up_fn},
+            {"label": "Down", "command": down_fn},
+        ]},
+    ])
+
+Passing ``widget`` auto-binds the right-click (``button="<Button-3>"`` by
+default); omit it and drive the menu yourself with ``m.show`` /
+``m.popup(x, y)``:
+
+.. code-block:: python
+
+    m = ContextMenu(items=[...])
+    widget.bind("<Button-3>", m.show)
+
+``items`` may be a list of specs *or* a callable ``(event) -> list``,
+re-evaluated on every popup so the menu can reflect what was clicked:
+
+.. code-block:: python
+
+    ContextMenu(canvas, items=lambda e: build_items(step_at(e.y)))
+
+Item spec (the VIStk menu convention shared with ``HostMenu``)::
+
+    {"label": str, "command": callable}              # leaf command
+    {"label": str, "items": [<item spec>, ...]}      # cascade submenu
+    {"separator": True}                              # separator
+
+Per-item extras: ``"state": "disabled"``, ``"accelerator": str``, and
+``"checkbutton": True`` with ``"variable": BooleanVar``. Other keyword
+args: ``master`` (Menu parent when no ``widget`` is given), ``tearoff=0``,
+``font``, ``button="<Button-3>"``. Method ``set_items(items)`` swaps the
+source. Owned menus are destroyed with the bound widget.

@@ -250,36 +250,95 @@ for _lname in ("LICENSE", "LICENSE.txt", "EULA.txt", "EULA.md"):
         break
 
 #%Core Install & Shorcut Creation
-def shortcut(name:str, location:Path):
-    """Make shortcut for arguments"""
+def _start_menu_dir():
+    """Per-user Start Menu folder this app's shortcuts live in.
+
+    Windows: a ``<title>`` subfolder of the Start Menu Programs dir.
+    Linux: the XDG applications dir that drives the app launcher menu.
+    """
     if sys.platform == "win32":
-        winshell.CreateShortcut(
-            Path=(os.path.join(winshell.desktop(), f"{name}.lnk")),
-            Target=os.path.join(location, f"{name}.exe"),
-            StartIn=f"{location}"
+        return os.path.join(winshell.programs(), title)
+    return os.path.join(str(platformdirs.user_data_path()), "applications")
+
+
+def shortcut(name: str, location, screen: str | None = None,
+             start_menu: bool = False, install_root: bool = False):
+    """Create a shortcut that launches the Host, optionally opening *screen*.
+
+    Under the always-Host model there are no per-screen executables —
+    every shortcut targets the single Host exe
+    (``location/runtime/<title>.exe``) and selects which screen to open
+    via a command-line argument.  ``screen=None`` opens the project's
+    default screen (used for the project's own "main app" shortcut).
+
+    Args:
+        name:        Display name / filename of the shortcut.
+        location:    Install root (the Host exe is in ``location/runtime/``).
+        screen:      Screen name passed as argv to the Host; ``None``
+                     opens the default screen.
+        start_menu:  True → Start Menu (``Programs/<title>/``); False →
+                     Desktop.
+        install_root: True → place the .lnk in the install root
+                     (``location``) itself, a clickable launcher set inside
+                     the install folder.  Takes precedence over
+                     ``start_menu``.
+    """
+    ext = ".exe" if sys.platform == "win32" else ""
+    host_exe = os.path.join(location, "runtime", f"{title}{ext}")
+    runtime_dir = os.path.join(location, "runtime")
+
+    # Icon: the screen's own if it has one, else the project default.
+    icon_name = None
+    if screen:
+        icon_name = info[title]["Screens"].get(screen, {}).get("icon")
+    if not icon_name:
+        icon_name = info[title].get("defaults", {}).get("icon")
+    icon_path = (os.path.join(runtime_dir, "Icons", icon_name + ".ico")
+                 if icon_name else None)
+
+    if sys.platform == "win32":
+        if install_root:
+            folder = location
+        elif start_menu:
+            folder = _start_menu_dir()
+        else:
+            folder = winshell.desktop()
+        os.makedirs(folder, exist_ok=True)
+        kwargs = dict(
+            Path=os.path.join(folder, f"{name}.lnk"),
+            Target=host_exe,
+            StartIn=runtime_dir,
         )
+        if screen:
+            kwargs["Arguments"] = screen
+        if icon_path and os.path.exists(icon_path):
+            kwargs["Icon"] = (icon_path, 0)
+        winshell.CreateShortcut(**kwargs)
     else:
-        icon = info[title]["Screens"][name].get("icon")
-        if icon is None:
-            icon = info[title]["defaults"]["icon"]
-        icon = os.path.join(location,"Icons",icon+".ico")
-        binary = os.path.join(location,name)
-        lines=[]
-        lines.append("[Desktop Entry]\n")
-        lines.append(f"Name={name}\n")
-        lines.append(f"Icon={icon}\n")
-        lines.append(f"Exec={binary}\n")
-        lines.append(f"Type=Application\n")
-        lines.append(f"Categories=Application;\n")
-        lines.append(f"Name[en_GB]={name}\n")
-        lines.append(f"Terminal=false\n")
-        lines.append(f"StartupNotify=true\n")
-        lines.append(f"Path={location}")
-
-        with open(os.path.join(platformdirs.user_desktop_path(),name+".desktop"),"w") as f:
+        if install_root:
+            folder = location
+        elif start_menu:
+            folder = _start_menu_dir()
+        else:
+            folder = str(platformdirs.user_desktop_path())
+        os.makedirs(folder, exist_ok=True)
+        exec_line = host_exe + (f" {screen}" if screen else "")
+        lines = ["[Desktop Entry]\n", f"Name={name}\n"]
+        if icon_path:
+            lines.append(f"Icon={icon_path}\n")
+        lines += [
+            f"Exec={exec_line}\n",
+            "Type=Application\n",
+            "Categories=Application;\n",
+            f"Name[en_GB]={name}\n",
+            "Terminal=false\n",
+            "StartupNotify=true\n",
+            f"Path={runtime_dir}\n",
+        ]
+        dest = os.path.join(folder, name + ".desktop")
+        with open(dest, "w") as f:
             f.writelines(lines)
-
-        subprocess.call(f"chmod +x {os.path.join(platformdirs.user_desktop_path(),name+'.desktop')}", shell=True)
+        subprocess.call(f"chmod +x {dest}", shell=True)
 
 # Directory prefixes inside runtime/ that hold non-binary assets.  Files
 # matching these prefixes skip extal()'s chmod logic (no Linux exes live
@@ -288,7 +347,7 @@ def shortcut(name:str, location:Path):
 # through extal(), which conditionally chmods extensionless Linux files.
 _dir_prefixes = (
     "runtime/.VIS/", "runtime/Images/", "runtime/Icons/",
-    "runtime/Screens/", "runtime/modules/", "runtime/.Runtime/",
+    "runtime/Screens/", "runtime/modules/",
     "runtime/Shared/",
     "runtime/tcl/", "runtime/tcl8/", "runtime/tk/",
 )
@@ -305,22 +364,21 @@ def extal(file, location):
 def adjacents(location):
     """Pre-create dot-dirs inside runtime/ with hidden attribute on Windows.
 
-    .VIS and .Runtime are hidden so Explorer doesn't show them by default.
-    Images and Icons get pre-created for parity; archive.extract() would
-    auto-create them anyway.  All four live under runtime/ now (the new
-    layout); Uninstaller.exe and LICENSE remain at the install root.
+    .VIS is hidden so Explorer doesn't show it by default.  Images and Icons
+    get pre-created for parity; archive.extract() would auto-create them
+    anyway.  Uninstaller.exe and LICENSE remain at the install root.
+
+    The legacy ``.Runtime`` dir (the old per-screen-exe location) is no
+    longer created: under the always-Host model there are no per-screen
+    exes, so it was only ever an empty hidden folder.
     """
     runtime_root = os.path.join(location, "runtime")
     vis_dir = os.path.join(runtime_root, ".VIS")
-    dot_runtime = os.path.join(runtime_root, ".Runtime")
     os.makedirs(vis_dir, exist_ok=True)
     os.makedirs(os.path.join(runtime_root, "Images"), exist_ok=True)
     os.makedirs(os.path.join(runtime_root, "Icons"), exist_ok=True)
-    os.makedirs(dot_runtime, exist_ok=True)
     if sys.platform == "win32":
         subprocess.call(["attrib", "+h", vis_dir],
-                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        subprocess.call(["attrib", "+h", dot_runtime],
                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
@@ -386,9 +444,10 @@ def _group_of(screen_name: str) -> str | None:
             return gname
     return None
 
-def write_install_log(location, selected_screens, desktop_shortcuts):
+def write_install_log(location, selected_screens, desktop_shortcuts,
+                      start_menu_shortcuts=None, path_entry=""):
     """Write install_log.json recording what was installed."""
-    directories = [".VIS", "Icons", "Images", ".Runtime"]
+    directories = [".VIS", "Icons", "Images"]
 
     # Build screen list with versions.
     #
@@ -435,8 +494,10 @@ def write_install_log(location, selected_screens, desktop_shortcuts):
         "company": info[title].get("metadata", {}).get("company", ""),
         "screens": screens,
         "desktop_shortcuts": list(desktop_shortcuts),
+        "start_menu_shortcuts": list(start_menu_shortcuts or []),
         "directories": directories,
         "registry_key": registry_key,
+        "path_entry": path_entry,
     }
 
     log_path = os.path.join(location, "runtime", ".VIS", "install_log.json")
@@ -487,6 +548,74 @@ def register_uninstall(location):
             winreg.SetValueEx(key, "NoRepair", 0, winreg.REG_DWORD, 1)
     except Exception:
         pass
+
+
+def _broadcast_env_change():
+    """Notify running processes that the environment changed, so newly
+    launched shells pick up a PATH edit without a logout/restart."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        HWND_BROADCAST = 0xFFFF
+        WM_SETTINGCHANGE = 0x001A
+        SMTO_ABORTIFHUNG = 0x0002
+        ctypes.windll.user32.SendMessageTimeoutW(
+            HWND_BROADCAST, WM_SETTINGCHANGE, 0, "Environment",
+            SMTO_ABORTIFHUNG, 5000, ctypes.byref(ctypes.c_ulong()))
+    except Exception:
+        pass
+
+
+def add_runtime_to_path(location):
+    """Add ``<install>/runtime`` to the user's PATH when the project opts in
+    via ``host.add_to_path`` in project.json.
+
+    Per-user only (``HKCU\\Environment`` on Windows, ``~/.profile`` on POSIX)
+    — no admin needed, matching the per-user ``%LOCALAPPDATA%`` install — so
+    a user can call the Host CLI (e.g. ``WOM ping``) from any directory.
+    Returns the directory added so the install log can record it for a clean
+    removal on uninstall; returns ``""`` when nothing changed.
+    """
+    if not info[title].get("host", {}).get("add_to_path", False):
+        return ""
+    runtime_dir = os.path.join(location, "runtime")
+    if sys.platform == "win32":
+        try:
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment", 0,
+                                winreg.KEY_READ | winreg.KEY_SET_VALUE) as key:
+                try:
+                    cur, typ = winreg.QueryValueEx(key, "Path")
+                except FileNotFoundError:
+                    cur, typ = "", winreg.REG_EXPAND_SZ
+                entries = [p for p in cur.split(os.pathsep) if p]
+                norm = os.path.normcase(os.path.normpath(runtime_dir))
+                if not any(os.path.normcase(os.path.normpath(p)) == norm
+                           for p in entries):
+                    entries.append(runtime_dir)
+                    winreg.SetValueEx(key, "Path", 0, typ,
+                                      os.pathsep.join(entries))
+                    _broadcast_env_change()
+            print(f"  Added to PATH: {runtime_dir}")
+            return runtime_dir
+        except Exception as exc:
+            print(f"  Warning: could not add runtime to PATH: {exc}")
+            return ""
+    # POSIX: idempotently append an export to ~/.profile.
+    try:
+        profile = os.path.expanduser("~/.profile")
+        marker = f"# VIS:{title} runtime PATH"
+        existing = ""
+        if os.path.exists(profile):
+            with open(profile, "r", encoding="utf-8") as f:
+                existing = f.read()
+        if marker not in existing:
+            with open(profile, "a", encoding="utf-8") as f:
+                f.write(f'\nexport PATH="{runtime_dir}:$PATH"  {marker}\n')
+        return runtime_dir
+    except Exception:
+        return ""
 
 
 def verify_installation(location, arc) -> list[str]:
@@ -647,7 +776,7 @@ if QUIET is True:
     # Collect files to install.  Archive entries now use the runtime/
     # layout: all .exes and shared runtime files live under runtime/,
     # only Uninstaller.exe and LICENSE sit at archive root.
-    _base_prefixes_q = ("runtime/.VIS/", "runtime/Images/", "runtime/Icons/", "runtime/.Runtime/")
+    _base_prefixes_q = ("runtime/.VIS/", "runtime/Images/", "runtime/Icons/")
     _host_prefixes_q = ("runtime/Screens/", "runtime/modules/", "runtime/Shared/")
     # In quiet mode with no screens specified, install everything
     host_selected_q = (not cinstalls) or (title in cinstalls)
@@ -755,9 +884,26 @@ if QUIET is True:
 
     for i in dinstalls:
         print(f"  Creating shortcut: {i}")
-        shortcut(i, location)
+        shortcut(i, location, screen=(None if i == title else i))
 
-    write_install_log(location, cinstalls, dinstalls)
+    # Start Menu shortcuts: project + every installed release=true screen.
+    q_start_menu = []
+    for name in cinstalls:
+        is_project = (name == title)
+        is_release = bool(info[title]["Screens"].get(name, {}).get("release"))
+        if not (is_project or is_release):
+            continue
+        print(f"  Start Menu shortcut: {name}")
+        shortcut(name, location, screen=(None if is_project else name),
+                 start_menu=True)
+        # Same launcher set also dropped in the install root itself.
+        shortcut(name, location, screen=(None if is_project else name),
+                 install_root=True)
+        q_start_menu.append(name)
+
+    q_path_entry = add_runtime_to_path(location)
+    write_install_log(location, cinstalls, dinstalls, q_start_menu,
+                      path_entry=q_path_entry)
     register_uninstall(location)
     print("Installation complete.")
     archive.close()
@@ -1586,19 +1732,43 @@ def binstall(desktop:list[str], selected_screens:list[str]):
     if backup_dir:
         shutil.rmtree(backup_dir, ignore_errors=True)
 
-    # Create desktop shortcuts
+    # Create desktop shortcuts (user-selected).  Each targets the Host
+    # exe with the screen as a startup arg; the project's own entry
+    # (name == title) opens the default screen.
     actual_shortcuts = []
     for name, checked in shortcut_selections:
         if checked:
             file_label.config(text=f"Creating shortcut: {name}")
             root.update()
-            shortcut(name, location)
+            shortcut(name, location, screen=(None if name == title else name))
             actual_shortcuts.append(name)
+
+    # Create Start Menu shortcuts for the project + every release=true
+    # screen that was installed.  Under the always-Host model these are
+    # the designated launch points (there's no per-screen .exe to
+    # double-click), so they're created automatically rather than via
+    # the opt-in desktop page.
+    start_menu_shortcuts = []
+    for name in selected_screens:
+        is_project = (name == title)
+        is_release = bool(info[title]["Screens"].get(name, {}).get("release"))
+        if not (is_project or is_release):
+            continue
+        file_label.config(text=f"Start Menu: {name}")
+        root.update()
+        shortcut(name, location, screen=(None if is_project else name),
+                 start_menu=True)
+        # Same launcher set also dropped in the install root itself.
+        shortcut(name, location, screen=(None if is_project else name),
+                 install_root=True)
+        start_menu_shortcuts.append(name)
 
     # Write install log and register in Add/Remove Programs
     file_label.config(text="Registering installation...")
     root.update()
-    write_install_log(location, selected_screens, actual_shortcuts)
+    path_entry = add_runtime_to_path(location)
+    write_install_log(location, selected_screens, actual_shortcuts,
+                      start_menu_shortcuts, path_entry=path_entry)
     register_uninstall(location)
 
     _log_write(f"install complete: {len(files_to_extract)} files, "
@@ -1609,21 +1779,31 @@ def binstall(desktop:list[str], selected_screens:list[str]):
     pct_label.config(text="100%")
     close.state(["!disabled"])
 
-    # Auto-launch checkbox
+    # Auto-launch checkbox.  Always-Host model: the only executable is the
+    # Host at ``location/runtime/<title>.exe`` — there are no per-screen exes
+    # — so launch the Host and, for a non-default screen, pass the screen name
+    # as an argument (mirrors shortcut()).  The previous code looked for
+    # ``location/<target>.exe`` at the install ROOT, which never exists in the
+    # flat layout, so the checkbox silently did nothing.
     launch_var = tk.IntVar(value=1)
     default_screen = info[title].get("defaults", {}).get("default_screen")
-    launch_target = None
+    launch_screen = None   # None => Host opens its own default screen (no arg)
     if default_screen:
         scr_cfg = info[title]["Screens"].get(default_screen, {})
         if scr_cfg.get("tabbed", False):
-            # Tabbed screens run inside the Host — launch the Host exe
-            launch_target = title
+            launch_screen = None
         elif default_screen in selected_screens:
-            launch_target = default_screen
-    if not launch_target and selected_screens:
-        launch_target = selected_screens[0]
+            launch_screen = default_screen
+        elif selected_screens:
+            launch_screen = selected_screens[0]
+    elif selected_screens:
+        launch_screen = selected_screens[0]
 
-    if launch_target:
+    ext = ".exe" if sys.platform == "win32" else ""
+    runtime_dir = os.path.join(location, "runtime")
+    host_exe = os.path.join(runtime_dir, f"{title}{ext}")
+
+    if os.path.exists(host_exe):
         launch_check = ttk.Checkbutton(progress_frame, text=f"Launch {title}",
                                        variable=launch_var)
         launch_check.pack(pady=(4, 8))
@@ -1632,12 +1812,8 @@ def binstall(desktop:list[str], selected_screens:list[str]):
         def _close_and_maybe_launch():
             archive.close()
             if launch_var.get():
-                if sys.platform == "win32":
-                    exe = os.path.join(location, launch_target + ".exe")
-                else:
-                    exe = os.path.join(location, launch_target)
-                if os.path.exists(str(exe)):
-                    subprocess.Popen([str(exe)], cwd=str(location))
+                cmd = [host_exe] + ([launch_screen] if launch_screen else [])
+                subprocess.Popen(cmd, cwd=runtime_dir)
             root.destroy()
 
         close.config(command=_close_and_maybe_launch)

@@ -6,8 +6,8 @@ release, or the user unchecked the group at install time), VIStk shows a
 non-blocking banner in the Host's ``InfoRow``. These helpers answer
 "is this screen actually on disk?" for that pre-open check.
 
-In dev mode (``sys.frozen`` is falsy) the checks always return ``True`` —
-every screen is available from source.
+When running from source (not a compiled build) the checks always return
+``True`` — every screen is available from source.
 """
 
 from __future__ import annotations
@@ -16,10 +16,18 @@ import json
 import sys
 from pathlib import Path
 
+from VIStk.Structures._VINFO import is_compiled
+
 
 def _install_dir() -> Path | None:
-    """Return the install directory when running from a compiled build."""
-    if getattr(sys, "frozen", False):
+    """Return the install directory when running from a compiled build.
+
+    Keys on ``is_compiled()`` (executable basename), NOT ``sys.frozen`` —
+    Nuitka ``--standalone`` (what VIS ships) leaves ``sys.frozen`` unset, so a
+    frozen-only check here would make the gate fall back to the dev
+    "always installed" branch in every release build.
+    """
+    if is_compiled():
         return Path(sys.executable).parent
     return None
 
@@ -85,6 +93,13 @@ def is_screen_installed(name: str, install_dir: Path | None = None) -> bool:
     if (root / (name + ext)).exists():
         return True
     stem = _screen_script_stem(root, name)
+    # Flat layout (current): the screen's wrapper module sits at the runtime
+    # root next to the host binary.
+    if (root / f"{stem}{mod_ext}").exists():
+        return True
+    if stem != name and (root / f"{name}{mod_ext}").exists():
+        return True
+    # Older layout: under a Screens/ subdirectory.
     if (root / "Screens" / f"{stem}{mod_ext}").exists():
         return True
     if stem != name and (root / "Screens" / f"{name}{mod_ext}").exists():

@@ -511,10 +511,11 @@ class Release(Project):
         parts.append(f"--output-dir={self.build_dir}")
         parts.append(f"--output-filename={self.title}{_EXE_EXT}")
 
-        # TEMP DEBUG: console disabled so startup errors are visible.
-        # Revert before shipping.
-        # if sys.platform == "win32":
-        #     parts.append("--windows-console-mode=disable")
+        # The Host .exe ships GUI-subsystem (no console window/flash on
+        # shortcut or double-click launch).  Its console-subsystem CLI twin,
+        # <title>.com, is produced from this same build below (PE-patched).
+        if sys.platform == "win32":
+            parts.append("--windows-console-mode=disable")
 
         parts.append("--assume-yes-for-downloads")
         parts.extend(self.extra_nuitka_args)
@@ -528,6 +529,22 @@ class Release(Project):
         with self._merge_lock:
             if not self._place_exe_output(entry_script, self.title):
                 return False, "merge into runtime/ failed"
+
+        # Two-binary CLI packaging (Windows): the Host .exe is GUI-subsystem
+        # (no console flash on shortcut/double-click launch).  Ship a
+        # console-subsystem twin named ``<title>.com`` so a typed command
+        # resolves to it first (PATHEXT lists .COM before .EXE) and gets the
+        # shell-waits + stdin/stdout the CLI exchange needs.  The two are
+        # byte-identical except the PE subsystem field, so copy + patch one
+        # byte instead of compiling twice.
+        if sys.platform == "win32":
+            exe_path = os.path.join(self.runtime, f"{self.title}{_EXE_EXT}")
+            com_path = os.path.join(self.runtime, f"{self.title}.com")
+            try:
+                shutil.copy2(exe_path, com_path)
+                self._patch_pe_subsystem(com_path, 3)  # 3 = console (CUI)
+            except Exception as e:
+                return False, f"failed to build {self.title}.com: {e}"
         return True, ""
 
     def _place_exe_output(self, entry_script: str, exe_basename: str) -> bool:
@@ -574,6 +591,21 @@ class Release(Project):
                     shutil.copy2(src, os.path.join(dest, f))
         return True
 
+    @staticmethod
+    def _patch_pe_subsystem(path: str, subsystem: int) -> None:
+        """Set the PE Subsystem field (2 = GUI, 3 = console) in *path*.
+
+        The Subsystem field sits at optional-header offset 68 for both PE32
+        and PE32+ — i.e. ``e_lfanew + 4 (PE sig) + 20 (COFF header) + 68``.
+        Flipping it turns a Nuitka GUI build into a console build (the shell
+        waits for it and stdin/stdout are attached) without a second compile.
+        """
+        with open(path, "r+b") as f:
+            f.seek(0x3C)
+            e_lfanew = int.from_bytes(f.read(4), "little")
+            f.seek(e_lfanew + 92)
+            f.write(int(subsystem).to_bytes(2, "little"))
+
     def compile_screens(self, mode="all"):
         """Compile each screen's wrapper .pyd and (optionally) the Host .exe.
 
@@ -610,39 +642,6 @@ class Release(Project):
                 return False
 
         return True
-
-    def _modules_for_release(self) -> list[tuple[str, str]]:
-        """Return ``[(screen_name, modules_subdir_path), ...]`` for every
-        release-targeted screen that has a ``modules/<screen>/`` package.
-
-        Screens without a corresponding modules directory contribute
-        nothing (they have no per-screen logic to ship externally).
-        """
-        modules_root = os.path.join(self.p_project, "modules")
-        if not os.path.isdir(modules_root):
-            return []
-        out: list[tuple[str, str]] = []
-        for scr in self.release_targets:
-            path = os.path.join(modules_root, scr.name)
-            if os.path.isdir(path):
-                out.append((scr.name, path))
-        return out
-
-    def _screens_for_release(self) -> list[tuple[str, str]]:
-        """Return ``[(screen_name, screens_subdir_path), ...]`` for every
-        release-targeted screen that has a ``Screens/<screen>/`` UI
-        sub-package holding f_* section files.  Screens without one
-        (single-file lrfEditor-style screens) contribute nothing.
-        """
-        screens_root = os.path.join(self.p_project, "Screens")
-        if not os.path.isdir(screens_root):
-            return []
-        out: list[tuple[str, str]] = []
-        for scr in self.release_targets:
-            path = os.path.join(screens_root, scr.name)
-            if os.path.isdir(path):
-                out.append((scr.name, path))
-        return out
 
     # ── Onefile bootstrap injection ───────────────────────────────────────
 
@@ -692,32 +691,24 @@ class Release(Project):
     def _compile_targets(self) -> list[str]:
         """Every external compile target this release will produce.
 
-        Used by each phase to construct ``--nofollow-import-to`` flags
-        for every target except the one *this* compile is building.  The
-        universal rule: every member must be either ``--include-package``
-        (or an entry script) or ``--nofollow-import-to`` for every
-        Nuitka invocation — never both, never neither.
+        Used by each phase to construct ``--nofollow-import-to`` flags so
+        a compile doesn't bundle anything that ships as its own artifact.
 
         Members:
-          * Every shared package (``compile_shared`` ships these)
-          * ``Screens`` — every tabbed screen .pyd lands under here
-          * ``modules`` — every per-screen modules .pyd lands under here
+          * Every shared package (``compile_shared`` ships these as
+            ``<pkg>.pyd`` at the install root)
+          * ``Screens`` / ``modules`` — top-level packages whose loose
+            framework files (``Screens/defaults.pyc``, ``modules/menu.pyc``,
+            ...) ship separately via :meth:`clean`.  Nuitka's
+            ``--nofollow-import-to=Screens`` cascades to the whole
+            package, so per-screen ``Screens.<name>`` / ``modules.<name>``
+            entries are unnecessary — the old per-screen entries existed
+            only for the standalone-.exe bundling dance, which the
+            always-Host model removed (no more ``_compile_screen_exe``).
         """
         targets = list(self.shared_pkg_names)
         targets.append("Screens")
         targets.append("modules")
-        # Per-screen dotted entries so entry .exe compiles (which call
-        # _nofollow_flags() without exclude_self) don't freeze a stub
-        # ``Screens.<name>`` or ``modules.<name>`` package alongside
-        # the on-disk ``.pyd``.  An entry script's
-        # ``import Screens.<name>.f_xxx`` otherwise causes Nuitka
-        # to bundle just the subpackage's ``__init__.py`` reference,
-        # which shadows the real on-disk ``.pyd`` at runtime and
-        # produces an ImportError on the f_*/m_* submodule lookup.
-        for name, _path in self._screens_for_release():
-            targets.append(f"Screens.{name}")
-        for name, _path in self._modules_for_release():
-            targets.append(f"modules.{name}")
         return targets
 
     # Runtime-only filter: distribution names of build/dev tools we
@@ -852,7 +843,13 @@ class Release(Project):
                 head, _, marker = req.partition(";")
                 if "extra ==" in marker:
                     continue   # extras-only dep; not a runtime requirement
-                dep_name = head.split("[")[0].split("(")[0].split()[0].strip()
+                # Strip PEP 508 version specifiers / extras to get the bare
+                # distribution name.  The old split only handled the
+                # parenthesised form ``foo (>=1)``; a bare specifier like
+                # ``google-api-python-client>=1.8`` (what gcsa declares) leaked
+                # the version into the name, so the dep — and its whole subtree
+                # (e.g. the entire ``google`` namespace) — was silently dropped.
+                dep_name = _re.split(r"[<>=!~;\s\[\(]", head, maxsplit=1)[0].strip()
                 if not dep_name:
                     continue
                 norm = dep_name.lower().replace("_", "-")
@@ -861,7 +858,11 @@ class Release(Project):
                 seen_dists.add(norm)
                 queue.append(dep_name)
                 for top in self._dist_to_top_levels(dep_name):
-                    if top not in seen_tops:
+                    # Guard against malformed entries (e.g. a stray
+                    # "pkg/subdir" from a bad top_level.txt) that would become
+                    # an invalid ``--follow-import-to`` argument and could
+                    # break the Nuitka build.
+                    if top.isidentifier() and top not in seen_tops:
                         seen_tops.add(top)
                         top_levels.append(top)
         return top_levels
@@ -1468,17 +1469,56 @@ class Release(Project):
         # compiles the package's __init__.py and silently drops every
         # submodule from the resulting .pyd — see _compile_one_shared.
         resolved: list[tuple[str, str]] = []
+        single_file: list[tuple[str, str]] = []  # (pkg, source .py path)
         for pkg in packages:
             try:
                 mod = __import__(pkg)
-                resolved.append((pkg, os.path.dirname(mod.__file__)))
             except Exception:
                 print(f"  Skipping {pkg} — not importable", flush=True)
+                continue
+            mod_file = getattr(mod, "__file__", None)
+            if not mod_file:
+                print(f"  Skipping {pkg} — no __file__", flush=True)
+                continue
+            # Classify by the basename of ``__file__``: a real package's
+            # ``__file__`` is its ``__init__.py`` (dirname = the package dir).
+            # A single-file module's ``__file__`` IS the module, so dirname
+            # would resolve to site-packages and ship the WHOLE directory.
+            # NB: ``__path__`` is NOT a reliable signal — ``six`` fakes a
+            # ``__path__`` on itself to support ``six.moves`` yet is a single
+            # file, so we key off the ``__init__`` basename instead.
+            if os.path.basename(mod_file).startswith("__init__."):
+                resolved.append((pkg, os.path.dirname(mod_file)))
+            else:
+                single_file.append((pkg, mod_file))
 
-        if not resolved:
+        if not resolved and not single_file:
             return True
 
         os.makedirs(self.runtime, exist_ok=True)
+
+        # Single-file pure-Python modules (six, ...): compile the one source
+        # file to ``runtime/<pkg>.pyc``.  Python's SourcelessFileLoader
+        # imports a bare ``<name>.pyc`` on sys.path directly, so the Host
+        # picks it up with no path injection.  These must NOT go through the
+        # directory-ship or Nuitka ``--include-package`` paths, which both
+        # assume a package directory (and would bundle all of site-packages).
+        if single_file:
+            import py_compile
+            for pkg, src in single_file:
+                self._step += 1
+                self._cat_index += 1
+                prefix = (f"  [{self._step}/{self._total_steps}] "
+                          f"{self._category} {self._cat_index}/{self._cat_count} - {pkg}")
+                if src.endswith(".py"):
+                    dest = os.path.join(self.runtime, f"{pkg}.pyc")
+                    py_compile.compile(src, cfile=dest, doraise=True)
+                    print(f"{prefix} compiled (single-file -> .pyc)", flush=True)
+                else:
+                    # Single-file binary extension (.pyd/.so) — ship as-is.
+                    dest = os.path.join(self.runtime, os.path.basename(src))
+                    shutil.copy2(src, dest)
+                    print(f"{prefix} copied (single-file)", flush=True)
 
         # Split: directory-shipped (binary extensions) vs compile-to-pyd.
         dir_shipped: list[tuple[str, str]] = []
@@ -1509,11 +1549,90 @@ class Release(Project):
                     py = os.path.join(walk_root, f)
                     py_compile.compile(py, cfile=py + "c", doraise=True)
                     os.remove(py)
-            print(f"{prefix} copied (binary extensions, .py→.pyc)", flush=True)
+            print(f"{prefix} copied (binary extensions, .py->.pyc)", flush=True)
 
         if not to_compile:
             return True
         return self._compile_shared_parallel(to_compile)
+
+    def _project_has_commands(self) -> bool:
+        """True if the project ships a ``commands/`` package with ``c_*.py``."""
+        d = os.path.join(self.p_project, "commands")
+        try:
+            return os.path.isdir(d) and any(
+                f.startswith("c_") and f.endswith(".py")
+                for f in os.listdir(d)
+            )
+        except OSError:
+            return False
+
+    def compile_commands(self) -> bool:
+        """Compile the project's ``commands/`` package to runtime/commands.pyd.
+
+        Each ``commands/c_<name>.py`` is a Host CLI command (entry
+        ``_c_<name>``).  Its ``__init__.py`` is regenerated with a STATIC
+        ``__all__`` (the command manifest) in a build copy, then Nuitka
+        ``--module`` compiled, so the frozen Host doesn't have to scan a
+        directory that no longer exists on disk.  No-op when there is no
+        ``commands/``.
+        """
+        src = os.path.join(self.p_project, "commands")
+        if not self._project_has_commands():
+            return True
+
+        self._step += 1
+        self._cat_index += 1
+        prefix = (f"  [{self._step}/{self._total_steps}] "
+                  f"{self._category} {self._cat_index}/{self._cat_count} - commands")
+
+        names = sorted(
+            f[:-3] for f in os.listdir(src)
+            if f.startswith("c_") and f.endswith(".py")
+        )
+        # Build copy with a STATIC ``__all__`` baked into __init__.py (the
+        # dynamic dir-scan can't see files bundled inside the .pyd at runtime).
+        build_parent = os.path.join(self.build_dir, "commands_build")
+        build_pkg = os.path.join(build_parent, "commands")
+        if exists(build_parent):
+            shutil.rmtree(build_parent, ignore_errors=True)
+        shutil.copytree(
+            src, build_pkg,
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"),
+        )
+        with open(os.path.join(build_pkg, "__init__.py"), "w",
+                  encoding="utf-8") as f:
+            f.write('"""Project CLI commands (compiled).\n\n'
+                    'Static command manifest baked by VIS release.\n"""\n')
+            f.write("__all__ = %r\n" % (names,))
+
+        parts = [
+            sys.executable, "-m", "nuitka", "--module",
+            *self._compiler_args(),
+            "--include-package=commands",
+            f"--output-dir={self.build_dir}",
+            "--assume-yes-for-downloads",
+            *self._nofollow_flags(exclude_self="commands"),
+            build_pkg,
+        ]
+        # Run from the build parent so ``--include-package=commands`` resolves
+        # the build copy, not the source ``commands/`` in the project root
+        # (both on the path collide -> NuitkaOptimizationError "duplicate
+        # locals name").
+        ok, err = self._run_nuitka_silent(parts, build_parent)
+        if not ok:
+            self._status(f"{prefix} FAILED: {err}", newline=True)
+            return False
+        built = glob.glob(f"{self.build_dir}commands*{_MOD_EXT}")
+        if not built:
+            self._status(f"{prefix} no {_MOD_EXT} produced", newline=True)
+            return False
+        os.makedirs(self.runtime, exist_ok=True)
+        dst = os.path.join(self.runtime, f"commands{_MOD_EXT}")
+        if exists(dst):
+            os.remove(dst)
+        shutil.move(built[0], dst)
+        print(f"{prefix} compiled (commands.pyd)", flush=True)
+        return True
 
     def clean(self):
         """Appends project data to dist folder.
@@ -1807,6 +1926,10 @@ class Release(Project):
             if pkg not in shared_pkgs:
                 shared_pkgs.append(pkg)
         pkg_count = len(shared_pkgs)
+        # The project's `commands/` package (if any) compiles to one extra
+        # `commands.pyd` within the Required Packages phase.
+        if self._project_has_commands():
+            pkg_count += 1
 
         # Every release target produces one wrapper .pyd — tabbed and
         # standalone alike — so the Host can open it as a tab.  Under
@@ -1833,6 +1956,10 @@ class Release(Project):
         if not self.compile_shared():
             self._status("", newline=True)
             print(f"\nRelease FAILED during Required Packages.", flush=True)
+            return
+        if not self.compile_commands():
+            self._status("", newline=True)
+            print(f"\nRelease FAILED during Required Packages (commands).", flush=True)
             return
         phase_times["Required Packages"] = time.monotonic() - t0
 
