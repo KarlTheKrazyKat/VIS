@@ -1779,21 +1779,31 @@ def binstall(desktop:list[str], selected_screens:list[str]):
     pct_label.config(text="100%")
     close.state(["!disabled"])
 
-    # Auto-launch checkbox
+    # Auto-launch checkbox.  Always-Host model: the only executable is the
+    # Host at ``location/runtime/<title>.exe`` — there are no per-screen exes
+    # — so launch the Host and, for a non-default screen, pass the screen name
+    # as an argument (mirrors shortcut()).  The previous code looked for
+    # ``location/<target>.exe`` at the install ROOT, which never exists in the
+    # flat layout, so the checkbox silently did nothing.
     launch_var = tk.IntVar(value=1)
     default_screen = info[title].get("defaults", {}).get("default_screen")
-    launch_target = None
+    launch_screen = None   # None => Host opens its own default screen (no arg)
     if default_screen:
         scr_cfg = info[title]["Screens"].get(default_screen, {})
         if scr_cfg.get("tabbed", False):
-            # Tabbed screens run inside the Host — launch the Host exe
-            launch_target = title
+            launch_screen = None
         elif default_screen in selected_screens:
-            launch_target = default_screen
-    if not launch_target and selected_screens:
-        launch_target = selected_screens[0]
+            launch_screen = default_screen
+        elif selected_screens:
+            launch_screen = selected_screens[0]
+    elif selected_screens:
+        launch_screen = selected_screens[0]
 
-    if launch_target:
+    ext = ".exe" if sys.platform == "win32" else ""
+    runtime_dir = os.path.join(location, "runtime")
+    host_exe = os.path.join(runtime_dir, f"{title}{ext}")
+
+    if os.path.exists(host_exe):
         launch_check = ttk.Checkbutton(progress_frame, text=f"Launch {title}",
                                        variable=launch_var)
         launch_check.pack(pady=(4, 8))
@@ -1802,12 +1812,8 @@ def binstall(desktop:list[str], selected_screens:list[str]):
         def _close_and_maybe_launch():
             archive.close()
             if launch_var.get():
-                if sys.platform == "win32":
-                    exe = os.path.join(location, launch_target + ".exe")
-                else:
-                    exe = os.path.join(location, launch_target)
-                if os.path.exists(str(exe)):
-                    subprocess.Popen([str(exe)], cwd=str(location))
+                cmd = [host_exe] + ([launch_screen] if launch_screen else [])
+                subprocess.Popen(cmd, cwd=runtime_dir)
             root.destroy()
 
         close.config(command=_close_and_maybe_launch)
