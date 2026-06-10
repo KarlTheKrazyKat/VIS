@@ -217,6 +217,42 @@ def remove_runtime_from_path(log):
             pass
 
 
+def run_oim_uninstall(log):
+    """Run each recorded OIM uninstall hook before the file sweep.
+
+    Mirrors the installer's in-process exec model: the Uninstaller is a
+    frozen bundle, so a persisted ``uninstall.py`` is exec'd in-process with
+    a small context rather than shelled out to a (possibly absent) system
+    Python.  Paths resolve against the log's recorded ``install_location``.
+    Errors are reported but never abort the uninstall.  Called only on a
+    full uninstall — the app, and any media it registered, is going away.
+    """
+    install_root = log.get("install_location", "")
+    for rec in log.get("oim", []):
+        rel = rec.get("uninstall_script")
+        name = rec.get("name", "")
+        if not rel or not install_root:
+            continue
+        script_path = os.path.join(install_root, *rel.split("/"))
+        if not os.path.exists(script_path):
+            continue
+        try:
+            with open(script_path, "r", encoding="utf-8") as f:
+                src = f.read()
+            ctx = {
+                "__name__": "__oim_uninstall__",
+                "__file__": script_path,
+                "INSTALL_ROOT": install_root,
+                "RUNTIME_DIR": os.path.join(install_root, "runtime"),
+                "OIM_NAME": name,
+                "APP_TITLE": log.get("app_name", ""),
+                "log": lambda m, _n=name: print(f"  OIM[{_n}]: {m}"),
+            }
+            exec(compile(src, script_path, "exec"), ctx)
+        except Exception as e:
+            print(f"  OIM[{name}] uninstall hook FAILED: {e}")
+
+
 def remove_installed_files(log, location, progress_fn=None):
     """Remove screen executables, directories, and install_log.json.
 
@@ -441,6 +477,8 @@ if QUIET:
 
     remove_runtime_from_path(log)
     print("  Removed runtime from PATH")
+
+    run_oim_uninstall(log)
 
     def _print_progress(step, total, label):
         print(f"  [{step}/{total}] {label}")
@@ -672,6 +710,9 @@ def _do_uninstall():
         root.update()
         remove_registry_entry(filtered_log)
         remove_runtime_from_path(filtered_log)
+        progress_label.config(text="Running media uninstall hooks...")
+        root.update()
+        run_oim_uninstall(log)
 
     def _gui_progress(step, total, label):
         progress_label.config(text=label)

@@ -1655,6 +1655,21 @@ class Release(Project):
         if exists(src):
             shutil.copytree(src, f"{self.runtime}/Icons/", dirs_exist_ok=True)
 
+        # Ship Outside Installable Media (OIM) at the install ROOT (out_dir,
+        # not runtime/) so it rides into binaries.zip via root_dir=self.final
+        # but stays OUT of the runtime/ host-selected catch-all — the
+        # installer extracts + runs each entry per the user's selection.
+        # Scripts stay as .py source (the installer execs them); the media
+        # payload is copied verbatim.
+        src = f"{self.p_project}/OIM/"
+        if exists(src):
+            shutil.copytree(src, f"{out_dir}/OIM/", dirs_exist_ok=True)
+            entries = [d for d in os.listdir(src)
+                       if os.path.isdir(os.path.join(src, d))]
+            if entries:
+                print(f"Bundled {len(entries)} OIM entr(y/ies): "
+                      f"{', '.join(sorted(entries))}", flush=True)
+
         # Ship top-level framework support files in Screens/ and modules/
         # as .pyc.  Per-screen subdirectories (Screens/AssetManager/,
         # modules/FloorView/, ...) are already compiled into the per-screen

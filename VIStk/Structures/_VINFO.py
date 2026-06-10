@@ -233,6 +233,15 @@ class VINFO():
         """The Location of the Project `/Icons` Folder"""
         self.p_images = self.p_project + "/Images"
         """The Location of the Project  `/Images` Folder"""
+        self.p_oim = self.p_project + "/OIM"
+        """The Location of the Project `/OIM` (Outside Installable Media) Folder.
+
+        Optional folder-convention area for non-VIStk installable media
+        (e.g. a COM-registered add-in) shipped alongside the app.  Each
+        ``OIM/<name>/`` holds ``media/`` (payload), ``icon/``, an optional
+        ``manifest.json``, and ``script/install.py`` / ``script/uninstall.py``
+        run by the installer/uninstaller.  Ridden into ``binaries.zip`` by
+        :meth:`Release.clean`."""
 
     def restoreAll(self):
         """Undoes screen isolation"""

@@ -41,6 +41,7 @@ VIStk is a lightweight framework that makes building multi-screen Tkinter applic
 - [Utilities](#utilities)
   - [fUtil](#futil)
 - [Templates and the #% System](#templates-and-the--system)
+- [Outside Installable Media (OIM)](#outside-installable-media-oim)
 
 ---
 
@@ -61,6 +62,8 @@ MyProject/
 │   └── <screen>/           ← logic files, prefixed m_ (e.g. m_header.py)
 ├── Icons/                  ← .ico (Windows) or .xbm (Linux) icon files
 ├── Images/                 ← image assets used by VIMG
+├── OIM/                    ← (optional) Outside Installable Media — non-VIStk
+│   └── <name>/             ←   media shipped + installed alongside the app
 ├── <screen>.py             ← main script for each screen
 └── dist/                   ← compiled binaries (created on release)
 ```
@@ -1516,6 +1519,90 @@ if __name__ == "__main__":
 The `if __name__ == "__main__":` guard is required for tabbed screens. When the Host imports the module to call `setup()`, this guard prevents the standalone loop from running. When the script is executed directly (standalone mode), the guard allows it to run normally.
 
 **Hook placement:** `configure_menu`, `on_focused`, and `on_unfocused` can be moved to `modules/<screen>/m_<screen>.py` to keep business logic separate from UI. The Host checks the module file first and falls back to the screen script.
+
+---
+
+## Outside Installable Media (OIM)
+
+OIM lets a project ship **non-VIStk installable media** — anything the VIStk Python build pipeline can't produce, such as a COM-registered C# add-in, an MSI, or a driver — *inside the same installer*, surfaced as an opt-in install choice with a developer-supplied post-extract script. It is a pure **folder convention** (discovered like `commands/`); nothing is registered in `project.json`.
+
+### Folder layout
+
+```text
+MyProject/
+└── OIM/
+    └── <Name>/
+        ├── manifest.json        ← optional metadata (see below)
+        ├── media/               ← the payload (staged, then your script installs it)
+        ├── icon/<image>         ← checkbox icon shown in the installer
+        └── script/
+            ├── install.py       ← optional; runs after media extraction
+            └── uninstall.py     ← optional; runs on a full uninstall
+```
+
+`manifest.json` (all keys optional):
+
+```json
+{
+  "label": "SolidWOM Add-in",
+  "description": "WOM integration for SolidWorks",
+  "default": false,
+  "required": false
+}
+```
+
+- `label` / `description` — shown on the installer's **Additional Software** row (defaults to the folder name).
+- `default` — checkbox checked by default (default `false`, so OIM never silently bloats an install).
+- `required` — always installed, rendered checked + disabled (excluded from the **All** toggle).
+
+### How it ships and installs
+
+1. **Release** — `Release.clean()` copies `OIM/` to the install root of the build (`dist/<project>/OIM/`), so it rides into `binaries.zip` but stays out of the host-selected `runtime/` catch-all.
+2. **Selection** — the installer discovers each `OIM/<name>/` in the archive and renders it as a selectable row; `--Quiet` installs required media always, all media on a bare `--Quiet`, and named media otherwise.
+3. **Install** — for each selected entry the installer stages `media/` into `<install>/OIM/<name>/`, execs `script/install.py`, and on success persists `script/uninstall.py` + records the entry in `install_log.json`, then deletes the staged folder. A failing script is logged to `vis_installer.log` and surfaced in the UI but **never rolls back the committed app install**.
+4. **Uninstall** — on a full uninstall the Uninstaller execs each recorded `uninstall.py` *before* sweeping files, so media that registered state outside the install dir (COM/regasm, plugin folders) is cleaned up.
+
+### The script contract
+
+`install.py` / `uninstall.py` run **in-process** in the installer's/uninstaller's own interpreter. They are *not* run by a system Python — a clean target machine may not have one, and the frozen installer's `sys.executable` is the installer itself. Practical consequences:
+
+- **Idempotent**: the script re-runs on every install/repair (OIM is staged fresh each time, not persisted). Re-registering or re-stamping a config must be safe.
+- **Stdlib subset**: only modules bundled into the frozen installer are importable. `os`, `sys`, `json`, `subprocess`, `pathlib`, `shutil` are available — the realistic pattern is to *shell out* (`regasm`, `msiexec`) or copy/stamp files. Avoid exotic stdlib (`sqlite3`, `lzma`, …) and third-party imports.
+- **Elevated**: the installer runs `--uac-admin`, so the script inherits admin (regasm's HKLM write works).
+- **Quiet on failure**: wrap risky work in `try/except` and report via `log()` — `--windowed` swallows `print`.
+
+Injected globals:
+
+| Name | Meaning |
+|------|---------|
+| `INSTALL_ROOT` | the install directory root |
+| `RUNTIME_DIR` | `<INSTALL_ROOT>/runtime` (the app's `python3xx.dll`, shared `.pyd`s, e.g. `pywomlib.pyd`) |
+| `MEDIA_DIR` | `<INSTALL_ROOT>/OIM/<name>/media` — the staged payload (install scripts only) |
+| `OIM_NAME` | this entry's folder name |
+| `APP_TITLE` | the project title |
+| `log(msg)` | append a line to the installer/uninstaller log |
+
+Example `script/install.py` (register a SolidWorks add-in and point it at the app's `pywomlib.pyd`):
+
+```python
+import os, json, subprocess
+
+dll = os.path.join(MEDIA_DIR, "SolidWOM.AddIn.dll")
+
+# Stamp the add-in's config with this install's real runtime path.
+cfg = os.path.join(MEDIA_DIR, "solidwom.config.json")
+data = json.load(open(cfg))
+data["ExtraPaths"] = [RUNTIME_DIR]            # where pywomlib.pyd lives
+json.dump(data, open(cfg, "w"), indent=2)
+
+regasm = r"C:\Windows\Microsoft.NET\Framework64\v4.0.30319\RegAsm.exe"
+rc = subprocess.call([regasm, "/codebase", dll])
+log(f"regasm returned {rc}")
+if rc != 0:
+    raise RuntimeError("RegAsm registration failed")   # keeps the entry staged for diagnosis
+```
+
+The matching `script/uninstall.py` would run `RegAsm /u` on the same DLL using `RUNTIME_DIR`/`INSTALL_ROOT` to locate it.
 
 ---
 

@@ -828,6 +828,35 @@ A reusable right-click popup menu so screens stop hand-coding the `tkinter.Menu`
 
 ---
 
+### 0.5.5 Outside Installable Media (OIM)
+
+Lets a project ship non-VIStk installable media (e.g. a COM-registered SolidWorks/.NET add-in) *inside* the same installer, surfaced as an opt-in install choice with a developer-supplied post-extract script.
+
+**Folder convention** (`<project>/OIM/<name>/`, no `project.json` registration — discovered like `commands/`):
+
+- `manifest.json` *(optional)* — `label`, `description`, `default` (default `false`), `required` (default `false`).
+- `media/` — the payload; staged into the install dir, then the script installs it.
+- `icon/<image>` — the checkbox icon shown in the installer.
+- `script/install.py` *(optional)* — run **in-process** in the installer's interpreter after the entry's media is extracted.
+- `script/uninstall.py` *(optional)* — persisted to `runtime/.VIS/oim/<name>/` and run by the Uninstaller on a full uninstall.
+
+**Release pipeline**
+
+- `Release.clean()` copies `OIM/` to the install **root** of the build (`self.final/OIM/`, not `runtime/`) so it rides into `binaries.zip` via `root_dir=self.final` while staying out of the host-selected `runtime/` catch-all. `VINFO.p_oim` added as the canonical path.
+
+**Installer**
+
+- OIM entries are discovered by scanning the appended archive for `OIM/<name>/…` and rendered as `kind:"media"` rows under an **Additional Software** header on the installables page; required entries render checked + disabled, optional default to off. Integrated into the master **All** / tri-state accounting (required entries excluded so *All* can still reach fully-off).
+- Selected media are handled by `_install_oim()` (shared by GUI and `--Quiet`): stage → exec `install.py` → on success persist `uninstall.py` + record in `install_log.json` (`"oim"` array, merged on repair) + delete the staged folder; the empty `OIM/` root is then removed. A failing script logs to `vis_installer.log`, is surfaced in the status line, and **never** rolls back the committed app install.
+- Script execution is **in-process `exec()`** (the frozen installer can't shell out to a system Python, and `sys.executable` is the installer). Scripts receive `INSTALL_ROOT`, `RUNTIME_DIR`, `MEDIA_DIR`, `OIM_NAME`, `APP_TITLE`, and a `log()` callable, inherit the installer's `--uac-admin` elevation, and must be idempotent (re-run on every install/repair).
+- `--Quiet` selects required media always, all media on a bare `--Quiet`, and named media otherwise.
+
+**Uninstaller**
+
+- `run_oim_uninstall()` execs each recorded `uninstall.py` (same in-process model + context) **before** the file sweep, on a full uninstall only — closing the orphaning gap for media that registers state outside the install dir (COM/regasm, GAC, plugin folders).
+
+---
+
 ### 0.6.X Application Settings
 
 Settings stored per-project in `.VIS/settings.json`, accessed via `Project.settings`.

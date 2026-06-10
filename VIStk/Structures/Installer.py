@@ -241,6 +241,56 @@ for _name in _archive_binaries:
             and _name != title):
         _install_entries.append({"kind": "screen", "name": _name})
 
+# ── Outside Installable Media (OIM) discovery (0.5.4) ─────────────────────
+# OIM entries ship at the archive ROOT under OIM/<name>/ (deliberately NOT
+# under runtime/, so the host-selected catch-all never auto-installs them).
+# Folder-convention only — no project.json registration:
+#   OIM/<name>/manifest.json        optional {label, description, default, required}
+#   OIM/<name>/media/...            the payload (staged; the script installs it)
+#   OIM/<name>/icon/<image>         checkbox icon shown in the installer
+#   OIM/<name>/script/install.py    run in-process after media extraction
+#   OIM/<name>/script/uninstall.py  persisted; run by the Uninstaller
+# Each entry becomes a selectable {"kind": "media"} row on the installables
+# page; extraction + script execution are handled by _install_oim().
+_oim_entries: list[dict] = []
+_oim_required: set[str] = set()
+_oim_by_name: dict[str, dict] = {}
+_all_members = set(archive.namelist())
+_oim_names: set[str] = set()
+for _m in _all_members:
+    if _m.startswith("OIM/") and _m.count("/") >= 2:
+        _oim_names.add(_m.split("/")[1])
+for _oname in sorted(_oim_names):
+    _prefix = f"OIM/{_oname}/"
+    _members = [m for m in _all_members if m.startswith(_prefix) and not m.endswith("/")]
+    _manifest = {}
+    if _prefix + "manifest.json" in _all_members:
+        try:
+            with archive.open(_prefix + "manifest.json") as _mf:
+                _manifest = json.load(_mf)
+        except Exception:
+            _manifest = {}
+    _icon_member = next((m for m in _members if m.startswith(_prefix + "icon/")), None)
+    _install_member = _prefix + "script/install.py"
+    _uninstall_member = _prefix + "script/uninstall.py"
+    _required = bool(_manifest.get("required", False))
+    _entry = {
+        "name": _oname,
+        "label": _manifest.get("label", _oname),
+        "description": _manifest.get("description", ""),
+        "default": bool(_manifest.get("default", False)),
+        "required": _required,
+        "icon_member": _icon_member,
+        "install_script": _install_member if _install_member in _all_members else None,
+        "uninstall_script": _uninstall_member if _uninstall_member in _all_members else None,
+        "members": _members,
+    }
+    _oim_entries.append(_entry)
+    _oim_by_name[_oname] = _entry
+    if _required:
+        _oim_required.add(_oname)
+    _install_entries.append({"kind": "media", "name": _oname})
+
 # Detect license/EULA file in archive
 _license_text = None
 for _lname in ("LICENSE", "LICENSE.txt", "EULA.txt", "EULA.md"):
@@ -445,7 +495,7 @@ def _group_of(screen_name: str) -> str | None:
     return None
 
 def write_install_log(location, selected_screens, desktop_shortcuts,
-                      start_menu_shortcuts=None, path_entry=""):
+                      start_menu_shortcuts=None, path_entry="", oim_records=()):
     """Write install_log.json recording what was installed."""
     directories = [".VIS", "Icons", "Images"]
 
@@ -486,6 +536,24 @@ def write_install_log(location, selected_screens, desktop_shortcuts,
     if sys.platform == "win32":
         registry_key = f"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{title}"
 
+    log_path = os.path.join(location, "runtime", ".VIS", "install_log.json")
+
+    # Merge OIM records with any already recorded.  A repair/update that
+    # doesn't re-select a medium must keep its prior uninstall hook so the
+    # Uninstaller can still undo it; new records for the same name win.
+    oim_merged: dict[str, dict] = {}
+    if os.path.exists(log_path):
+        try:
+            with open(log_path) as _ef:
+                for _rec in json.load(_ef).get("oim", []):
+                    if _rec.get("name"):
+                        oim_merged[_rec["name"]] = _rec
+        except Exception:
+            pass
+    for _rec in oim_records:
+        if _rec.get("name"):
+            oim_merged[_rec["name"]] = _rec
+
     log = {
         "app_name": title,
         "app_version": app_version,
@@ -498,9 +566,9 @@ def write_install_log(location, selected_screens, desktop_shortcuts,
         "directories": directories,
         "registry_key": registry_key,
         "path_entry": path_entry,
+        "oim": list(oim_merged.values()),
     }
 
-    log_path = os.path.join(location, "runtime", ".VIS", "install_log.json")
     with open(log_path, "w") as f:
         json.dump(log, f, indent=2)
 
@@ -618,6 +686,119 @@ def add_runtime_to_path(location):
         return ""
 
 
+def _run_oim_script(script_path: str, install_root, oim_name: str) -> bool:
+    """Exec an OIM post-extract script in-process and return success.
+
+    The installer is a frozen PyInstaller bundle: a clean target machine may
+    have no system Python, and ``sys.executable`` is the installer itself —
+    so we cannot shell out to an interpreter.  Instead the developer's script
+    is exec'd inside the installer's own interpreter (which carries the
+    standard library) and inherits the installer's elevation.  The script
+    owns the actual install of the staged media and receives this context as
+    module globals:
+
+      INSTALL_ROOT  install directory root
+      RUNTIME_DIR   <INSTALL_ROOT>/runtime (python3xx.dll, shared .pyds, ...)
+      MEDIA_DIR     <INSTALL_ROOT>/OIM/<name>/media — the staged payload
+      OIM_NAME      this entry's folder name
+      APP_TITLE     the project title
+      log(msg)      append a line to vis_installer.log
+
+    --windowed strips stdout/stderr, so all output is routed to the installer
+    log and any exception is caught (a failing script must never crash the
+    installer or abort the already-committed file install).
+    """
+    try:
+        with open(script_path, "r", encoding="utf-8") as f:
+            src = f.read()
+    except Exception as e:
+        _log_write(f"OIM[{oim_name}]: cannot read script {script_path}: {e}")
+        return False
+    ctx = {
+        "__name__": "__oim_install__",
+        "__file__": script_path,
+        "INSTALL_ROOT": str(install_root),
+        "RUNTIME_DIR": os.path.join(str(install_root), "runtime"),
+        "MEDIA_DIR": os.path.join(str(install_root), "OIM", oim_name, "media"),
+        "OIM_NAME": oim_name,
+        "APP_TITLE": title,
+        "log": lambda m: _log_write(f"OIM[{oim_name}]: {m}"),
+    }
+    try:
+        exec(compile(src, script_path, "exec"), ctx)
+        _log_write(f"OIM[{oim_name}]: install script completed")
+        return True
+    except Exception:
+        import traceback
+        _log_write(f"OIM[{oim_name}]: install script FAILED\n{traceback.format_exc()}")
+        return False
+
+
+def _install_oim(location, selected_media, status_cb=None) -> list[dict]:
+    """Extract, run, and record the selected OIM entries.
+
+    For each selected entry: stage its archive members into
+    ``<location>/OIM/<name>/``, exec ``script/install.py`` (the script
+    installs the media), and — only on success — persist
+    ``script/uninstall.py`` to ``runtime/.VIS/oim/<name>/`` for the
+    Uninstaller, record it, and delete the staged folder.  On failure the
+    staged folder is left in place for diagnosis and no record is written.
+    The ``OIM/`` root is removed once empty.  Returns the install records to
+    fold into install_log.json.  Shared by the GUI and ``--Quiet`` paths.
+    """
+    records: list[dict] = []
+    if not selected_media:
+        return records
+    oim_root = os.path.join(str(location), "OIM")
+    for entry in _oim_entries:
+        name = entry["name"]
+        if name not in selected_media:
+            continue
+        if status_cb:
+            status_cb(f"Installing media: {entry['label']}")
+        staged = os.path.join(oim_root, name)
+        try:
+            for member in entry["members"]:
+                archive.extract(member, location)
+        except Exception as e:
+            _log_write(f"OIM[{name}]: extraction failed: {e}")
+            if status_cb:
+                status_cb(f"Media '{entry['label']}' extraction failed — see vis_installer.log")
+            continue
+        ok = True
+        if entry["install_script"]:
+            script_path = os.path.join(str(location), *entry["install_script"].split("/"))
+            ok = _run_oim_script(script_path, location, name)
+        if not ok:
+            if status_cb:
+                status_cb(f"Media '{entry['label']}' install failed — see vis_installer.log")
+            continue  # leave staged folder for diagnosis; no record, no cleanup
+        uninstall_rel = None
+        if entry["uninstall_script"]:
+            src = os.path.join(str(location), *entry["uninstall_script"].split("/"))
+            dest_dir = os.path.join(str(location), "runtime", ".VIS", "oim", name)
+            try:
+                os.makedirs(dest_dir, exist_ok=True)
+                shutil.copy2(src, os.path.join(dest_dir, "uninstall.py"))
+                uninstall_rel = f"runtime/.VIS/oim/{name}/uninstall.py"
+            except Exception as e:
+                _log_write(f"OIM[{name}]: could not persist uninstall script: {e}")
+        records.append({
+            "name": name,
+            "label": entry["label"],
+            "uninstall_script": uninstall_rel,
+            "install_date": datetime.datetime.now().isoformat(timespec="seconds"),
+        })
+        shutil.rmtree(staged, ignore_errors=True)
+    # Once every staged entry is consumed, drop the empty OIM/ staging root.
+    try:
+        if os.path.isdir(oim_root) and not os.listdir(oim_root):
+            os.rmdir(oim_root)
+    except OSError:
+        pass
+    return records
+
+
 def verify_installation(location, arc) -> list[str]:
     """Check all installed files exist and match archive sizes.
 
@@ -711,6 +892,10 @@ if _VERIFY_MODE[0]:
     sys.exit(0 if not issues else 1)
 
 if QUIET is True:
+    # Captured before cinstalls is back-filled with "all screens" below, so
+    # OIM selection can honor a bare `--Quiet` (install everything) vs. an
+    # explicit screen list (install only named + required media).
+    _quiet_install_all = len(cinstalls) == 0
     if custom_path:
         floc = custom_path
     else:
@@ -752,6 +937,14 @@ if QUIET is True:
                     _expanded.append(_tok)
         cinstalls = _expanded
 
+    # OIM selection for quiet mode: required entries always; everything when
+    # a bare `--Quiet` installs all; otherwise only entries named on the CLI
+    # (an OIM name passed to --Quiet survives group expansion untouched).
+    selected_media_q = [
+        e["name"] for e in _oim_entries
+        if e["required"] or _quiet_install_all or e["name"] in cinstalls
+    ]
+
     is_update_quiet = os.path.exists(os.path.join(location, "runtime", ".VIS", "install_log.json"))
 
     # Check for running processes in quiet mode
@@ -782,6 +975,8 @@ if QUIET is True:
     host_selected_q = (not cinstalls) or (title in cinstalls)
     quiet_install_files = []
     for f in archive.namelist():
+        if f.startswith("OIM/"):
+            continue  # OIM is staged + run separately by _install_oim()
         if f.startswith(_base_prefixes_q):
             quiet_install_files.append(f)
         elif host_selected_q and f.startswith(_host_prefixes_q):
@@ -825,7 +1020,9 @@ if QUIET is True:
         print(f"  Skipping {quiet_skipped} unchanged file(s).")
     if not quiet_files_to_extract:
         print("No changes needed — already up to date.")
-        write_install_log(location, cinstalls, dinstalls)
+        oim_records = _install_oim(location, selected_media_q,
+                                   status_cb=lambda m: print(f"  {m}"))
+        write_install_log(location, cinstalls, dinstalls, oim_records=oim_records)
         register_uninstall(location)
         archive.close()
         sys.exit()
@@ -902,8 +1099,10 @@ if QUIET is True:
         q_start_menu.append(name)
 
     q_path_entry = add_runtime_to_path(location)
+    oim_records = _install_oim(location, selected_media_q,
+                               status_cb=lambda m: print(f"  {m}"))
     write_install_log(location, cinstalls, dinstalls, q_start_menu,
-                      path_entry=q_path_entry)
+                      path_entry=q_path_entry, oim_records=oim_records)
     register_uninstall(location)
     print("Installation complete.")
     archive.close()
@@ -1073,7 +1272,20 @@ _group_vars: dict[str, tk.IntVar] = {}
 _group_expanded: dict[str, bool] = {}
 _group_child_widgets: dict[str, list[list[tk.Widget]]] = {}
 _group_arrow_vars: dict[str, tk.StringVar] = {}
+_media_vars: dict[str, tk.IntVar] = {}
+_media_header_done = [False]
 _grouped_page_active = False
+
+def _oim_icon(entry: dict):
+    """Return a 16x16 PhotoImage for an OIM entry; falls back to project icon."""
+    member = entry.get("icon_member")
+    if member:
+        try:
+            with archive.open(member) as f:
+                return PIL.ImageTk.PhotoImage(Image.open(f).resize((16, 16)))
+        except Exception:
+            pass
+    return PIL.ImageTk.PhotoImage(d_icon.resize((16, 16)))
 
 def _screen_icon(name: str):
     """Return a 16x16 PhotoImage for ``name``; falls back to project icon."""
@@ -1112,6 +1324,15 @@ def _refresh_tri_states():
             else:
                 gvar.set(0)
                 if widget: widget.state(['alternate'])
+        elif entry["kind"] == "media":
+            # Required media are always-on and disabled — excluded from the
+            # All accounting so the master can still reach a fully-off state.
+            if entry["name"] in _oim_required:
+                continue
+            v = _media_vars.get(entry["name"])
+            if v is not None:
+                total_on += v.get()
+                total_leaves += 1
         else:
             v = _screen_vars.get(entry["name"])
             if v is not None:
@@ -1156,10 +1377,15 @@ def _on_all_clicked():
     because a tri-state master cycles through combinations of ``alternate``
     and the underlying IntVar that are not reliable across platforms.
     """
-    any_off = any(v.get() == 0 for v in _screen_vars.values())
+    any_off = (any(v.get() == 0 for v in _screen_vars.values())
+               or any(v.get() == 0 for n, v in _media_vars.items()
+                      if n not in _oim_required))
     target = 1 if any_off else 0
     for v in _screen_vars.values():
         v.set(target)
+    for n, v in _media_vars.items():
+        if n not in _oim_required:  # required media stay on
+            v.set(target)
     _refresh_tri_states()
 
 def _toggle_group_expand(gname: str):
@@ -1177,13 +1403,15 @@ def makechecks_grouped():
     global var_all, img_options, _grouped_page_active
     global _screen_vars, _group_vars, _group_expanded
     global _group_child_widgets, _group_arrow_vars
-    global _group_checkbox_widgets
+    global _group_checkbox_widgets, _media_vars
     _screen_vars = {}
     _group_vars = {}
     _group_expanded = {}
     _group_child_widgets = {}
     _group_arrow_vars = {}
     _group_checkbox_widgets = {}
+    _media_vars = {}
+    _media_header_done[0] = False
     img_options = []
     _grouped_page_active = True
 
@@ -1218,6 +1446,29 @@ def makechecks_grouped():
             if scr_ver:
                 ver_lbl = ttk.Label(install_options, text=scr_ver, foreground="gray40")
                 ver_lbl.grid(row=row, column=3, sticky=(tk.E,), padx=(0, 8))
+            row += 1
+        elif entry["kind"] == "media":
+            oim = _oim_by_name[entry["name"]]
+            # One-time "Additional Software" header before the first medium.
+            if not _media_header_done[0]:
+                hdr = ttk.Label(install_options, text="Additional Software",
+                                foreground="gray30")
+                hdr.grid(row=row, column=1, columnspan=2, sticky=(tk.W,), pady=(10, 0))
+                _media_header_done[0] = True
+                row += 1
+                install_options.rowconfigure(row, weight=1)
+            img = _oim_icon(oim)
+            img_options.append(img)
+            required = entry["name"] in _oim_required
+            mvar = tk.IntVar(value=1 if (required or oim["default"]) else 0)
+            _media_vars[entry["name"]] = mvar
+            mtext = oim["label"] + (f"  —  {oim['description']}" if oim["description"] else "")
+            mcb = ttk.Checkbutton(install_options, text=mtext, variable=mvar,
+                                  command=_on_child_clicked, image=img, compound=tk.LEFT)
+            mcb.grid(row=row, column=2, sticky=(tk.N, tk.S, tk.E, tk.W))
+            mcb.state(['!alternate'])
+            if required:
+                mcb.state(['disabled'])  # always installed; can't be toggled off
             row += 1
         else:
             gname = entry["name"]
@@ -1274,6 +1525,14 @@ def makechecks_grouped():
 def _collect_selected_screens() -> list[str]:
     """Return the list of screens currently checked on the installables page."""
     return [name for name, v in _screen_vars.items() if v.get() == 1]
+
+def _collect_selected_media() -> list[str]:
+    """Return OIM entry names currently checked (required entries always)."""
+    out = [name for name, v in _media_vars.items() if v.get() == 1]
+    for n in _oim_required:
+        if n not in out:
+            out.append(n)
+    return out
 
 def _prompt_dependencies(selected: list[str]) -> bool:
     """Warn about unmet ``requires`` / ``suggests`` before leaving the page.
@@ -1480,7 +1739,7 @@ back.grid(row=1,column=1,padx=2,pady=4,sticky=(tk.N,tk.S,tk.E,tk.W))
 close = ttk.Button(control,text="Close",command=root.destroy)
 close.grid(row=1,column=0,padx=2,pady=4,sticky=(tk.N,tk.S,tk.E,tk.W))
 
-def binstall(desktop:list[str], selected_screens:list[str]):
+def binstall(desktop:list[str], selected_screens:list[str], selected_media:list[str]=()):
     """Installs the selected binaries"""
     # Snapshot shortcut selections before destroying the UI
     shortcut_selections = [
@@ -1554,6 +1813,8 @@ def binstall(desktop:list[str], selected_screens:list[str]):
     install_files = []
     host_selected = title in selected_screens
     for file in archive.namelist():
+        if file.startswith("OIM/"):
+            continue  # OIM is staged + run separately by _install_oim()
         if file in _excluded_files:
             continue
         if file.startswith(_base_prefixes):
@@ -1763,12 +2024,25 @@ def binstall(desktop:list[str], selected_screens:list[str]):
                  install_root=True)
         start_menu_shortcuts.append(name)
 
+    # Install selected Outside Installable Media, after the core files have
+    # committed.  A failing media script never rolls back the (successful)
+    # app install — it just logs and is surfaced via the status line.
+    oim_records = []
+    if selected_media:
+        file_label.config(text="Installing additional software...")
+        root.update()
+        oim_records = _install_oim(
+            location, selected_media,
+            status_cb=lambda m: (file_label.config(text=m), root.update()),
+        )
+
     # Write install log and register in Add/Remove Programs
     file_label.config(text="Registering installation...")
     root.update()
     path_entry = add_runtime_to_path(location)
     write_install_log(location, selected_screens, actual_shortcuts,
-                      start_menu_shortcuts, path_entry=path_entry)
+                      start_menu_shortcuts, path_entry=path_entry,
+                      oim_records=oim_records)
     register_uninstall(location)
 
     _log_write(f"install complete: {len(files_to_extract)} files, "
@@ -1826,6 +2100,7 @@ def nextpage():
     """Goes to the next installer page"""
     global _grouped_page_active
     selected_screens = _collect_selected_screens()
+    selected_media = _collect_selected_media()
     if not _prompt_dependencies(selected_screens):
         return  # user cancelled; stay on the installables page
     selected_screens = _collect_selected_screens()  # may have been mutated
@@ -1841,7 +2116,7 @@ def nextpage():
     makechecks(selected_screens, show_versions=False)
 
     #Install Button
-    install = ttk.Button(control, text="Install",command=lambda: binstall(selected_screens, selected_screens))
+    install = ttk.Button(control, text="Install",command=lambda: binstall(selected_screens, selected_screens, selected_media))
     install.grid(row=1,column=2,padx=2,pady=4,sticky=(tk.N,tk.S,tk.E,tk.W))
 
 if _license_text:
