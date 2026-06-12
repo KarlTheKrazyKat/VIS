@@ -1661,7 +1661,7 @@ class Release(Project):
         # installer extracts + runs each entry per the user's selection.
         # Scripts stay as .py source (the installer execs them); the media
         # payload is copied verbatim.
-        src = f"{self.p_project}/OIM/"
+        src = self.p_oim
         if exists(src):
             shutil.copytree(src, f"{out_dir}/OIM/", dirs_exist_ok=True)
             entries = [d for d in os.listdir(src)
