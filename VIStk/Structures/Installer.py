@@ -241,7 +241,7 @@ for _name in _archive_binaries:
             and _name != title):
         _install_entries.append({"kind": "screen", "name": _name})
 
-# ── Outside Installable Media (OIM) discovery (0.5.4) ─────────────────────
+# ── Outside Installable Media (OIM) discovery (0.5.5) ─────────────────────
 # OIM entries ship at the archive ROOT under OIM/<name>/ (deliberately NOT
 # under runtime/, so the host-selected catch-all never auto-installs them).
 # Folder-convention only — no project.json registration:
