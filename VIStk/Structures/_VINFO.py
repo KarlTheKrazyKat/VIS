@@ -201,6 +201,13 @@ class VINFO():
         """The Location of the Project Info Folder `/.VIS`"""
         self.p_sinfo = self.p_vinfo + "/project.json"
         """The Path of the `project.json` file"""
+        self.p_settings = self.p_vinfo + "/settings.json"
+        """The Path of the per-project `settings.json` file.
+
+        Holds application settings (window/appearance/host/notification
+        preferences) managed via :attr:`Project.Settings`
+        (:class:`~VIStk.Structures._Settings.ProjectSettings`).  Optional —
+        absent until the first setting is saved."""
         with open(self.p_sinfo,"r") as f: 
             info = json.load(f)
             self.title = list(info.keys())[0]

@@ -4,11 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "VIStk"
-version = "0.5.5"
+version = "0.6.0"
 license = {file="LICENSE"}
 dependencies = [
   "pyinstaller",
-  "pystray",
   "notify-py"
 ]
 description = "Visual Interfacing Structure for python using tkinter"

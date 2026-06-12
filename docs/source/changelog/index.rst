@@ -13,6 +13,9 @@ Released
    * - Version
      - Title
      - Highlights
+   * - :doc:`0.6`
+     - Application Settings
+     - ``Project.Settings`` (``.VIS/settings.json``); tabbed Settings window + ``register_settings_panel``; remember window geometry & open tabs; start-with-OS; font appearance; ``notifications.*``
    * - :doc:`0.5`
      - VIS Widgets, Help Button & Popup Polish
      - Tooltip / CollapsibleFrame / AutocompleteEntry / DateEntry; ``HostMenu.add_project_command``; per-screen ``docs`` URL + ``VIS docs`` CLI; ``confirm`` / ``confirm_discard``; ``WindowGeometry.center_on``
@@ -51,9 +54,6 @@ Upcoming
    * - Version
      - Title
      - Planned
-   * - :doc:`0.6`
-     - Application Settings
-     - Per-project settings, settings UI, remember window state and open tabs
    * - :doc:`0.7`
      - Defaults & Navigation
      - Default imports/templates, keyboard navigation, update tools

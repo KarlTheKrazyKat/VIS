@@ -743,6 +743,81 @@ The License/EULA page, `\r` quiet-mode progress bar, and `metadata.installer_ico
 
 ---
 
+### 0.5.5 Outside Installable Media (OIM)
+
+Lets a project ship non-VIStk installable media (e.g. a COM-registered SolidWorks/.NET add-in) *inside* the same installer, surfaced as an opt-in install choice with a developer-supplied post-extract script.
+
+**Folder convention** (`<project>/OIM/<name>/`, no `project.json` registration — discovered like `commands/`):
+
+- `manifest.json` *(optional)* — `label`, `description`, `default` (default `false`), `required` (default `false`).
+- `media/` — the payload; staged into the install dir, then the script installs it.
+- `icon/<image>` — the checkbox icon shown in the installer.
+- `script/install.py` *(optional)* — run **in-process** in the installer's interpreter after the entry's media is extracted.
+- `script/uninstall.py` *(optional)* — persisted to `runtime/.VIS/oim/<name>/` and run by the Uninstaller on a full uninstall.
+
+**Release pipeline**
+
+- `Release.clean()` copies `OIM/` to the install **root** of the build (`self.final/OIM/`, not `runtime/`) so it rides into `binaries.zip` via `root_dir=self.final` while staying out of the host-selected `runtime/` catch-all. `VINFO.p_oim` added as the canonical path.
+
+**Installer**
+
+- OIM entries are discovered by scanning the appended archive for `OIM/<name>/…` and rendered as `kind:"media"` rows under an **Additional Software** header on the installables page; required entries render checked + disabled, optional default to off. Integrated into the master **All** / tri-state accounting (required entries excluded so *All* can still reach fully-off).
+- Selected media are handled by `_install_oim()` (shared by GUI and `--Quiet`): stage → exec `install.py` → on success persist `uninstall.py` + record in `install_log.json` (`"oim"` array, merged on repair) + delete the staged folder; the empty `OIM/` root is then removed. A failing script logs to `vis_installer.log`, is surfaced in the status line, and **never** rolls back the committed app install.
+- Script execution is **in-process `exec()`** (the frozen installer can't shell out to a system Python, and `sys.executable` is the installer). Scripts receive `INSTALL_ROOT`, `RUNTIME_DIR`, `MEDIA_DIR`, `OIM_NAME`, `APP_TITLE`, and a `log()` callable, inherit the installer's `--uac-admin` elevation, and must be idempotent (re-run on every install/repair).
+- `--Quiet` selects required media always, all media on a bare `--Quiet`, and named media otherwise.
+
+**Uninstaller**
+
+- `run_oim_uninstall()` execs each recorded `uninstall.py` (same in-process model + context) **before** the file sweep, on a full uninstall only — closing the orphaning gap for media that registers state outside the install dir (COM/regasm, GAC, plugin folders).
+
+---
+
+### 0.6.0 Application Settings
+
+Per-project application settings stored in `.VIS/settings.json`, accessed via `Project.Settings`, surfaced through a built-in tabbed Settings window.
+
+**Storage & API** — `VIStk/Structures/_Settings.py`
+
+- `ProjectSettings` — `project.Settings.get(key, default)` / `.set(key, value)` / `.save()`, backed by `.VIS/settings.json` (new `VINFO.p_settings` path; `Project.Settings` attached in `Project.__init__`).
+- `get` resolution order: stored override → explicit `default` arg → framework `DEFAULTS` table → `None`.
+- **Overrides-only** persistence — the file holds only keys that differ from their default, so a project that has saved nothing has no `settings.json` at all. A missing or corrupt file falls back to defaults without crashing. All `DEFAULTS` values are immutable (no shared-reference mutation).
+- Also `effective()` (full resolved map, for the UI), `reset(key)`, `__contains__`, and a `dirty` flag — the Host skips the shutdown write when nothing changed.
+- Saved automatically on Host shutdown via both the `quit_host` and last-window-close paths. The shutdown capture commits **only after** every window has closed without veto, so a vetoed quit leaves settings untouched.
+
+**Window & display**
+
+- `window.default_width` / `default_height` / `default_align` (center + 8 compass points) / `min_width` / `min_height` applied to the session's first window.
+- `window.remember_geometry` — capture the primary window's size + position on close, restore it on next launch.
+- `window.fullscreen_on_launch` — open the first window maximized.
+
+**Host & startup**
+
+- `host.start_with_os` — toggles the Windows startup-registry entry (`_register_startup` / `unregister_startup`), reconciled on Save. Disabled (and not persisted over) on non-Windows.
+- `host.remember_tabs` — record the open screens on close and reopen them on next launch. The `max_tabs` limit is bypassed during restore so a remembered session isn't truncated; screens no longer present in the project are dropped silently (no missing-screen banner).
+
+**Appearance**
+
+- `appearance.font_family` / `appearance.font_size` applied at launch to Tk's named fonts (`TkDefaultFont`, `TkTextFont`, `TkMenuFont`, `TkHeadingFont`, `TkFixedFont`), which default and ttk widgets inherit.
+- `appearance.color_scheme` — stored placeholder for the future styles system (no effect yet).
+- Live re-styling of already-open windows is deferred to **0.6.1**.
+
+**Notifications**
+
+- `notifications.enabled` (stored; consumed by the 0.9 Toast widget) and `notifications.duration_ms` — the latter is now the default duration for `InfoRow.show_banner` when a caller omits it.
+
+**Settings UI** — `VIStk/Widgets/_SettingsWindow.py`
+
+- Modal, tabbed (`ttk.Notebook`) window opened from a framework-provided **HostMenu → Settings** entry present on every window. **Save** / **Cancel** / **Restore Defaults**; controls seeded from `effective()`; Save writes overrides-only and rejects negative / non-numeric numeric input.
+- `host.register_settings_panel(name, setup_fn)` — apps contribute their own tabs; `setup_fn(parent_frame)` builds into the tab body (mirrors a screen's `setup`). A panel that raises shows an inline error rather than a blank tab.
+
+**Scope notes**
+
+- The spec's **tray** items — start-minimized-to-tray and a tray Settings entry — were dropped: the 0.5.3 always-Host refactor removed the system tray, so the Host now lives only as long as its windows. The stale tray documentation has been corrected.
+- Remember-open-tabs is a **screens-only** restore: the open screens reopen as tabs in one window; split-pane layouts and multiple windows are not reconstructed.
+- Window-size settings apply to the session's primary window; drag-detached / popped-out windows keep the default size.
+
+---
+
 ## Planned
 
 ### 0.5.2 Screen Isolation (per-tab namespaces, wrapper `.pyd`s, always-Host)
@@ -828,73 +903,12 @@ A reusable right-click popup menu so screens stop hand-coding the `tkinter.Menu`
 
 ---
 
-### 0.5.5 Outside Installable Media (OIM)
+### 0.6.1 Live Appearance Apply
 
-Lets a project ship non-VIStk installable media (e.g. a COM-registered SolidWorks/.NET add-in) *inside* the same installer, surfaced as an opt-in install choice with a developer-supplied post-extract script.
+Deferred from 0.6.0. Apply appearance settings to **already-open** windows immediately when changed in the Settings window, instead of only on next launch:
 
-**Folder convention** (`<project>/OIM/<name>/`, no `project.json` registration — discovered like `commands/`):
-
-- `manifest.json` *(optional)* — `label`, `description`, `default` (default `false`), `required` (default `false`).
-- `media/` — the payload; staged into the install dir, then the script installs it.
-- `icon/<image>` — the checkbox icon shown in the installer.
-- `script/install.py` *(optional)* — run **in-process** in the installer's interpreter after the entry's media is extracted.
-- `script/uninstall.py` *(optional)* — persisted to `runtime/.VIS/oim/<name>/` and run by the Uninstaller on a full uninstall.
-
-**Release pipeline**
-
-- `Release.clean()` copies `OIM/` to the install **root** of the build (`self.final/OIM/`, not `runtime/`) so it rides into `binaries.zip` via `root_dir=self.final` while staying out of the host-selected `runtime/` catch-all. `VINFO.p_oim` added as the canonical path.
-
-**Installer**
-
-- OIM entries are discovered by scanning the appended archive for `OIM/<name>/…` and rendered as `kind:"media"` rows under an **Additional Software** header on the installables page; required entries render checked + disabled, optional default to off. Integrated into the master **All** / tri-state accounting (required entries excluded so *All* can still reach fully-off).
-- Selected media are handled by `_install_oim()` (shared by GUI and `--Quiet`): stage → exec `install.py` → on success persist `uninstall.py` + record in `install_log.json` (`"oim"` array, merged on repair) + delete the staged folder; the empty `OIM/` root is then removed. A failing script logs to `vis_installer.log`, is surfaced in the status line, and **never** rolls back the committed app install.
-- Script execution is **in-process `exec()`** (the frozen installer can't shell out to a system Python, and `sys.executable` is the installer). Scripts receive `INSTALL_ROOT`, `RUNTIME_DIR`, `MEDIA_DIR`, `OIM_NAME`, `APP_TITLE`, and a `log()` callable, inherit the installer's `--uac-admin` elevation, and must be idempotent (re-run on every install/repair).
-- `--Quiet` selects required media always, all media on a bare `--Quiet`, and named media otherwise.
-
-**Uninstaller**
-
-- `run_oim_uninstall()` execs each recorded `uninstall.py` (same in-process model + context) **before** the file sweep, on a full uninstall only — closing the orphaning gap for media that registers state outside the install dir (COM/regasm, GAC, plugin folders).
-
----
-
-### 0.6.X Application Settings
-
-Settings stored per-project in `.VIS/settings.json`, accessed via `Project.settings`.
-
-**Storage and API**
-
-- `Project.settings.get(key, default)` — read a setting
-- `Project.settings.set(key, value)` — write a setting
-- `Project.settings.save()` — persist to `.VIS/settings.json`; called automatically on Host close
-
-**Window and display**
-
-- Default window size, alignment, and minimum size
-- Remember last window size and position; restore on next open
-- Open fullscreen on launch toggle
-
-**Host and tray**
-
-- Start Host with OS — toggle that enables/disables the startup registry entry
-- Start minimized — Host starts hidden in tray rather than showing the window
-- Remember open tabs — reopen the tabs that were open when the Host last closed
-
-**Appearance**
-
-- Default font family and size
-- Color scheme selection — placeholder for styles system
-
-**Notifications**
-
-- Enable/disable toast notifications globally
-- Toast display duration in milliseconds
-
-**Settings UI**
-
-- Built-in settings panel opens from HostMenu → Settings
-- Settings panel is a tabbed interface — VIStk settings on one tab, developer's custom settings on additional tabs
-- Developer registers a custom settings panel via `host.register_settings_panel(name, setup_fn)`
-- Tray menu includes a Settings entry
+- Re-apply `appearance.font_family` / `appearance.font_size` live (walk the live widget tree / re-configure the named fonts and force a relayout).
+- Wire `appearance.color_scheme` to a real styles layer once the tkinter styles system lands (see 1.0.0) — in 0.6.0 it is a stored placeholder only.
 
 ---
 

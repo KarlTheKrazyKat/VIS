@@ -5,6 +5,7 @@ import shutil
 from VIStk.Structures._VINFO import *
 from VIStk.Structures._Screen import *
 from VIStk.Structures._Group import Group
+from VIStk.Structures._Settings import ProjectSettings
 
 _EDITABLE_SCREEN_ATTRS = {
     "script", "release", "icon", "desc", "tabbed",
@@ -68,6 +69,12 @@ class Project(VINFO):
             """
         self.Screen: Screen = None
         """The Currently Running `Screen`"""
+
+        self.Settings: ProjectSettings = ProjectSettings(self)
+        """Per-project application settings, persisted to
+        ``.VIS/settings.json``.  Use ``project.Settings.get(key, default)`` /
+        ``.set(key, value)`` / ``.save()``.  See
+        :class:`~VIStk.Structures._Settings.ProjectSettings`."""
 
     def _save_groups(self) -> None:
         """Persist every non-``"all"`` Group back to ``release_info.groups``.

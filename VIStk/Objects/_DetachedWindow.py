@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from tkinter import Toplevel
+from tkinter import Toplevel, TclError
 
 from VIStk.Objects._Identity import new_id
 from VIStk.Objects._TabManager import TabManager
@@ -74,6 +74,13 @@ class DetachedWindow:
             except Exception:
                 import traceback
                 traceback.print_exc()
+        # Framework-provided persistent Settings entry (0.6.0) — present on
+        # every window's menubar so every app gets it for free.
+        try:
+            self.HostMenu.add_project_command("Settings", host._open_settings)
+        except Exception:
+            import traceback
+            traceback.print_exc()
         self.HostMenu.save_defaults()
 
         # ── Tab content area (SplitView for split panes) ──────────────────────
@@ -138,20 +145,13 @@ class DetachedWindow:
             display = host._unique_display_name(scr.name)
             self.tab_manager.open_screen(scr, display, icon=icon, args=args)
 
-        # Position window
+        # Position window.  An explicit drop point (drag-detach / pop-out)
+        # is honoured verbatim; otherwise apply the project's window
+        # application settings (first window) or the legacy cascade default.
         if x_root is not None and y_root is not None:
             self._position_window(x_root, y_root, btn_offset_x, btn_offset_y)
         else:
-            # Default: center on screen, with a cascade offset so additional
-            # windows don't sit exactly on top of the first one.
-            self.win.geometry("1200x800")
-            self.win.update_idletasks()
-            sw = self.win.winfo_screenwidth()
-            sh = self.win.winfo_screenheight()
-            cascade = max(0, len(host.detached_windows) - 1) * 30
-            x = (sw - 1200) // 2 + cascade
-            y = (sh - 800) // 2 + cascade
-            self.win.geometry(f"+{x}+{y}")
+            self._apply_startup_geometry()
 
     # ── Property shim ─────────────────────────────────────────────────────────
 
@@ -406,6 +406,112 @@ class DetachedWindow:
             pass
         tab_manager.destroy()
 
+    # ── Startup geometry (application settings, 0.6.0) ─────────────────────────
+
+    def _apply_startup_geometry(self) -> None:
+        """Size and place a window opened without explicit drop coordinates.
+
+        The first window of a session honours the project's ``window.*``
+        application settings — default size, minimum size, alignment,
+        restored last geometry, and fullscreen-on-launch.  Later windows
+        keep the legacy centred default with a per-window cascade offset so
+        they don't stack exactly on top of one another.
+        """
+        host = self.host
+        settings = host.Project.Settings
+
+        w = settings.get("window.default_width") or 1200
+        h = settings.get("window.default_height") or 800
+        try:
+            w, h = int(w), int(h)
+        except (TypeError, ValueError):
+            w, h = 1200, 800
+        # Guard against non-positive sizes (hand-edited settings.json) that
+        # would produce an invalid Tk geometry string.
+        if w <= 0:
+            w = 1200
+        if h <= 0:
+            h = 800
+
+        # Minimum size — applied to every window when configured.
+        mw, mh = settings.get("window.min_width"), settings.get("window.min_height")
+        if mw and mh:
+            try:
+                self.win.minsize(int(mw), int(mh))
+            except Exception:
+                pass
+
+        # Track the session's first window as the primary regardless of
+        # chromeless state — chromeless governs tab-bar/title presentation,
+        # not whether geometry should be remembered/restored.
+        first = len(host.detached_windows) == 1
+        if first:
+            host._primary_window = self
+            self._apply_primary_geometry(settings, w, h)
+        else:
+            self.win.geometry(f"{w}x{h}")
+            self.win.update_idletasks()
+            cascade = max(0, len(host.detached_windows) - 1) * 30
+            x, y = self._aligned_xy(w, h, "center")
+            self.win.geometry(f"+{x + cascade}+{y + cascade}")
+
+    def _apply_primary_geometry(self, settings, w: int, h: int) -> None:
+        """Apply size/position to the session's first window from settings."""
+        if settings.get("window.remember_geometry"):
+            saved = settings.get("window.last_geometry")
+            if saved:
+                try:
+                    self.win.geometry(saved)
+                    return
+                except Exception:
+                    pass
+
+        self.win.geometry(f"{w}x{h}")
+        self.win.update_idletasks()
+        align = settings.get("window.default_align") or "center"
+        x, y = self._aligned_xy(w, h, align)
+        self.win.geometry(f"+{x}+{y}")
+
+        if settings.get("window.fullscreen_on_launch"):
+            self._zoom_window()
+
+    def _aligned_xy(self, w: int, h: int, align: str) -> tuple[int, int]:
+        """Top-left ``(x, y)`` placing a *w*×*h* window at compass *align*."""
+        sw = self.win.winfo_screenwidth()
+        sh = self.win.winfo_screenheight()
+        cx, cy = (sw - w) // 2, (sh - h) // 2
+        right, bottom = sw - w, sh - h
+        return {
+            "center": (cx, cy),
+            "n":  (cx, 0),   "ne": (right, 0),    "e":  (right, cy),
+            "se": (right, bottom), "s": (cx, bottom), "sw": (0, bottom),
+            "w":  (0, cy),   "nw": (0, 0),
+        }.get(align, (cx, cy))
+
+    def _zoom_window(self) -> None:
+        """Maximise the window cross-platform (mirrors ``Window.fullscreen``)."""
+        try:  # Linux
+            self.win.wm_attributes("-zoomed", True)
+        except TclError:  # Windows
+            try:
+                self.win.state("zoomed")
+            except Exception:
+                pass
+
+    def _snapshot_base_names(self) -> list[str]:
+        """Ordered ``base_name`` of every tab in this window (all panes).
+
+        Captured before the close tear-down destroys the tabs, so the Host
+        can persist the session for ``host.remember_tabs``.
+        """
+        out: list[str] = []
+        for tm in self._split_view.all_tab_managers():
+            for tab in tm._tabs.values():
+                b = tab.get("base_name")
+                if b:
+                    out.append(b)
+        return out
+
     # ── Window close — two-pass with on_quit ──────────────────────────────────
 
     def _on_close(self):
@@ -418,6 +524,10 @@ class DetachedWindow:
         if self._closing:
             return
         self._closing = True
+
+        # Capture the session BEFORE the tear-down destroys the tabs, so the
+        # Host can persist "remember open tabs" on the normal user-close path.
+        captured = self._snapshot_base_names()
 
         # (0.4.7) Iterate the live SplitView tree rather than
         # ``self.tab_managers``, which is seeded at init and never
@@ -452,6 +562,14 @@ class DetachedWindow:
         if vetoed:
             self._closing = False
             return
+
+        # Persist session state when this is the last window closing under a
+        # normal user close.  quit_host() snapshots all windows up-front and
+        # sets _shutting_down, so we must not clobber that full snapshot with
+        # this single window's subset.
+        if _HOST_INSTANCE is not None and not _HOST_INSTANCE._shutting_down \
+                and len(_HOST_INSTANCE.detached_windows) == 1:
+            _HOST_INSTANCE._persist_session(open_tabs=captured, geo_window=self)
 
         # Deregister all TabManagers
         for tm in self.tab_managers:
