@@ -163,6 +163,11 @@ class Host:
         # Set the hidden root title (shows in taskbar if accidentally mapped)
         self.root.title(self.Project.title)
 
+        # Materialise the default settings file on first run so every
+        # available setting is visible/editable (idempotent; never clobbers
+        # an existing file or user edits).
+        self.Project.Settings.ensure_file()
+
         # Apply saved appearance (default font) to Tk's named fonts so all
         # default + ttk widgets inherit it.  Applied once at launch; live
         # restyling of open windows is deferred (see 0.6.1 changelog).

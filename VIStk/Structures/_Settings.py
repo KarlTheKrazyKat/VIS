@@ -13,17 +13,19 @@ class ProjectSettings:
     for grouping (``"window.min_width"``, ``"appearance.font_family"``) but
     are treated as opaque strings.
 
-    The on-disk file holds **overrides only** — keys whose values differ
-    from (or were explicitly written over) the framework :data:`DEFAULTS`.
-    A project that has never saved a setting has no ``settings.json`` at all;
-    :meth:`get` still resolves every known key through :data:`DEFAULTS`.
+    On first run a default ``settings.json`` is written with the full set of
+    (default-valued) settings via :meth:`ensure_file`, so every available
+    option is visible and hand-editable.  In memory only genuine *overrides*
+    are tracked — values that differ from the framework :data:`DEFAULTS` — so
+    :meth:`reset` and ``in`` mean "explicitly customised".  :meth:`save`
+    writes the complete resolved set back, keeping the file whole.  A missing
+    or corrupt file falls back to the defaults without crashing.
 
     Reads and writes are in-memory until :meth:`save` is called.  The Host
     saves automatically on shutdown (see ``Host.quit_host`` /
     ``Host._quit_if_no_windows``); other callers must call :meth:`save`
     themselves.  The file is wholly owned by this object (unlike
-    ``project.json``, which is shared with screens/groups), so :meth:`save`
-    rewrites it from the in-memory store without a read-merge.
+    ``project.json``, which is shared with screens/groups).
     """
 
     #: Framework default for every known setting.  ``get(key)`` with no
@@ -93,7 +95,11 @@ class ProjectSettings:
             with open(self.path, "r") as f:
                 data = json.load(f)
             if isinstance(data, dict):
-                self._store = data
+                # The file is the full default set; in memory keep only
+                # genuine overrides (values differing from the default, plus
+                # any unknown custom keys) so reset()/``in`` stay meaningful.
+                self._store = {k: v for k, v in data.items()
+                               if v != self.DEFAULTS.get(k)}
             else:
                 self._warn("settings.json is not a JSON object; ignoring.")
         except (json.JSONDecodeError, OSError) as e:
@@ -148,18 +154,43 @@ class ProjectSettings:
 
     # ── Persistence ───────────────────────────────────────────────────────
 
-    def save(self) -> bool:
-        """Write the in-memory overrides to ``.VIS/settings.json``.
+    def ensure_file(self) -> bool:
+        """Materialise the default ``settings.json`` if it doesn't exist yet.
 
-        Returns ``True`` on success.  Writes nothing and returns ``False``
-        if the project directory can't be written (reported to stderr) so a
-        failed save never crashes the shutdown path.
+        Writes the full resolved set (the framework defaults plus any
+        overrides) so every available setting is visible and hand-editable.
+        Idempotent — an existing file (including user edits) is never
+        overwritten — and does **not** mark the store dirty.  Returns
+        ``True`` when a file was created.  Never raises.
+
+        Called once at Host startup (and at ``VIS new`` scaffolding) so a
+        default settings file appears without the user opting in.
+        """
+        self._ensure_loaded()
+        if os.path.exists(self.path):
+            return False
+        try:
+            os.makedirs(os.path.dirname(self.path), exist_ok=True)
+            with open(self.path, "w") as f:
+                json.dump(self.effective(), f, indent=4)
+            return True
+        except OSError as e:
+            self._warn(f"could not create settings.json ({e}).")
+            return False
+
+    def save(self) -> bool:
+        """Write the full resolved settings to ``.VIS/settings.json``.
+
+        Writes :meth:`effective` (defaults merged with overrides) so the file
+        stays complete and hand-editable.  Returns ``True`` on success;
+        writes nothing and returns ``False`` if the directory can't be
+        written (reported to stderr) so a failed save never crashes shutdown.
         """
         self._ensure_loaded()
         try:
             os.makedirs(os.path.dirname(self.path), exist_ok=True)
             with open(self.path, "w") as f:
-                json.dump(self._store, f, indent=4)
+                json.dump(self.effective(), f, indent=4)
             self._dirty = False
             return True
         except OSError as e:

@@ -53,11 +53,17 @@ def main():
         check("save() returns True", s.save() is True)
         check("settings.json now exists", os.path.exists(proj.p_settings))
 
-        # Overrides-only: file must NOT contain untouched DEFAULTS keys.
+        # Full-file: save writes the complete resolved set (defaults +
+        # overrides) so the file stays whole and hand-editable.
         with open(proj.p_settings) as f:
             raw = json.load(f)
-        check("file holds only overrides", set(raw.keys()) ==
-              {"notifications.duration_ms", "appearance.font_family"})
+        check("file holds the full default set",
+              set(raw.keys()) == set(ProjectSettings.DEFAULTS.keys()))
+        check("file reflects overridden values",
+              raw["notifications.duration_ms"] == 3000
+              and raw["appearance.font_family"] == "Consolas")
+        check("file keeps untouched keys at default",
+              raw["notifications.enabled"] is True)
 
         s2 = ProjectSettings(proj)
         check("reload sees saved override", s2.get("notifications.duration_ms") == 3000)
@@ -111,6 +117,33 @@ def main():
         check("all DEFAULTS values immutable",
               all(v is None or isinstance(v, (bool, int, str))
                   for v in ProjectSettings.DEFAULTS.values()))
+
+    # ensure_file() materializes a default file in a fresh dir.
+    with tempfile.TemporaryDirectory() as d2:
+        vinfo2 = os.path.join(d2, ".VIS")
+        os.makedirs(vinfo2)
+        proj2 = _FakeProject(vinfo2)
+
+        print("ensure_file (default-file materialization):")
+        sf = ProjectSettings(proj2)
+        check("no file before ensure_file", not os.path.exists(proj2.p_settings))
+        check("ensure_file() writes a file (returns True)", sf.ensure_file() is True)
+        check("file now exists", os.path.exists(proj2.p_settings))
+        check("ensure_file does not mark dirty", sf.dirty is False)
+        with open(proj2.p_settings) as f:
+            seeded = json.load(f)
+        check("materialized file holds the full default set",
+              seeded == ProjectSettings.DEFAULTS)
+        check("ensure_file is idempotent (no rewrite when present)",
+              sf.ensure_file() is False)
+
+        # ensure_file must not clobber an existing (user-edited) file.
+        sf.set("notifications.duration_ms", 1234)
+        sf.save()
+        sf2 = ProjectSettings(proj2)
+        check("ensure_file leaves an existing file untouched",
+              sf2.ensure_file() is False
+              and sf2.get("notifications.duration_ms") == 1234)
 
     print()
     if _failures:

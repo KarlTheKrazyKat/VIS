@@ -190,6 +190,13 @@ class VINFO():
                 f.write(host_text)
             print(f"Created .VIS/Host.py in {wd}")
 
+            # Generate a default settings.json so the project ships with the
+            # full set of (opt-in, default-valued) application settings.
+            from VIStk.Structures._Settings import ProjectSettings
+            with open(wd + "/.VIS/settings.json", "w") as f:
+                json.dump(ProjectSettings.DEFAULTS, f, indent=4)
+            print(f"Created .VIS/settings.json in {wd}")
+
         #Get VIS Root location
         self.p_vis = VIStk.__file__.replace("__init__.pyc","").replace("__init__.py","")
         """The Installed Location of VIStk"""

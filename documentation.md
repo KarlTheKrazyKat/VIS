@@ -449,7 +449,7 @@ settings.save()                                # persist to .VIS/settings.json
 | `settings.effective()` | Full resolved map (`DEFAULTS` merged with overrides) — used by the Settings UI. |
 | `settings.dirty` | Whether an override has changed since the last `save()`. |
 
-Only keys that differ from their default are written, so a project that has saved nothing has no `settings.json` at all; a missing or corrupt file falls back to defaults without crashing.
+A full default `settings.json` (every key at its default) is generated automatically — at `VIS new` and on first Host launch — so all options are visible and hand-editable. In memory only genuine overrides are tracked (so `reset()` and `in` mean "explicitly customised"); `save()` writes the complete resolved set back. A missing or corrupt file falls back to defaults without crashing.
 
 **Built-in settings (`ProjectSettings.DEFAULTS`):**
 

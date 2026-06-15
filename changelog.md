@@ -780,7 +780,7 @@ Per-project application settings stored in `.VIS/settings.json`, accessed via `P
 
 - `ProjectSettings` — `project.Settings.get(key, default)` / `.set(key, value)` / `.save()`, backed by `.VIS/settings.json` (new `VINFO.p_settings` path; `Project.Settings` attached in `Project.__init__`).
 - `get` resolution order: stored override → explicit `default` arg → framework `DEFAULTS` table → `None`.
-- **Overrides-only** persistence — the file holds only keys that differ from their default, so a project that has saved nothing has no `settings.json` at all. A missing or corrupt file falls back to defaults without crashing. All `DEFAULTS` values are immutable (no shared-reference mutation).
+- **Default file materialized** — a full `settings.json` (every key at its default) is generated at `VIS new` scaffolding and on first Host launch (`ProjectSettings.ensure_file()`, idempotent — never clobbers an existing file), so all options are visible and hand-editable. In memory only genuine overrides are tracked (`reset()` / `in` mean "explicitly customised"); `save()` writes the complete resolved set back. A missing or corrupt file falls back to defaults without crashing. All `DEFAULTS` values are immutable (no shared-reference mutation).
 - Also `effective()` (full resolved map, for the UI), `reset(key)`, `__contains__`, and a `dirty` flag — the Host skips the shutdown write when nothing changed.
 - Saved automatically on Host shutdown via both the `quit_host` and last-window-close paths. The shutdown capture commits **only after** every window has closed without veto, so a vetoed quit leaves settings untouched.
 
@@ -807,7 +807,7 @@ Per-project application settings stored in `.VIS/settings.json`, accessed via `P
 
 **Settings UI** — `VIStk/Widgets/_SettingsWindow.py`
 
-- Modal, tabbed (`ttk.Notebook`) window opened from a framework-provided **HostMenu → Settings** entry present on every window. **Save** / **Cancel** / **Restore Defaults**; controls seeded from `effective()`; Save writes overrides-only and rejects negative / non-numeric numeric input.
+- Modal, tabbed (`ttk.Notebook`) window opened from a framework-provided **HostMenu → Settings** entry present on every window. **Save** / **Cancel** / **Restore Defaults**; controls seeded from `effective()`; Save rejects negative / non-numeric numeric input.
 - `host.register_settings_panel(name, setup_fn)` — apps contribute their own tabs; `setup_fn(parent_frame)` builds into the tab body (mirrors a screen's `setup`). A panel that raises shows an inline error rather than a blank tab.
 
 **Scope notes**

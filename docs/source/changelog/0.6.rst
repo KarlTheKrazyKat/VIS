@@ -14,9 +14,11 @@ Storage & API
   backed by ``.VIS/settings.json`` (new ``VINFO.p_settings`` path).
 - ``get`` resolution order: stored override → explicit ``default`` argument →
   framework ``DEFAULTS`` table → ``None``.
-- Overrides-only persistence: the file holds only keys that differ from their
-  default, so a project that has saved nothing has no ``settings.json`` at all.
-  A missing or corrupt file falls back to defaults without crashing.
+- A full default ``settings.json`` is generated at ``VIS new`` and on first
+  Host launch (``ProjectSettings.ensure_file()``, idempotent) so all options
+  are visible/editable; in memory only genuine overrides are tracked and
+  ``save()`` writes the complete resolved set back. A missing or corrupt file
+  falls back to defaults without crashing.
 - ``effective()`` (full resolved map, for the UI), ``reset(key)``,
   ``__contains__``, and a ``dirty`` flag --- the Host skips the shutdown write
   when nothing changed.
