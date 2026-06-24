@@ -92,3 +92,5 @@ class fUtil():
                     wi.configure(font = f"{_family} {_size} {_weight}")
             else:
                 widget.configure(font = f"{_family} {_size} {_weight}")
+
+        widget.edit_modified(False)
