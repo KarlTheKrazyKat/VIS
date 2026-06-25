@@ -8,7 +8,8 @@ version = "0.6.0"
 license = {file="LICENSE"}
 dependencies = [
   "pyinstaller",
-  "notify-py"
+  "notify-py",
+  "pillow"
 ]
 description = "Visual Interfacing Structure for python using tkinter"
 requires-python = ">=3.10"

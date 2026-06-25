@@ -818,6 +818,39 @@ Per-project application settings stored in `.VIS/settings.json`, accessed via `P
 
 ---
 
+### 0.6.2 v-Prefixed Widgets
+
+A family of `v`-prefixed widgets in `VIStk.Widgets` that subclass the **classic** tk widgets (so per-instance `bg`/`fg`/`font` work — ttk can't) and (1) inherit visual properties from their parent by default and (2) optionally render rounded corners. They consolidate the rounded "pill / chip / card" pattern that callers otherwise hand-roll per screen with Canvas polygons. (Issue #187.)
+
+**`vWidget` base** — `VIStk/Widgets/_vWidget.py`
+
+- A pure mixin (subclasses `object`, never `tk.Widget`), combined with a native widget via multiple inheritance: `class vLabel(vWidget, Label)`. `vWidget.__init__` runs first in the MRO — computes inheritance, pops the rounded kwargs — then cooperative `super().__init__()` creates the underlying Tcl widget exactly once. A `vLabel` is genuinely both a `vWidget` and a `tk.Label`.
+- **Parent inheritance** — each subclass sets `_INHERIT` (e.g. `("background","foreground","font")`); any of those the caller omits are filled from the parent at construction. Explicit options always win. Reads classic parents via `cget` and ttk parents via `Style().lookup(winfo_class(), …)` (the "f_steps trick", with a `SystemButtonFace` fallback). Snapshot at construction; `refresh()` re-pulls on demand.
+- **Rounded corners** — opt-in via `radius` (`0` → a plain native widget, no extra machinery). The classic widgets are always rectangular, so the rounded look is an anti-aliased PIL rounded-rectangle image (4× supersampled, Lanczos-downscaled) regenerated on `<Configure>`; corners are painted with the parent background so they blend on a solid-colour parent. Colours resolve through `winfo_rgb`, so every Tk colour name works (`greyNN`, hex, `SystemButtonFace`). Optional `outline` / `outline_width` / `corner_bg`. Subclasses choose where the image is composited via `_prepare_rounded` / `_paint`.
+- **Runtime recolour & pixel sizing** — `configure()`/`config()` repaints the rounded fill live when a paint-affecting option changes (`_REPAINT_OPTS`, default `bg`/`background`; previously a rounded widget only repainted on resize/hover). A 1×1 transparent placeholder image is installed in rounded mode so `width`/`height` are honoured in **pixels** from the first frame (Tk reads them as character cells until a widget has an image), letting callers size rounded chips/pills in pixels without a flash.
+- `make_rounded_image(...)` is exported for direct use; `vWidget` is exported so callers can build further v-widgets.
+
+**`vLabel`** — `VIStk/Widgets/_vLabel.py`
+
+- `class vLabel(vWidget, Label)` — inherits `bg`/`fg`/`font`. Rounded mode draws the text centred over the rounded fill (`compound="center"`, zero border/pad so the image exactly covers the widget and can't trigger a size feedback loop). Drop-in for `tkinter.Label` at `radius=0`.
+
+**`vButton`** — `VIStk/Widgets/_vButton.py`
+
+- `class vButton(vWidget, Button)` — inherits `bg`/`fg`/`font`; `command`/`invoke()` and all native button options pass through. Rounded mode flattens the relief (`relief="flat"`, `overrelief="flat"`), shows a hand cursor, and accepts an optional `active_fill` that repaints the fill on hover (`<Enter>`/`<Leave>`), mirroring the chip-button pattern PYWOM hand-rolls today. A `disabled_fill` + `configure(state="disabled")` greys the fill, swaps the cursor, and gates the click (native `state` already blocks `invoke`) — a drop-in for PYWOM's `set_chip_enabled`. Drop-in for `tkinter.Button` at `radius=0`.
+
+**`vFrame`** — `VIStk/Widgets/_vFrame.py`
+
+- `class vFrame(vWidget, LayoutFrame)` — keeps the `.Layout` helper; inherits `background` only (Frames have no fg/font). A Frame has no `image` option, so rounded mode paints the fill onto a lowered background `Label` that fills the frame, with child widgets (placed via `.Layout`/`place`) stacked above it — the same idea as PYWOM's `make_round_box`. The frame's `bg` is the fill; corners blend with the parent. Drop-in for `LayoutFrame` at `radius=0`. (Limitation: the lowered background label receives pointer events over empty areas; corner blending assumes a solid-colour parent.)
+
+**Native-option discoverability** — tkinter hides each widget's options behind `**kw` and only lists them in the `__init__` docstring, so `vButton(...)` gave callers no hint that `command`/`relief`/`anchor`/… are accepted. Both surfaces now expose them:
+
+- **`help()` / REPL / Sphinx** — `vWidget.__init_subclass__` lifts the native option block straight from the tk base's `__init__.__doc__` (Label/Button "STANDARD OPTIONS", Frame "Valid resource names") and appends it to each v-widget's `__init__` doc at class-creation time. Authoritative and always in sync with the installed Tk.
+- **Editor hover/autocomplete** — each `__init__` types `**kwargs: Unpack[_XKw]` (`VIStk/Widgets/_vtypes.py` `TypedDict`s mirroring `<widget>.keys()`), so Pylance/PyCharm list every native option next to the v-widget's own `radius`/`outline`/… params. The `Unpack`/`_vtypes` imports are `TYPE_CHECKING`-only (annotations are strings under `from __future__ import annotations`), so there's zero runtime cost and no new runtime dependency (`typing_extensions` is only needed by a type-checker running on Python < 3.11).
+
+**Packaging** — `pillow` added to `pyproject.toml` dependencies (already used by `Objects/_VIMG.py`, previously undeclared).
+
+---
+
 ## Planned
 
 ### 0.5.2 Screen Isolation (per-tab namespaces, wrapper `.pyd`s, always-Host)
