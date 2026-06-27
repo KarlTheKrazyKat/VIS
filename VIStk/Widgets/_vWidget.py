@@ -51,22 +51,21 @@ from PIL.Image import Resampling
 import PIL.ImageTk
 
 
-def make_rounded_image(width: int, height: int, radius: int,
-                       fill: tuple[int, int, int],
-                       corner_bg: tuple[int, int, int],
-                       outline: tuple[int, int, int] | None = None,
-                       outline_width: int = 0,
-                       supersample: int = 4) -> "PIL.ImageTk.PhotoImage":
-    """Render an anti-aliased rounded-rectangle as a ``PhotoImage``.
+def rounded_pil_image(width: int, height: int, radius: int,
+                      fill: tuple[int, int, int],
+                      corner_bg: tuple[int, int, int],
+                      outline: tuple[int, int, int] | None = None,
+                      outline_width: int = 0,
+                      supersample: int = 4) -> "Image.Image":
+    """Render an anti-aliased rounded-rectangle as a **PIL ``Image``**.
 
-    The rectangle is filled with *fill*; the area outside the rounded corners
-    is filled with *corner_bg* so the result blends seamlessly when placed on
-    a solid-colour parent of that background.  Colours are RGB 0-255 tuples
-    (resolve Tk colour names with :meth:`vWidget._resolve_color` first).
-
-    The shape is drawn at *supersample*× resolution and downscaled with
-    Lanczos resampling for smooth edges.  The caller must keep a reference to
-    the returned image or Tk will garbage-collect it.
+    Same shape as :func:`make_rounded_image`, but returns the raw RGB image so
+    callers can crop it (e.g. ``vFrame`` floats exact corner crops on top of its
+    children to round them) before handing it to Tk.  The rectangle is filled
+    with *fill*; the area outside the rounded corners is *corner_bg* so it blends
+    on a solid-colour parent.  Colours are RGB 0-255 tuples (resolve Tk names
+    with :meth:`vWidget._resolve_color` first).  Drawn at *supersample*×
+    resolution and Lanczos-downscaled for smooth edges.
 
     Args:
         width:          Target width in px.
@@ -95,8 +94,26 @@ def make_rounded_image(width: int, height: int, radius: int,
         outline=outline if has_outline else None,
         width=(outline_width * ss) if has_outline else 1,
     )
-    img = img.resize((width, height), resample=Resampling.LANCZOS)
-    return PIL.ImageTk.PhotoImage(img)
+    return img.resize((width, height), resample=Resampling.LANCZOS)
+
+
+def make_rounded_image(width: int, height: int, radius: int,
+                       fill: tuple[int, int, int],
+                       corner_bg: tuple[int, int, int],
+                       outline: tuple[int, int, int] | None = None,
+                       outline_width: int = 0,
+                       supersample: int = 4) -> "PIL.ImageTk.PhotoImage":
+    """Render an anti-aliased rounded-rectangle as a ``PhotoImage``.
+
+    Thin wrapper over :func:`rounded_pil_image` that wraps the result in a
+    ``PIL.ImageTk.PhotoImage``.  The caller must keep a reference to the returned
+    image or Tk will garbage-collect it.  See :func:`rounded_pil_image` for the
+    arguments.
+    """
+    return PIL.ImageTk.PhotoImage(
+        rounded_pil_image(width, height, radius, fill, corner_bg,
+                          outline=outline, outline_width=outline_width,
+                          supersample=supersample))
 
 
 # ── Native-option doc surfacing ────────────────────────────────────────────────
@@ -127,6 +144,22 @@ def _native_options_block(base) -> str:
     body = doc[min(hits):].rstrip() if hits else ""
     return (f"Native tkinter.{base.__name__} options "
             f"(accepted as keyword arguments / **kwargs)\n\n{body}")
+
+
+# ── Resize → repaint, via a dedicated bindtag ──────────────────────────────────
+# A rounded v-widget repaints on <Configure>.  Binding that on the widget
+# instance is fragile: a caller's ``widget.bind("<Configure>", fn)`` without
+# ``add="+"`` (e.g. wiring up fUtil.autosize) would silently replace it and the
+# rounded image would stop updating (the widget renders square).  So the repaint
+# lives on a shared, dedicated bindtag the caller's instance bind can't touch;
+# one class-level dispatcher routes the event to the widget's own _render_rounded.
+_RENDER_TAG = "vWidgetRounded"
+
+
+def _render_dispatch(event):
+    fn = getattr(event.widget, "_render_rounded", None)
+    if fn is not None:
+        fn(event)
 
 
 class vWidget:
@@ -195,7 +228,19 @@ class vWidget:
             self._prepare_rounded()
             # Precompute the corner-blend colour string (parent bg by default).
             self._v_corner = self._v_corner_bg or self._parent_bg(master)
-            self.bind("<Configure>", self._render_rounded, add="+")
+            self._install_render_binding()
+
+    def _install_render_binding(self) -> None:
+        """Repaint on resize via a dedicated bindtag (see :data:`_RENDER_TAG`),
+        so a caller's ``self.bind("<Configure>", ...)`` can't clobber rendering."""
+        # Install the shared dispatcher once per Tk interpreter.
+        if not self.bind_class(_RENDER_TAG, "<Configure>"):
+            self.bind_class(_RENDER_TAG, "<Configure>", _render_dispatch, add="+")
+        # Give this widget the tag (after its own tags, so a user's instance
+        # <Configure> binding still runs — it just can no longer replace ours).
+        tags = self.bindtags()
+        if _RENDER_TAG not in tags:
+            self.bindtags(tags + (_RENDER_TAG,))
 
     # ── Inheritance ──────────────────────────────────────────────────────────
 

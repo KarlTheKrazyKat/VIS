@@ -16,6 +16,11 @@ class Layout():
         self._bound: bool = False
         """Whether the parent <Configure> binding is active."""
 
+        self.margin: int = 0
+        """Uniform pixel inset applied to the whole grid (all cells shrink away
+        from the frame edges by this much).  Used e.g. by a rounded ``vFrame`` to
+        keep children clear of the rounded corners.  Default 0 (no inset)."""
+
         self.row = []
         self.column = []
         self.row_min: list[int] = []
@@ -72,11 +77,25 @@ class Layout():
                 "relx": sum(self.column[:column])
             }
 
+        # Combine the frame-wide margin (insets every cell from the outer edges,
+        # keeping the inter-cell boundaries shared) with this cell's own padding.
+        # Each is expressed as a fixed pixel offset layered on the relative
+        # geometry, so place() keeps it correct as the frame resizes.
+        m = self.margin
+        x = m * (1 - 2 * result["relx"])
+        y = m * (1 - 2 * result["rely"])
+        w = -2 * m * result["relwidth"]
+        h = -2 * m * result["relheight"]
         if padding:
-            result["x"] = padding
-            result["y"] = padding
-            result["width"] = -2 * padding
-            result["height"] = -2 * padding
+            x += padding
+            y += padding
+            w -= 2 * padding
+            h -= 2 * padding
+        if x or y or w or h:
+            result["x"] = round(x)
+            result["y"] = round(y)
+            result["width"] = round(w)
+            result["height"] = round(h)
 
         return result
 
@@ -195,6 +214,13 @@ class Layout():
         y0 = int(sum(row_px[:row]))
         cw = int(sum(col_px[col: col + colspan]))
         ch = int(sum(row_px[row: row + rowspan]))
+
+        m = self.margin
+        if m and fw > 2 * m and fh > 2 * m:
+            x0 = int(m + x0 * (fw - 2 * m) / fw)
+            cw = int(cw * (fw - 2 * m) / fw)
+            y0 = int(m + y0 * (fh - 2 * m) / fh)
+            ch = int(ch * (fh - 2 * m) / fh)
 
         if padding:
             widget.place(x=x0 + padding, y=y0 + padding,

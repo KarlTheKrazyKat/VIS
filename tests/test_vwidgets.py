@@ -69,7 +69,16 @@ def run_vlabel(root, tk):
     check("configure(bg=) repaints the rounded fill",
           str(pill.cget("image")) != img_before)
 
-    for w in (lbl, lbl_bg, child, pill, pane, host):
+    # a caller's bind("<Configure>") WITHOUT add="+" (e.g. fUtil.autosize) must
+    # not stop the rounded render — it lives on a dedicated bindtag.
+    clob = vLabel(pane, text="C", bg="#1f9d57", fg="white", radius=12)
+    clob.bind("<Configure>", lambda e: None)   # clobbers the instance binding
+    clob.place(x=140, y=80, width=110, height=36)
+    root.update()
+    check("rounded render survives a clobbering bind('<Configure>')",
+          str(clob.cget("image")) != "")
+
+    for w in (lbl, lbl_bg, child, pill, clob, pane, host):
         w.destroy()
 
 
@@ -155,24 +164,45 @@ def run_vframe(root, tk):
 
     vf_bg = vFrame(pane, bg="#ffffff")
     check("explicit bg overrides inheritance", vf_bg.cget("background") == "#ffffff")
-    check("plain vFrame has no background label", not hasattr(vf_bg, "_v_bg_label"))
+    check("plain vFrame has no rounded background", not hasattr(vf_bg, "_v_bg_label"))
+    check("plain vFrame has no layout margin", vf_bg.Layout.margin == 0)
 
-    # Rounded card with a distinct fill on the grey parent.
-    card = vFrame(pane, bg="#ffffff", radius=14)
+    # Rounded card with an outline: one lowered rounded image + the Layout
+    # insets content off the corners (invisible when the child shares the fill).
+    card = vFrame(pane, bg="#ffffff", outline="#1f9d57", radius=14)
     card.place(x=10, y=10, width=200, height=140)
     card.Layout.colSize([1.0])
     card.Layout.rowSize([1.0])
     inner = vLabel(card, text="Inside")
-    inner.place(card.Layout.cell(1, 1))
+    inner.place(card.Layout.cell(1, 1))     # a "filling" cell — auto-inset
     root.update()
+    from math import ceil
+    expect_margin = ceil(14 * (1 - 2 ** -0.5))        # ceil(r·(1−1/√2))
     check("rounded vFrame builds a lowered background label",
           hasattr(card, "_v_bg_label"))
     check("background label is painted", str(card._v_bg_label.cget("image")) != "")
+    check("Layout auto-margin = ceil(r*(1-1/sqrt2))",
+          card.Layout.margin == expect_margin)
+    check("child auto-inset off the corners by the margin",
+          inner.winfo_x() == expect_margin and inner.winfo_y() == expect_margin)
     check("child inherits the card fill", inner.cget("background") == "#ffffff")
-    check("child placed above background label",
-          inner in card.winfo_children() and card._v_bg_label in card.winfo_children())
 
-    for w in (vf, vf_bg, card, pane):
+    # Regression: a pack()-ed child (no Layout.cell) must still be inset off the
+    # corners — the old corner-piece overlay covered such children's text.
+    badge = vFrame(pane, bg="#2f78d3", radius=16)
+    badge.place(x=10, y=10, width=150, height=62)
+    top = vLabel(badge, text="WORK ORDER", fg="white")
+    top.pack(anchor="w")
+    bottom = vLabel(badge, text="23297", fg="white")
+    bottom.pack(anchor="w")
+    root.update()
+    root.update_idletasks()
+    m = badge.Layout.margin
+    check("no opaque corner-piece overlays exist", not hasattr(badge, "_v_caps"))
+    check("pack()-ed children are inset off the left/top corner",
+          top.winfo_x() >= m and top.winfo_y() >= m)
+
+    for w in (vf, vf_bg, card, badge, pane):
         w.destroy()
 
 
