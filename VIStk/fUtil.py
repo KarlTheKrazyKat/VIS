@@ -25,10 +25,21 @@ class fUtil():
 
     @staticmethod
     def autosize(e:Event=None, relations:list[Widget]=None, offset:int=None, shrink:int=0):
-        """Find the largest point size at which every widget's text still fits
-        its box, then apply that size to each — preserving each widget's own
-        family and weight. With `relations`, all widgets share one size but keep
-        their own fonts.
+        """Fit text to widget boxes. Two call modes:
+
+        * **Setup** — ``autosize(relations=[w1, w2, ...], offset=, shrink=)`` with
+          no event binds ``<Configure>`` on EVERY widget so the whole group
+          re-sizes together whenever any member resizes. Call once at build time.
+          (Binding only one widget makes autosize read the *others'* geometry
+          stale mid-resize, leaving a path-dependent size — so bind them all.)
+        * **Sizing** — ``autosize(e, relations=[...], ...)`` from a ``<Configure>``
+          performs one sizing pass for that event.
+        * ``autosize()`` with neither an event nor relations raises ``ValueError``.
+
+        The sizing pass finds the largest point size at which every widget's text
+        still fits its box, then applies that size to each — preserving each
+        widget's own family and weight. With `relations`, all widgets share one
+        size but keep their own fonts.
 
         Widgets are grouped by font (identical spec ⇒ identical metrics). Line
         height and the font scaling slope are identical within a group, so each
@@ -36,7 +47,14 @@ class fUtil():
         width (which depends on the string) is measured per widget — and widgets
         whose height clearly binds skip even that during the fit search.
         """
-        if e is None: #Always need an event
+        if e is None: #Setup mode: bind <Configure> on the whole group, then done
+            if relations is None:
+                raise ValueError("autosize() needs an event or a relations list")
+            group = list(relations)
+            for w in group:
+                kin = [x for x in group if x is not w] #the other members
+                w.bind("<Configure>", lambda ev, _kin=kin:
+                       fUtil.autosize(ev, relations=_kin, offset=offset, shrink=shrink))
             return None
         _root = e.widget.winfo_toplevel()
         geom_re = re.compile(r"(\d+)x(\d+)") #parses "WxH+X+Y" from winfo_geometry()

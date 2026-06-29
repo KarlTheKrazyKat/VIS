@@ -47,9 +47,9 @@ class VISMenu():
             x += 1
 
         if len(self.ob_dict) == 1:
-            self.ob_dict[0].bind("<Configure>", lambda e: fUtil.autosize(e))
+            fUtil.autosize(relations=self.ob_dict)
         if len(self.ob_dict) >1:
-            self.ob_dict[0].bind("<Configure>", lambda e: fUtil.autosize(e,relations=self.ob_dict[1:]))
+            fUtil.autosize(relations=self.ob_dict)
         self._kb_id = self.root.bind("<KeyPress>", self.menuNav, add="+")
         self.parent.bind("<Destroy>", self._on_destroy, add="+")
 
