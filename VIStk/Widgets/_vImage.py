@@ -1,4 +1,4 @@
-"""vImage (0.6.2) — a classic ``tk.Label`` that *only* holds an image, loaded
+"""vImage (0.6.3) — a classic ``tk.Label`` that *only* holds an image, loaded
 through the existing :class:`~VIStk.Objects._VIMG.VIMG` object, and (like the
 rest of the v-family) inherits its parent's traits and can render rounded
 corners.
@@ -22,10 +22,16 @@ owns only the Tk rendering::
   omitted, so the aspect-ratio letterbox bars — and the transparent corners in
   rounded mode — blend into a solid-colour parent.  Anything passed explicitly
   wins.
-* **Fit** — by default the image is *contained* in the live widget size,
-  re-fitting on resize (the ``VIMG`` "fill" behaviour).  Pass ``size=(w, h)`` to
-  contain it in a fixed pixel box instead, or ``fit=False`` to show it at its
-  natural size.
+* **Fit** — ``fit`` selects how the source maps onto the target box:
+  ``"fit"`` (contain, aspect-preserved, letterboxed — the default),
+  ``"stretch"`` (fill the box exactly, ignoring aspect), ``"crop"`` (cover the
+  box, aspect-preserved, overflow centre-cropped), or ``"none"`` (natural size).
+  ``fit=True`` is an alias for ``"fit"`` and ``fit=False`` for ``"none"`` so
+  existing callers keep working.  The box is the live widget size (re-fitting on
+  resize) unless ``size=(w, h)`` pins a fixed pixel box.
+* **Resample** — the PIL resampling filter, ``resample=Resampling.BICUBIC`` by
+  default.  Pass any ``PIL.Image.Resampling`` member — e.g. ``Resampling.NEAREST``
+  to keep hard colour boundaries crisp when stretching (no edge blending).
 * **Rounded corners** — opt in with ``radius`` > 0.  The corners are made
   transparent with an anti-aliased rounded mask, so the widget's (inherited)
   ``bg`` shows through and blends on a solid parent — recolouring the ``bg``
@@ -96,11 +102,33 @@ class vImage(vWidget, Label):
     #: Only the background is meaningful for an image-only widget.
     _INHERIT = ("background",)
 
+    #: Accepted ``fit`` modes (``True``/``False`` normalise to ``"fit"``/``"none"``).
+    _FIT_MODES = ("fit", "stretch", "crop", "none")
+
+    @classmethod
+    def _norm_fit(cls, fit) -> str:
+        """Normalise the ``fit`` argument to one of :data:`_FIT_MODES`.
+
+        ``True`` → ``"fit"`` (contain) and ``False``/``None`` → ``"none"``
+        (natural size), preserving the pre-0.6.3 boolean API.
+        """
+        if fit is True:
+            return "fit"
+        if fit is False or fit is None:
+            return "none"
+        mode = str(fit).lower()
+        if mode not in cls._FIT_MODES:
+            raise ValueError(
+                f"fit must be one of {cls._FIT_MODES} (or a bool), got {fit!r}")
+        return mode
+
     def __init__(self, master: Misc | None = None, path: str | None = None, *,
                  image: "Image.Image | None" = None,
                  absolute_path: bool = False,
                  size: tuple[int, int] | list[int] | None = None,
-                 fit: bool = True, radius: int = 0,
+                 fit: bool | str = True,
+                 resample: "Resampling" = Resampling.BICUBIC,
+                 radius: int = 0,
                  outline: str | None = None, outline_width: int = 1,
                  **kwargs: Unpack[_LabelKw]):
         """
@@ -116,11 +144,16 @@ class vImage(vWidget, Label):
                            precedence over *path*; see :meth:`set_image`.
             absolute_path: Treat *path* as a literal filesystem path (no
                            ``p_images`` lookup).  Passed straight to ``VIMG``.
-            size:          Fixed ``(w, h)`` box to contain the image in; omit to
-                           contain it in the live widget size (see *fit*).
-            fit:           When ``True`` (default) and no *size* is given, the
-                           image is contained in the widget and re-fitted on
-                           resize.  ``False`` shows it at its natural size.
+            size:          Fixed ``(w, h)`` box to fit the image into; omit to fit
+                           it to the live widget size (see *fit*).
+            fit:           How the source maps onto the box: ``"fit"`` (contain,
+                           default), ``"stretch"`` (fill, ignore aspect),
+                           ``"crop"`` (cover + centre-crop), or ``"none"`` (natural
+                           size).  ``True`` → ``"fit"``, ``False`` → ``"none"``.
+            resample:      PIL resampling filter (default
+                           :attr:`Resampling.BICUBIC`).  Use
+                           :attr:`Resampling.NEAREST` for crisp, unblended edges
+                           when stretching hard-boundary images.
             radius:        Corner radius in px; ``0`` (default) → square image.
             outline:       Optional border colour stroked on the rounded edge.
             outline_width: Border width in px (default ``1``; needs *outline*).
@@ -135,8 +168,11 @@ class vImage(vWidget, Label):
         self._v_img_radius = int(radius or 0)
         self._v_img_outline_width = int(outline_width or 0)
         self._v_size = tuple(size) if size else None
-        # A fixed size pins the box; otherwise fit fills the live widget.
-        self._v_fit = bool(fit) and self._v_size is None
+        self._v_fit_mode = self._norm_fit(fit)
+        self._v_resample = resample
+        # Modes other than "none" fit the source to a box; with no fixed *size*
+        # that box is the live widget, so we must re-fit on every resize.
+        self._v_fit = self._v_fit_mode != "none" and self._v_size is None
         self._v_photo = None                 # keep a ref so Tk won't GC it
         self._v_last_render = None           # debounce identical renders
         self._v_src = None                   # current PIL source image (disk or memory)
@@ -187,8 +223,8 @@ class vImage(vWidget, Label):
         self._render()
 
     def _render(self, event=None) -> None:
-        """Resize the source image to the current target box (contain), apply the
-        optional rounded mask, and show it."""
+        """Resize the source image onto the current target box per the *fit* mode,
+        apply the optional rounded mask, and show it."""
         src = self._v_src
         if src is None:
             return
@@ -196,25 +232,40 @@ class vImage(vWidget, Label):
         if not iw or not ih:
             return
 
+        mode = self._v_fit_mode
         if self._v_size is not None:
             bw, bh = self._v_size
-        elif self._v_fit:
+        elif mode != "none":
             bw, bh = self.winfo_width(), self.winfo_height()
             if bw <= 1 or bh <= 1:           # not laid out yet — wait for resize
                 return
         else:
             bw, bh = iw, ih
 
-        scale = min(bw / iw, bh / ih)
-        nw, nh = max(1, round(iw * scale)), max(1, round(ih * scale))
+        # Pick the resized dimensions for the mode.  "crop" covers the box (scale
+        # by the larger ratio, then centre-crop the overflow); "stretch" fills it
+        # exactly; "fit"/"none" contain it (scale by the smaller ratio — for
+        # "none" the box *is* the source size, so the scale is 1).
+        if mode == "stretch":
+            nw, nh = max(1, bw), max(1, bh)
+        elif mode == "crop":
+            scale = max(bw / iw, bh / ih)
+            nw, nh = max(1, round(iw * scale)), max(1, round(ih * scale))
+        else:
+            scale = min(bw / iw, bh / ih)
+            nw, nh = max(1, round(iw * scale)), max(1, round(ih * scale))
 
-        # Skip the rebuild when the fitted size is unchanged.  set_path() resets
-        # the key to None, so a same-size source swap still repaints.
-        if (nw, nh) == self._v_last_render:
+        # Skip the rebuild when the fitted geometry is unchanged.  set_path()
+        # resets the key to None, so a same-size source swap still repaints.
+        key = (nw, nh, bw, bh, mode)
+        if key == self._v_last_render:
             return
-        self._v_last_render = (nw, nh)
+        self._v_last_render = key
 
-        img = src.resize((nw, nh), resample=Resampling.BICUBIC)
+        img = src.resize((nw, nh), resample=self._v_resample)
+        if mode == "crop" and (nw > bw or nh > bh):
+            left, top = (nw - bw) // 2, (nh - bh) // 2
+            img = img.crop((left, top, left + bw, top + bh))
         if self._v_img_radius > 0:
             img = round_image(img, self._v_img_radius,
                               outline=self._v_img_outline_rgb,
