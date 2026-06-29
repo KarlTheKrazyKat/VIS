@@ -17,15 +17,26 @@ parent's background and optionally renders rounded corners.
   frame.
 
   A Tk child is an opaque rectangle with no per-widget transparency, so a child
-  that reaches a rounded corner squares it off — and there is no way to paint
-  the rounded corner *back* over the child without also covering the child's
-  content.  The only robust fix is to keep content out of the corner region, so
-  ``vFrame`` **insets every child** away from the edges by a few pixels,
-  regardless of how it is placed (``.Layout.cell``, plain ``place``, ``pack`` or
-  ``grid``).  The inset is **invisible** when the child shares the frame's ``bg``
-  (the rounded fill reads as continuous to the edge — the inherited default); it
-  is ``ceil(radius·(1 − 1/√2))`` ≈ ``0.293·radius``, size-aware as the corner
-  clamps on small frames.  Pass ``inset=`` to override it (``0`` disables).
+  that reaches a rounded corner squares it off.  Two layers keep the corners
+  clean:
+
+  1. **Inset.**  Every child is inset off the edges by a few pixels, regardless
+     of how it is placed (``.Layout.cell``, plain ``place``, ``pack`` or
+     ``grid``), so its square corners stay inside the rounded ones.  The inset is
+     **invisible** when the child shares the frame's ``bg`` (the rounded fill
+     reads as continuous to the edge — the inherited default); it is
+     ``ceil(radius·(1 − 1/√2))`` ≈ ``0.293·radius``, size-aware as the corner
+     clamps on small frames.  Pass ``inset=`` to override it (``0`` disables).
+  2. **Sub-pixel corner patch.**  The inset is whole-pixel, so a child's corner
+     can still land a fraction of a pixel proud of the border — its *fill* then
+     shows where the *outline* (or corner background) should be, notching the
+     border.  That can't be fixed on the frame: the border is on the lowered
+     image *behind* the child, which the child covers at that pixel.  So a tiny
+     patch is drawn **on the child** — a ~1 px ``Label`` at the child's own
+     corner, above its content, showing an exact crop of the border image for
+     that spot (outline colour where the outline is, corner background beyond).
+     It is sized to the actual overhang, so it never reaches the child's text,
+     and only the corners a child actually occupies are patched.
 
   At ``radius=0`` it is an ordinary ``LayoutFrame`` (no inset, no painting).
 
@@ -39,7 +50,7 @@ re-inset them immediately.
 
 from __future__ import annotations
 
-from math import ceil
+from math import ceil, floor, sqrt
 from typing import TYPE_CHECKING
 from tkinter import Label
 import PIL.ImageTk
@@ -112,6 +123,8 @@ class vFrame(vWidget, LayoutFrame):
                          outline_width=outline_width, corner_bg=corner_bg,
                          **kwargs)
         self._v_inset = inset
+        self._v_border_pil = None     # last rendered border image (cropped for marks)
+        self._v_eff_ow = 0            # effective outline width actually painted
         if self._v_radius > 0:
             self.Layout.margin = self._inset_for(self._v_radius)
 
@@ -131,8 +144,9 @@ class vFrame(vWidget, LayoutFrame):
     # ── Rounded overrides ────────────────────────────────────────────────────
     #
     # The rounded fill + outline lives on a single lowered Label image; every
-    # child is inset off the edges so its square corners never reach (and square
-    # off) the rounded corner.  There is no opaque overlay floated over content.
+    # child is inset off the edges so its square corners stay inside the rounded
+    # ones.  Any remaining sub-pixel overhang is patched per-corner ON the child
+    # (see _refresh_corner_marks) — never with a big overlay that covers content.
 
     def _prepare_rounded(self) -> None:
         fill = self.cget("background")
@@ -154,6 +168,8 @@ class vFrame(vWidget, LayoutFrame):
 
         pil = rounded_pil_image(w, h, self._v_radius, fill, corner,
                                 outline=outline, outline_width=ow)
+        self._v_border_pil = pil
+        self._v_eff_ow = ow
         self._v_bg_image = PIL.ImageTk.PhotoImage(pil)
         self._v_bg_label.configure(image=self._v_bg_image)
 
@@ -163,8 +179,121 @@ class vFrame(vWidget, LayoutFrame):
         self.Layout.margin = self._inset_for(r)
 
         # Re-inset once children have settled at the new size (catches both a
-        # margin change and any children added since the last render).
-        self.after_idle(self._reinset_children)
+        # margin change and any children added since the last render), then patch
+        # any sub-pixel corner overhang.
+        self.after_idle(self._reflow)
+
+    # ── Sub-pixel corner patch (drawn ON each child, not on the frame) ─────────
+    #
+    # The inset is whole-pixel, so a child's corner can still land a fraction of
+    # a pixel proud of the rounded border — its *fill* then shows where the
+    # *outline* (or, with no outline, the corner background) should be, notching
+    # the border.  We can't fix that on the frame: the border lives on the
+    # lowered image *behind* the child, which the child covers at that pixel.  So
+    # the patch is drawn **on the child** — a tiny Label, placed at the child's
+    # own corner above its content, showing an exact crop of the border image for
+    # that spot.  Where the crop is fill it is invisible (it matches the child);
+    # where it is outline / corner-bg it restores the border.  Sized to the
+    # actual overhang (≈ 1 px), so it never reaches the child's text.
+
+    def _reflow(self) -> None:
+        """Re-inset children, then (once their geometry has settled) repaint the
+        corner patches that hide any sub-pixel overhang over the border."""
+        self._reinset_children()
+        try:
+            self.update_idletasks()
+        except Exception:
+            return
+        self._refresh_corner_marks()
+
+    def _refresh_corner_marks(self) -> None:
+        pil = self._v_border_pil
+        if pil is None:
+            return
+        w, h = self.winfo_width(), self.winfo_height()
+        r = min(self._v_radius, w // 2, h // 2)
+        bg_label = getattr(self, "_v_bg_label", None)
+        if r <= 0:
+            for child in self.winfo_children():
+                self._clear_marks(child)
+            return
+        rf = max(0, r - getattr(self, "_v_eff_ow", 0))   # fill arc (inside outline)
+        for child in self.winfo_children():
+            if child is bg_label:
+                continue
+            if not child.winfo_ismapped():
+                self._clear_marks(child)
+                continue
+            try:
+                self._mark_child(child, w, h, r, rf, pil)
+            except Exception:
+                self._clear_marks(child)
+
+    def _mark_child(self, child, w: int, h: int, r: int, rf: int, pil) -> None:
+        """Patch each corner of *child* that overhangs the fill arc (radius *rf*,
+        i.e. is sitting on the outline / corner background)."""
+        x0, y0 = child.winfo_x(), child.winfo_y()
+        x1, y1 = x0 + child.winfo_width(), y0 + child.winfo_height()
+        rf2 = rf * rf
+        # corner name, arc centre (acx, acy), child's outer corner (ox, oy),
+        # direction into the child (dx, dy).
+        specs = (
+            ("tl", r,     r,     x0, y0,  1,  1),
+            ("tr", w - r, r,     x1, y0, -1,  1),
+            ("bl", r,     h - r, x0, y1,  1, -1),
+            ("br", w - r, h - r, x1, y1, -1, -1),
+        )
+        for name, acx, acy, ox, oy, dx, dy in specs:
+            # The child only meets this corner if its outer corner is in the
+            # rounded quadrant, and only overhangs if that corner is outside the
+            # fill arc (covering the outline / corner background).
+            if (dx * (acx - ox) <= 0 or dy * (acy - oy) <= 0
+                    or (ox - acx) ** 2 + (oy - acy) ** 2 <= rf2):
+                self._hide_mark(child, name)
+                continue
+            # Where the child's two edges cross back inside the fill arc bounds
+            # the overhang region; crop exactly that from the border image.
+            sx = sqrt(max(0.0, rf2 - (oy - acy) ** 2))
+            sy = sqrt(max(0.0, rf2 - (ox - acx) ** 2))
+            xc, yc = acx - dx * sx, acy - dy * sy
+            bx0, bx1 = (ox, xc) if ox <= xc else (xc, ox)
+            by0, by1 = (oy, yc) if oy <= yc else (yc, oy)
+            bx0, by0 = max(0, floor(bx0)), max(0, floor(by0))
+            bx1, by1 = min(w, ceil(bx1)), min(h, ceil(by1))
+            if bx1 <= bx0 or by1 <= by0:
+                self._hide_mark(child, name)
+                continue
+            photo = PIL.ImageTk.PhotoImage(pil.crop((bx0, by0, bx1, by1)))
+            mark = self._get_mark(child, name)
+            mark._v_img = photo                         # keep a ref (no GC)
+            mark.configure(image=photo)
+            mark.place(x=bx0 - x0, y=by0 - y0,
+                       width=bx1 - bx0, height=by1 - by0)
+            mark.lift()
+
+    @staticmethod
+    def _get_mark(child, name) -> Label:
+        marks = getattr(child, "_v_corner_marks", None)
+        if marks is None:
+            marks = child._v_corner_marks = {}
+        mark = marks.get(name)
+        if mark is None:
+            mark = marks[name] = Label(child, bd=0, highlightthickness=0,
+                                       takefocus=0)
+        return mark
+
+    @staticmethod
+    def _hide_mark(child, name) -> None:
+        marks = getattr(child, "_v_corner_marks", None)
+        if marks and name in marks:
+            marks[name].place_forget()
+
+    @staticmethod
+    def _clear_marks(child) -> None:
+        marks = getattr(child, "_v_corner_marks", None)
+        if marks:
+            for mark in marks.values():
+                mark.place_forget()
 
     # ── Child insetting (all geometry managers) ───────────────────────────────
 

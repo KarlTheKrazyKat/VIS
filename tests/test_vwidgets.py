@@ -202,8 +202,106 @@ def run_vframe(root, tk):
     check("pack()-ed children are inset off the left/top corner",
           top.winfo_x() >= m and top.winfo_y() >= m)
 
-    for w in (vf, vf_bg, card, badge, pane):
+    # Sub-pixel corner patch: at full radius a child's corner sits a fraction of
+    # a pixel over the outline; vFrame patches it with a tiny mark drawn ON the
+    # child, only at the corners that child actually occupies.
+    marked = vFrame(pane, bg="#e9ecef", outline="#5a6470", radius=12)
+    marked.place(x=10, y=10, width=150, height=28)   # height 28 → radius stays 12
+    marked.Layout.rowSize([1]); marked.Layout.colSize([0.4, 0.6])
+    left = vLabel(marked, text="PM", anchor="e"); left.place(marked.Layout.cell(1, 1))
+    right = vLabel(marked, text="N/A", anchor="w"); right.place(marked.Layout.cell(1, 2))
+    root.update()
+    marked._refresh_corner_marks()
+    placed = lambda c: {k for k, mk in getattr(c, "_v_corner_marks", {}).items()
+                        if mk.place_info()}
+    lset, rset = placed(left), placed(right)
+    check("corner patch is a child OF the content widget (drawn on the child)",
+          bool(getattr(left, "_v_corner_marks", None))
+          and all(mk.master is left for mk in left._v_corner_marks.values()))
+    check("left child patches only its left frame corners", lset == {"tl", "bl"})
+    check("right child patches only its right frame corners", rset == {"tr", "br"})
+    check("corner patch is tiny (a few px — never over the text)",
+          all(int(left._v_corner_marks[k].place_info()["width"]) <= 3 for k in lset))
+
+    for w in (vf, vf_bg, card, badge, marked, pane):
         w.destroy()
+
+
+def run_vimage(root, tk):
+    from VIStk.Widgets._vWidget import vWidget
+    from VIStk.Widgets._vImage import vImage
+    import os
+    import tempfile
+    from PIL import Image
+
+    print("vImage:")
+
+    # A throwaway 80x40 PNG on disk (absolute_path avoids the Project p_images
+    # lookup, so this test needs no VIStk project).
+    tmp = os.path.join(tempfile.gettempdir(), "_vimage_test.png")
+    Image.new("RGBA", (80, 40), (200, 30, 30, 255)).save(tmp)
+
+    pane = tk.Frame(root, bg="#ffffff")
+    pane.place(x=0, y=0, width=300, height=200)
+
+    img = vImage(pane, tmp, absolute_path=True)
+    check("is a tk.Label", isinstance(img, tk.Label))
+    check("is a vWidget", isinstance(img, vWidget))
+    check("inherits parent background", img.cget("background") == "#ffffff")
+    check("loads via a VIMG", img.VIMG is not None)
+
+    # Fixed-box, fit-contained: a 80x40 image in a 100x100 box -> 100x50.
+    boxed = vImage(pane, tmp, absolute_path=True, size=(100, 100))
+    boxed.place(x=10, y=10)
+    root.update()
+    check("fixed-size box paints an image", str(boxed.cget("image")) != "")
+    check("contained image keeps aspect (100x50)",
+          boxed._v_photo.width() == 100 and boxed._v_photo.height() == 50)
+
+    # Rounded thumbnail.
+    thumb = vImage(pane, tmp, absolute_path=True, size=(64, 64), radius=12)
+    thumb.place(x=120, y=10)
+    root.update()
+    check("rounded image paints", str(thumb.cget("image")) != "")
+
+    # Fit mode re-fits to the live widget size.
+    fitted = vImage(pane, tmp, absolute_path=True)
+    fitted.place(x=10, y=120, width=120, height=120)
+    root.update()
+    check("fit mode paints once laid out", str(fitted.cget("image")) != "")
+    check("fit mode contains in the widget (120 wide -> 60 tall)",
+          fitted._v_photo.width() == 120 and fitted._v_photo.height() == 60)
+
+    # Swapping the source repaints.
+    before = str(boxed.cget("image"))
+    Image.new("RGBA", (40, 40), (30, 30, 200, 255)).save(tmp)
+    boxed.set_path(tmp, absolute_path=True)
+    root.update()
+    check("set_path repaints", str(boxed.cget("image")) != "" and
+          str(boxed.cget("image")) != before)
+
+    # In-memory image (never on disk) via the image= constructor arg.
+    mem_src = Image.new("RGBA", (120, 60), (30, 180, 90, 255))
+    mem = vImage(pane, image=mem_src, size=(60, 60))
+    mem.place(x=200, y=10)
+    root.update()
+    check("image= paints an in-memory image", str(mem.cget("image")) != "")
+    check("in-memory image has no VIMG", mem.VIMG is None)
+    check("in-memory image is contained (60x30)",
+          mem._v_photo.width() == 60 and mem._v_photo.height() == 30)
+
+    # set_image() swaps to another in-memory image.
+    mem.set_image(Image.new("RGBA", (60, 60), (180, 30, 90, 255)))
+    root.update()
+    check("set_image contains a square source (60x60)",
+          mem._v_photo.width() == 60 and mem._v_photo.height() == 60)
+
+    for w in (img, boxed, thumb, fitted, mem, pane):
+        w.destroy()
+    try:
+        os.remove(tmp)
+    except OSError:
+        pass
 
 
 def run_docs():
@@ -246,6 +344,7 @@ def main():
         run_vlabel(root, tk)
         run_vbutton(root, tk)
         run_vframe(root, tk)
+        run_vimage(root, tk)
     finally:
         try:
             root.destroy()
