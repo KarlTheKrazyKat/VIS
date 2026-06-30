@@ -1339,10 +1339,25 @@ class Host:
     def _active_detached_window(self):
         """Return the DetachedWindow that owns ``active_tab_manager``, or
         the first open window as fallback."""
-        for dw in self.detached_windows:
-            if self.active_tab_manager in dw.tab_managers:
-                return dw
+        owner = self._window_for_tab_manager(self.active_tab_manager)
+        if owner is not None:
+            return owner
         return self.detached_windows[0] if self.detached_windows else None
+
+    def _window_for_tab_manager(self, tm):
+        """Return the DetachedWindow that owns *tm*, or ``None``.
+
+        Walks each window's live SplitView tree rather than the seeded
+        ``dw.tab_managers`` list (which isn't maintained across splits),
+        so a pane created by ``SplitView.split`` still resolves to its
+        window.
+        """
+        if tm is None:
+            return None
+        for dw in self.detached_windows:
+            if tm in dw._split_view.all_tab_managers():
+                return dw
+        return None
 
     # ── Tabs ───────────────────────────────────────────────────────────────────
 
@@ -1403,15 +1418,14 @@ class Host:
             if tm is not None and tab_id is not None:
                 tm.focus_tab(tab_id)
                 # Raise the DetachedWindow that owns the target pane
-                for dw in self.detached_windows:
-                    if tm in dw.tab_managers:
-                        try:
-                            dw.win.deiconify()
-                            dw.win.lift()
-                            dw.win.focus_force()
-                        except Exception:
-                            pass
-                        break
+                dw = self._window_for_tab_manager(tm)
+                if dw is not None:
+                    try:
+                        dw.win.deiconify()
+                        dw.win.lift()
+                        dw.win.focus_force()
+                    except Exception:
+                        pass
                 return
 
         # Enforce max_tabs limit — but not while restoring a remembered
@@ -1432,17 +1446,37 @@ class Host:
         display = self._unique_display_name(scr.name)
         icon = self._load_tab_icon(scr)
 
-        # Open in the active TabManager, or the first window's primary pane
-        target = self.active_tab_manager
-        if target is None and self.detached_windows:
-            target = self.detached_windows[0].tab_manager
+        # Pick a chromed window to host the tab.  A tabbed screen must never
+        # land in a chromeless standalone window (its tab bar is hidden and
+        # its SplitView is locked) — that's how navigating out of a
+        # standalone screen, e.g. FloorView -> WorderEditor, used to leave
+        # the new screen tab-less and headerless.
+        target = self._tab_target()
         if target is None:
-            # No window exists yet — create one; it opens the tab itself.
+            # No chromed window exists yet — create one; it opens the tab.
             from VIStk.Objects._DetachedWindow import DetachedWindow
             dw = DetachedWindow(self, scr, args=args)
             return
 
         target.open_screen(scr, display, icon=icon, args=args)
+
+    def _tab_target(self):
+        """Return a TabManager in a chromed window to open a new tab into.
+
+        Prefers the active pane when its owning window has chrome; otherwise
+        the first non-chromeless window's focused pane.  Returns ``None``
+        when every open window is chromeless (or none exist), so the caller
+        spins up a fresh chromed DetachedWindow instead of stuffing a tabbed
+        screen into a standalone window.
+        """
+        active = self.active_tab_manager
+        owner = self._window_for_tab_manager(active)
+        if active is not None and owner is not None and not owner.chromeless:
+            return active
+        for dw in self.detached_windows:
+            if not dw.chromeless:
+                return dw.tab_manager
+        return None
 
     def _open_standalone(self, scr, args: list | None = None):
         """Open a standalone (tabbed=False) screen as a new DetachedWindow.
