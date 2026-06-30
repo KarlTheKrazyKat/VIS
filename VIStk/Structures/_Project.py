@@ -438,8 +438,9 @@ class Project(VINFO):
             screen: Name of the target screen.
             target: Optional TabManager whose action queue is used to defer
                 the call. Defaults to the active TabManager.
-            args:   Optional dict of args passed to the screen's ArgHandler
-                (currently ignored in the Host path; TODO: thread through).
+            args:   Optional list of CLI-style tokens (e.g.
+                ``["--won", "21930"]``) forwarded to the target screen's
+                ``ArgHandler`` before its ``setup()`` runs.
         """
         from VIStk.Objects._Host import _HOST_INSTANCE
         scr = self.getScreen(screen)
@@ -448,11 +449,11 @@ class Project(VINFO):
         if _HOST_INSTANCE is not None:
             tm = target or _HOST_INSTANCE.active_tab_manager
             if tm is not None:
-                tm._action_queue.put(lambda: _HOST_INSTANCE.open(screen))
+                tm._action_queue.put(lambda: _HOST_INSTANCE.open(screen, args))
             else:
-                _HOST_INSTANCE.open(screen)
+                _HOST_INSTANCE.open(screen, args)
         else:
-            scr.load()
+            scr.load(*(args or []))
 
     def reload(self) -> None:
         """Reloads the current screen
