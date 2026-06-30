@@ -19,6 +19,7 @@ from VIStk.Widgets._vWidget import vWidget, make_rounded_image, rounded_pil_imag
 from VIStk.Widgets._vLabel import vLabel
 from VIStk.Widgets._vButton import vButton
 from VIStk.Widgets._vFrame import vFrame
+from VIStk.Widgets._vLabelFrame import vLabelFrame
 from VIStk.Widgets._vImage import vImage, round_image
 
 
@@ -46,6 +47,7 @@ __all__ = ["VISMenu",
            "vLabel",
            "vButton",
            "vFrame",
+           "vLabelFrame",
            "vImage",
            "round_image",
            ]

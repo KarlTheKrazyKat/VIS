@@ -304,16 +304,102 @@ def run_vimage(root, tk):
         pass
 
 
+def run_vlabelframe(root, tk):
+    from math import ceil
+    from VIStk.Widgets._vWidget import vWidget
+    from VIStk.Widgets._vLabelFrame import vLabelFrame
+    from VIStk.Widgets._vLabel import vLabel
+
+    print("vLabelFrame:")
+
+    pane = tk.Frame(root, bg="#eef0f3")
+    pane.place(x=0, y=0, width=400, height=300)
+
+    # Plain (radius=0) → behaves like a native LabelFrame.
+    lf = vLabelFrame(pane, text="Box")
+    check("is a tk.LabelFrame", isinstance(lf, tk.LabelFrame))
+    check("is a vWidget", isinstance(lf, vWidget))
+    check("has a .Layout", hasattr(lf, "Layout"))
+    check("inherits parent background", lf.cget("background") == "#eef0f3")
+    check("native text passes through", lf.cget("text") == "Box")
+    check("radius=0 builds no rounded bg label", not hasattr(lf, "_v_bg_label"))
+    check("radius=0 has no layout margin", lf.Layout.margin == 0)
+    check("radius=0 keeps no internal title", lf._v_title is None)
+
+    # fg / font inherit from a parent that carries them (the title uses them).
+    host = tk.Label(root, bg="#222222", fg="#00ff00", font="Arial 13")
+    host.place(x=0, y=0, width=120, height=40)
+    child = vLabelFrame(host, text="t")
+    check("inherits parent foreground", child.cget("foreground") == "#00ff00")
+    check("inherits parent font", str(child.cget("font")) == "Arial 13")
+
+    # Rounded box with a title + an outline.
+    box = vLabelFrame(pane, text="Title", radius=14, outline="#2f78d3",
+                      outline_width=2, bg="#ffffff", fg="#1d4f7c")
+    box.place(x=10, y=10, width=240, height=150)
+    box.Layout.colSize([1.0]); box.Layout.rowSize([1.0])
+    inner = vLabel(box, text="in", bg="#ffffff")
+    inner.place(box.Layout.cell(1, 1))
+    root.update(); root.update_idletasks(); root.update()
+    check("rounded builds a lowered background label", hasattr(box, "_v_bg_label"))
+    check("background label is painted", str(box._v_bg_label.cget("image")) != "")
+    check("background label covers the WHOLE frame (not just content area)",
+          box._v_bg_label.winfo_width() == box.winfo_width()
+          and box._v_bg_label.winfo_height() == box.winfo_height())
+    check("an internal title label is created for text mode",
+          box._v_title is not None and isinstance(box._v_title, tk.Label))
+    check("title is installed as the labelwidget",
+          box._title_widget() is box._v_title)
+    check("Layout auto-margin = ceil(r*(1-1/sqrt2))",
+          box.Layout.margin == ceil(14 * (1 - 2 ** -0.5)))
+    check("child inset off the corners by the margin (x)",
+          inner.winfo_x() == box.Layout.margin)
+
+    # Title options proxy to the internal title label.
+    box.configure(text="New", fg="#d23f3f")
+    check("configure(text=) proxies to the title (and cget reads it back)",
+          box.cget("text") == "New" and box._v_title.cget("text") == "New")
+    check("configure(fg=) proxies to the title",
+          box._v_title.cget("fg") == "#d23f3f")
+    check("item access reads the title text", box["text"] == "New")
+
+    # Regression: pack()-ed children inset off the corners (no overlay covers them).
+    badge = vLabelFrame(pane, text="WO", radius=14, outline="#16a34a", bg="#ffffff")
+    badge.place(x=10, y=180, width=160, height=80)
+    content = vLabel(badge, text="content", bg="#ffffff")
+    content.pack(anchor="w")
+    root.update(); root.update_idletasks(); root.update()
+    m = badge.Layout.margin
+    check("pack()-ed child inset off the corner",
+          content.winfo_x() >= m and content.winfo_y() >= m)
+
+    # A caller-supplied labelwidget is respected (no internal title made).
+    lw_box = vLabelFrame(pane, radius=12, outline="#888888", bg="#ffffff")
+    my_title = vLabel(lw_box, text="custom", bg="#ffffff")
+    lw_box.configure(labelwidget=my_title)
+    lw_box.place(x=200, y=180, width=180, height=80)
+    root.update()
+    check("user-supplied labelwidget made no internal title",
+          lw_box._v_title is None)
+    check("title widget resolves to the user's labelwidget",
+          lw_box._title_widget() is my_title)
+
+    for w in (lf, child, host, box, badge, lw_box, pane):
+        w.destroy()
+
+
 def run_docs():
     """No Tk needed — just verifies native options were composed into the docs."""
     from VIStk.Widgets._vLabel import vLabel
     from VIStk.Widgets._vButton import vButton
     from VIStk.Widgets._vFrame import vFrame
+    from VIStk.Widgets._vLabelFrame import vLabelFrame
 
     print("docs:")
     ldoc = vLabel.__init__.__doc__ or ""
     bdoc = vButton.__init__.__doc__ or ""
     fdoc = vFrame.__init__.__doc__ or ""
+    lfdoc = vLabelFrame.__init__.__doc__ or ""
 
     check("vLabel doc keeps the v-widget Args (radius)", "radius:" in ldoc)
     check("vLabel doc appends native tkinter.Label options",
@@ -322,6 +408,8 @@ def run_docs():
           "Native tkinter.Button options" in bdoc and "command" in bdoc)
     check("vFrame doc lists frame-specific native option (colormap)",
           "Native tkinter.Frame options" in fdoc and "colormap" in fdoc)
+    check("vLabelFrame doc appends native LabelFrame options (labelanchor)",
+          "Native tkinter.LabelFrame options" in lfdoc and "labelanchor" in lfdoc)
 
 
 def main():
@@ -344,6 +432,7 @@ def main():
         run_vlabel(root, tk)
         run_vbutton(root, tk)
         run_vframe(root, tk)
+        run_vlabelframe(root, tk)
         run_vimage(root, tk)
     finally:
         try:

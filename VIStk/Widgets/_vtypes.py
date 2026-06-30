@@ -77,3 +77,17 @@ class _FrameKw(_CommonKw, total=False):
     colormap: Any
     container: bool
     visual: Any
+
+
+class _LabelFrameKw(_CommonKw, total=False):
+    """Native :class:`tkinter.LabelFrame` options (Frame options + the title)."""
+    class_: str
+    colormap: Any
+    container: bool
+    visual: Any
+    fg: str
+    font: Any
+    foreground: str
+    labelanchor: str
+    labelwidget: Any
+    text: Any
