@@ -141,7 +141,49 @@ def run_vbutton(root, tk):
     check("rounded button honours pixel width/height",
           abs(szbtn.winfo_width() - 90) <= 2 and abs(szbtn.winfo_height() - 40) <= 2)
 
-    for w in (btn, cbtn, chip, dbtn, szbtn, pane):
+    # caller image= composited into the rounded fill (#188) — glyph, not clobber.
+    from PIL import Image
+    import PIL.ImageTk
+
+    # radius=0: image= reaches the native widget untouched (no glyph stashing).
+    flat_icon = PIL.ImageTk.PhotoImage(Image.new("RGBA", (16, 16), (255, 0, 255, 255)))
+    flat = vButton(pane, image=flat_icon, radius=0)
+    check("radius=0 passes image= through to native", str(flat.cget("image")) != "")
+    check("radius=0 stashes no glyph", flat._v_glyph is None)
+
+    # rounded: a PIL-Image glyph is stashed and baked into the fill.
+    glyph = Image.new("RGBA", (18, 18), (255, 0, 255, 255))
+    icon = vButton(pane, image=glyph, bg="#eef1f6", radius=8)
+    icon.place(x=120, y=80, width=48, height=48)
+    root.update()
+    check("rounded image= stashes a PIL glyph", icon._v_glyph is not None)
+    check("rounded image= paints a fill image", str(icon.cget("image")) != "")
+
+    # the glyph changes the pixels: same-size/colour button WITHOUT a glyph differs.
+    plain = vButton(pane, bg="#eef1f6", radius=8)
+    plain.place(x=180, y=80, width=48, height=48)
+    root.update()
+    def _center_rgb(w):
+        img = PIL.ImageTk.getimage(w._v_bg_image).convert("RGB")
+        return img.getpixel((img.size[0] // 2, img.size[1] // 2))
+    check("glyph is composited (centre differs from a glyph-less fill)",
+          _center_rgb(icon) != _center_rgb(plain))
+    check("glyph centre is the glyph colour", _center_rgb(icon) == (255, 0, 255))
+
+    # ImageTk.PhotoImage glyph is accepted too (recovered via ImageTk.getimage).
+    photo_glyph = PIL.ImageTk.PhotoImage(Image.new("RGBA", (18, 18), (0, 200, 0, 255)))
+    picon = vButton(pane, image=photo_glyph, bg="#eef1f6", radius=8)
+    picon.place(x=240, y=80, width=48, height=48)
+    root.update()
+    check("PhotoImage glyph accepted", picon._v_glyph is not None)
+
+    # runtime configure(image=) restashes the glyph and repaints on a rounded btn.
+    icon.configure(image=Image.new("RGBA", (18, 18), (0, 0, 255, 255)))
+    root.update()
+    check("runtime configure(image=) recolours the glyph",
+          _center_rgb(icon) == (0, 0, 255))
+
+    for w in (btn, cbtn, chip, dbtn, szbtn, flat, icon, plain, picon, pane):
         w.destroy()
 
 

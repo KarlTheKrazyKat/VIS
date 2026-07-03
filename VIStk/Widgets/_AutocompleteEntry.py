@@ -60,6 +60,8 @@ class AutocompleteEntry(ttk.Entry):
         self._popup: tk.Toplevel | None = None
         self._listbox: tk.Listbox | None = None
         self._suppress_next_show = False
+        self._configure_tag: str | None = None
+        self._configure_top: tk.Misc | None = None
 
         self.var.trace_add("write", lambda *_: self._on_text_change())
         self.bind("<Down>",   self._on_down,   add="+")
@@ -126,7 +128,26 @@ class AutocompleteEntry(ttk.Entry):
         if self._popup is None:
             self._popup = tk.Toplevel(self)
             self._popup.overrideredirect(True)
-            self._popup.attributes("-topmost", True)
+            # Scope the popup to its own window rather than the whole desktop
+            # (a global "-topmost" would float above other applications too).
+            top = self.winfo_toplevel()
+            self._popup.transient(top)
+            self._popup.lift(top)
+            # Keep the popup glued to the entry when its window moves/resizes.
+            # Route the <Configure> handler through a private bindtag so our
+            # cleanup only ever removes our own binding — it can never clobber
+            # another <Configure> handler on the window (and sidesteps the
+            # unbind-by-funcid behaviour that differs across Tk versions).
+            self._configure_top = top
+            self._configure_tag = f"_AutocompletePopup{id(self)}"
+            # Defer to after_idle: a <Configure> on the toplevel fires before
+            # the geometry manager has re-laid-out the entry, so reading the
+            # entry's width synchronously here yields the stale (pre-resize)
+            # value.  Positioning once Tk is idle sees the settled geometry.
+            top.bind_class(self._configure_tag, "<Configure>",
+                           lambda _e: self.after_idle(self._position_popup))
+            if self._configure_tag not in top.bindtags():
+                top.bindtags(top.bindtags() + (self._configure_tag,))
             self._listbox = tk.Listbox(
                 self._popup,
                 height=min(len(matches), self._max_results),
@@ -146,16 +167,32 @@ class AutocompleteEntry(ttk.Entry):
             self._listbox.selection_set(0)
             self._listbox.activate(0)
 
-        # Position just below the entry.
+        self._position_popup()
+
+    def _position_popup(self) -> None:
+        """Place the popup just below the entry, tracking the entry's window."""
+        if self._popup is None or self._listbox is None:
+            return
         try:
             x = self.winfo_rootx()
             y = self.winfo_rooty() + self.winfo_height()
             w = self.winfo_width()
         except tk.TclError:
             return
-        self._popup.geometry(f"{max(w, 120)}x{self._listbox.winfo_reqheight()}+{x}+{y}")
+        self._popup.geometry(
+            f"{max(w, 120)}x{self._listbox.winfo_reqheight()}+{x}+{y}")
 
     def _hide_popup(self) -> None:
+        if self._configure_tag is not None and self._configure_top is not None:
+            try:
+                top = self._configure_top
+                top.bindtags(tuple(t for t in top.bindtags()
+                                   if t != self._configure_tag))
+                top.unbind_class(self._configure_tag, "<Configure>")
+            except tk.TclError:
+                pass
+            self._configure_tag = None
+            self._configure_top = None
         if self._popup is not None:
             try:
                 self._popup.destroy()
