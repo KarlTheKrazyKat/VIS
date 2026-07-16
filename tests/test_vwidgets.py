@@ -78,6 +78,29 @@ def run_vlabel(root, tk):
     check("rounded render survives a clobbering bind('<Configure>')",
           str(clob.cget("image")) != "")
 
+    # A rounded widget composites a caller image= (a "glyph") onto the fill, and
+    # positions it by `anchor` — not forced to centre.
+    from PIL import Image as _PILImage
+    from VIStk.Widgets._vWidget import rounded_pil_image
+
+    def _glyph_left_x(anchor):
+        g = vLabel(pane, radius=12, bg="#dddddd", anchor=anchor)
+        g.place(x=0, y=0, width=200, height=80)
+        root.update()
+        base = rounded_pil_image(200, 80, 12, (221, 221, 221),
+                                 (255, 255, 255)).convert("RGBA")
+        g._composite_glyph(base, _PILImage.new("RGBA", (24, 24), (255, 0, 0, 255)))
+        px = base.load()
+        xs = [x for y in range(0, 80, 2) for x in range(0, 200, 2)
+              if px[x, y][0] > 200 and px[x, y][1] < 60 and px[x, y][2] < 60]
+        g.destroy()
+        return min(xs) if xs else None
+
+    xw, xc, xe = _glyph_left_x("w"), _glyph_left_x("center"), _glyph_left_x("e")
+    check("rounded glyph honours anchor='w' (pinned left)", xw is not None and xw < 20)
+    check("rounded glyph centres by default", xc is not None and 80 < xc < 100)
+    check("rounded glyph honours anchor='e' (pinned right)", xe is not None and xe > 150)
+
     for w in (lbl, lbl_bg, child, pill, clob, pane, host):
         w.destroy()
 

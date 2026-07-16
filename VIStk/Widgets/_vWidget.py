@@ -138,6 +138,17 @@ def _glyph_to_pil(glyph) -> "Image.Image | None":
         return None
 
 
+# Tk ``anchor`` value → (fx, fy) placement fractions (0 = left/top … 1 = right/
+# bottom), used to position a composited glyph within the rounded fill the same
+# way tk's ``anchor`` positions content within a widget.  Matched as whole tokens
+# (not substrings) — note "center" contains the letters n and e.
+_ANCHOR_FRAC = {
+    "center": (0.5, 0.5),
+    "n": (0.5, 0.0), "s": (0.5, 1.0), "e": (1.0, 0.5), "w": (0.0, 0.5),
+    "ne": (1.0, 0.0), "nw": (0.0, 0.0), "se": (1.0, 1.0), "sw": (0.0, 1.0),
+}
+
+
 # ── Native-option doc surfacing ────────────────────────────────────────────────
 # tkinter hides each widget's options behind **kw and only lists them in the
 # widget's __init__ docstring (Label/Button: "STANDARD OPTIONS"; Frame: "Valid
@@ -403,11 +414,17 @@ class vWidget:
         self._paint(img)
 
     def _composite_glyph(self, base: "Image.Image", glyph: "Image.Image") -> None:
-        """Alpha-composite *glyph* centred onto the rounded fill *base* in place.
+        """Alpha-composite *glyph* onto the rounded fill *base* in place, at the
+        position given by the widget's ``anchor`` option.
 
         Both are RGBA PIL images.  The glyph keeps its native size (matching
-        native ``tk`` ``image=`` centring) and is downscaled — preserving aspect
-        ratio — only when it would overflow the widget interior.
+        native ``tk`` ``image=``) and is downscaled — preserving aspect ratio —
+        only when it would overflow the widget interior.  ``anchor`` positions it
+        just like tk positions content within a widget: ``"center"`` (the
+        default) centres it, ``"w"`` pins it to the left edge, ``"ne"`` to the
+        top-right corner, and so on — so callers place the image wherever they
+        want instead of being stuck at centre.  Edge/corner anchors are inset by
+        the corner-clearing margin so the glyph stays off the rounded arc.
         """
         bw, bh = base.size
         gw, gh = glyph.size
@@ -416,7 +433,17 @@ class vWidget:
             scale = min(max_w / gw, max_h / gh)
             gw, gh = max(1, int(gw * scale)), max(1, int(gh * scale))
             glyph = glyph.resize((gw, gh), Resampling.LANCZOS)
-        base.alpha_composite(glyph, ((bw - gw) // 2, (bh - gh) // 2))
+
+        try:
+            anchor = str(self.cget("anchor")) or "center"
+        except Exception:
+            anchor = "center"
+        fx, fy = _ANCHOR_FRAC.get(anchor, (0.5, 0.5))
+        # Inset edge/corner anchors off the rounded corner arc (the vFrame margin).
+        pad = max(0, round(self._v_radius * (1 - 2 ** -0.5)))
+        x = min(max(0, round((bw - gw - 2 * pad) * fx) + pad), bw - gw)
+        y = min(max(0, round((bh - gh - 2 * pad) * fy) + pad), bh - gh)
+        base.alpha_composite(glyph, (x, y))
 
     def _prepare_rounded(self) -> None:
         """Configure *self* to show a centred background image.
