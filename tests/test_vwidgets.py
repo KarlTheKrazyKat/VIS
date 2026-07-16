@@ -55,19 +55,25 @@ def run_vlabel(root, tk):
     # radius=0 → plain Label, no image painted.
     check("radius=0 sets no image", lbl.cget("image") in ("", ()))
 
-    # radius>0 → rounded image painted once the widget has real geometry.
+    # radius>0 → rounded via overlay tiles; the widget's OWN image slot stays
+    # free (native content), and the fill lives on four corner tiles.
     pill = vLabel(pane, text="PILL", bg="#2f78d3", fg="white", radius=12)
     pill.place(x=10, y=80, width=120, height=40)
     root.update()
-    check("radius>0 paints a background image", str(pill.cget("image")) != "")
+    check("rounded label keeps its own image slot free (native)",
+          pill.cget("image") in ("", ()))
+    check("rounded label builds four corner tiles",
+          len(getattr(pill, "_v_tiles", {})) == 4)
+    check("corner tiles are painted",
+          all(str(t.cget("image")) != "" for t in pill._v_tiles.values()))
     check("rounded label keeps its text", pill.cget("text") == "PILL")
 
-    # runtime recolor repaints the rounded fill
-    img_before = str(pill.cget("image"))
+    # runtime recolor repaints the corner tiles
+    tl_before = str(pill._v_tiles["tl"].cget("image"))
     pill.configure(bg="#d23f3f")
     root.update()
-    check("configure(bg=) repaints the rounded fill",
-          str(pill.cget("image")) != img_before)
+    check("configure(bg=) repaints the corner tiles",
+          str(pill._v_tiles["tl"].cget("image")) != tl_before)
 
     # a caller's bind("<Configure>") WITHOUT add="+" (e.g. fUtil.autosize) must
     # not stop the rounded render — it lives on a dedicated bindtag.
@@ -76,32 +82,23 @@ def run_vlabel(root, tk):
     clob.place(x=140, y=80, width=110, height=36)
     root.update()
     check("rounded render survives a clobbering bind('<Configure>')",
-          str(clob.cget("image")) != "")
+          len(getattr(clob, "_v_tiles", {})) == 4
+          and str(clob._v_tiles["br"].cget("image")) != "")
 
-    # A rounded widget composites a caller image= (a "glyph") onto the fill, and
-    # positions it by `anchor` — not forced to centre.
+    # A rounded leaf keeps NATIVE image + compound (icon beside text, no overlap).
     from PIL import Image as _PILImage
-    from VIStk.Widgets._vWidget import rounded_pil_image
+    import PIL.ImageTk as _ImageTk
+    _icon = _ImageTk.PhotoImage(_PILImage.new("RGBA", (16, 16), (255, 0, 0, 255)))
+    ico = vLabel(pane, text="Item", image=_icon, compound="left", radius=12,
+                 bg="#dddddd")
+    ico.place(x=10, y=130, width=140, height=36)
+    root.update()
+    check("rounded label keeps the caller's native image=", str(ico.cget("image")) != "")
+    check("rounded label keeps native compound=", str(ico.cget("compound")) == "left")
+    check("native image is NOT the widget's fill (fill is on tiles)",
+          str(ico.cget("image")) != str(ico._v_tiles["tl"].cget("image")))
 
-    def _glyph_left_x(anchor):
-        g = vLabel(pane, radius=12, bg="#dddddd", anchor=anchor)
-        g.place(x=0, y=0, width=200, height=80)
-        root.update()
-        base = rounded_pil_image(200, 80, 12, (221, 221, 221),
-                                 (255, 255, 255)).convert("RGBA")
-        g._composite_glyph(base, _PILImage.new("RGBA", (24, 24), (255, 0, 0, 255)))
-        px = base.load()
-        xs = [x for y in range(0, 80, 2) for x in range(0, 200, 2)
-              if px[x, y][0] > 200 and px[x, y][1] < 60 and px[x, y][2] < 60]
-        g.destroy()
-        return min(xs) if xs else None
-
-    xw, xc, xe = _glyph_left_x("w"), _glyph_left_x("center"), _glyph_left_x("e")
-    check("rounded glyph honours anchor='w' (pinned left)", xw is not None and xw < 20)
-    check("rounded glyph centres by default", xc is not None and 80 < xc < 100)
-    check("rounded glyph honours anchor='e' (pinned right)", xe is not None and xe > 150)
-
-    for w in (lbl, lbl_bg, child, pill, clob, pane, host):
+    for w in (lbl, lbl_bg, child, pill, clob, ico, pane, host):
         w.destroy()
 
 
@@ -127,86 +124,68 @@ def run_vbutton(root, tk):
 
     check("radius=0 sets no image", btn.cget("image") in ("", ()))
 
-    # Rounded button with a hover fill.
+    from PIL import Image
+    import PIL.ImageTk
+
+    # Rounded button: corners are overlay tiles; the image slot stays free.
     chip = vButton(pane, text="Quote", bg="#eef1f6", fg="#2f78d3",
                    radius=8, active_fill="#dbe6f6")
     chip.place(x=10, y=80, width=90, height=34)
     root.update()
-    img_rest = str(chip.cget("image"))
-    check("radius>0 paints a background image", img_rest != "")
+    check("rounded button keeps its image slot free (native)",
+          chip.cget("image") in ("", ()))
+    check("rounded button builds four corner tiles",
+          len(getattr(chip, "_v_tiles", {})) == 4)
     check("hover binding installed", chip.bind("<Enter>") != "")
 
-    chip.event_generate("<Enter>")
+    tl0 = str(chip._v_tiles["tl"].cget("image"))
+    chip._on_enter()                     # deterministic stand-in for <Enter>
     root.update()
-    check("hover repaints with active fill", str(chip.cget("image")) != img_rest)
+    check("hover recolours the button bg to active_fill",
+          chip.cget("background") == "#dbe6f6")
+    check("hover repaints the corner tiles",
+          str(chip._v_tiles["tl"].cget("image")) != tl0)
 
-    # disabled state: greys the fill and gates the command
+    # disabled state: greys the button (and tiles) and gates the command
     dcalls = []
     dbtn = vButton(pane, text="X", bg="#2f78d3", fg="white", radius=8,
                    disabled_fill="#eceef1", command=lambda: dcalls.append(1))
     dbtn.place(x=10, y=140, width=80, height=34)
     root.update()
-    img_on = str(dbtn.cget("image"))
+    rest_bg = dbtn.cget("background")
+    tl0 = str(dbtn._v_tiles["tl"].cget("image"))
     dbtn.configure(state="disabled")
     root.update()
-    check("disable repaints (greyed) fill", str(dbtn.cget("image")) != img_on)
+    check("disable recolours bg to disabled_fill", dbtn.cget("background") == "#eceef1")
+    check("disable repaints corner tiles",
+          str(dbtn._v_tiles["tl"].cget("image")) != tl0)
     dbtn.invoke()
     check("disabled button does not fire command", dcalls == [])
     dbtn.configure(state="normal")
+    root.update()
+    check("re-enable restores the resting bg", dbtn.cget("background") == rest_bg)
     dbtn.invoke()
     check("re-enabled button fires command", dcalls == [1])
 
-    # pixel width/height honoured on a rounded widget (placeholder-image trick)
-    szbtn = vButton(pane, text="Z", bg="#2f78d3", fg="white", radius=8,
-                    width=90, height=40)
-    szbtn.place(x=10, y=180)
-    root.update()
-    check("rounded button honours pixel width/height",
-          abs(szbtn.winfo_width() - 90) <= 2 and abs(szbtn.winfo_height() - 40) <= 2)
-
-    # caller image= composited into the rounded fill (#188) — glyph, not clobber.
-    from PIL import Image
-    import PIL.ImageTk
-
-    # radius=0: image= reaches the native widget untouched (no glyph stashing).
-    flat_icon = PIL.ImageTk.PhotoImage(Image.new("RGBA", (16, 16), (255, 0, 255, 255)))
-    flat = vButton(pane, image=flat_icon, radius=0)
+    # radius=0: image= reaches the native widget untouched, no tiles.
+    icon = PIL.ImageTk.PhotoImage(Image.new("RGBA", (16, 16), (255, 0, 255, 255)))
+    flat = vButton(pane, image=icon, radius=0)
     check("radius=0 passes image= through to native", str(flat.cget("image")) != "")
-    check("radius=0 stashes no glyph", flat._v_glyph is None)
+    check("radius=0 builds no corner tiles", not getattr(flat, "_v_tiles", None))
 
-    # rounded: a PIL-Image glyph is stashed and baked into the fill.
-    glyph = Image.new("RGBA", (18, 18), (255, 0, 255, 255))
-    icon = vButton(pane, image=glyph, bg="#eef1f6", radius=8)
-    icon.place(x=120, y=80, width=48, height=48)
+    # rounded: NATIVE image + compound (icon beside text, no overlap).
+    ib = vButton(pane, text="Save", image=icon, compound="left", bg="#eef1f6",
+                 radius=8, command=lambda: None)
+    ib.place(x=120, y=140, width=120, height=36)
     root.update()
-    check("rounded image= stashes a PIL glyph", icon._v_glyph is not None)
-    check("rounded image= paints a fill image", str(icon.cget("image")) != "")
+    check("rounded button keeps the caller's native image=", str(ib.cget("image")) != "")
+    check("rounded button keeps native compound=", str(ib.cget("compound")) == "left")
+    check("native image is NOT the fill (fill is on tiles)",
+          str(ib.cget("image")) != str(ib._v_tiles["tl"].cget("image")))
+    check("corner tiles forward clicks to the button",
+          ib._v_tiles["tl"].bind("<ButtonRelease-1>") != "")
 
-    # the glyph changes the pixels: same-size/colour button WITHOUT a glyph differs.
-    plain = vButton(pane, bg="#eef1f6", radius=8)
-    plain.place(x=180, y=80, width=48, height=48)
-    root.update()
-    def _center_rgb(w):
-        img = PIL.ImageTk.getimage(w._v_bg_image).convert("RGB")
-        return img.getpixel((img.size[0] // 2, img.size[1] // 2))
-    check("glyph is composited (centre differs from a glyph-less fill)",
-          _center_rgb(icon) != _center_rgb(plain))
-    check("glyph centre is the glyph colour", _center_rgb(icon) == (255, 0, 255))
-
-    # ImageTk.PhotoImage glyph is accepted too (recovered via ImageTk.getimage).
-    photo_glyph = PIL.ImageTk.PhotoImage(Image.new("RGBA", (18, 18), (0, 200, 0, 255)))
-    picon = vButton(pane, image=photo_glyph, bg="#eef1f6", radius=8)
-    picon.place(x=240, y=80, width=48, height=48)
-    root.update()
-    check("PhotoImage glyph accepted", picon._v_glyph is not None)
-
-    # runtime configure(image=) restashes the glyph and repaints on a rounded btn.
-    icon.configure(image=Image.new("RGBA", (18, 18), (0, 0, 255, 255)))
-    root.update()
-    check("runtime configure(image=) recolours the glyph",
-          _center_rgb(icon) == (0, 0, 255))
-
-    for w in (btn, cbtn, chip, dbtn, szbtn, flat, icon, plain, picon, pane):
+    for w in (btn, cbtn, chip, dbtn, flat, ib, pane):
         w.destroy()
 
 

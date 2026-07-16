@@ -1,4 +1,4 @@
-"""vLabel (0.6.2) — a classic ``tk.Label`` that inherits parent traits and
+"""vLabel (0.6.3) — a classic ``tk.Label`` that inherits parent traits and
 optionally renders rounded corners.
 
 A drop-in replacement for :class:`tkinter.Label` (all native options and
@@ -8,13 +8,17 @@ methods work unchanged) that adds two conveniences::
     vLabel(pane, text="Hello").pack()          # bg/fg/font inherited → white
     vLabel(pane, text="Pill", bg="#2f78d3", fg="white",
            radius=11).pack()                   # rounded "pill"
+    vLabel(pane, text="Item", image=icon,      # icon + text laid out natively
+           compound="left", radius=11).pack()
 
 * **Inheritance** — ``background``, ``foreground`` and ``font`` default to the
   parent's values when omitted, so a label dropped into a white frame no
   longer shows the default grey background.  Anything passed explicitly wins.
-* **Rounded corners** — opt in with ``radius`` > 0; the text is drawn centred
-  over an anti-aliased rounded fill (see :class:`vWidget`).  With ``radius=0``
-  (the default) it is an ordinary ``Label``.
+* **Rounded corners** — opt in with ``radius`` > 0; the Label stays an ordinary
+  solid-background Label and the corners are rounded with overlay tiles
+  (:class:`~VIStk.Widgets._vLeaf.RoundedLeaf`), so ``image`` / ``text`` /
+  ``compound`` / ``anchor`` behave exactly as on a native ``Label``.  With
+  ``radius=0`` (the default) it is an ordinary ``Label``.
 """
 
 from __future__ import annotations
@@ -22,6 +26,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from tkinter import Label
 from VIStk.Widgets._vWidget import vWidget
+from VIStk.Widgets._vLeaf import RoundedLeaf
 
 if TYPE_CHECKING:
     try:
@@ -32,8 +37,15 @@ if TYPE_CHECKING:
     from VIStk.Widgets._vtypes import _LabelKw
 
 
-class vLabel(vWidget, Label):
-    """A ``Label`` that inherits ``bg``/``fg``/``font`` and can be rounded."""
+class vLabel(RoundedLeaf, vWidget, Label):
+    """A ``Label`` that inherits ``bg``/``fg``/``font`` and can be rounded.
+
+    Rounded mode leaves the Label an ordinary solid-background Label and rounds
+    the corners with overlay tiles (:class:`~VIStk.Widgets._vLeaf.RoundedLeaf`),
+    so ``image`` / ``text`` / ``compound`` / ``anchor`` all behave exactly as on
+    a native ``tkinter.Label`` — a caller image and text lay out via ``compound``
+    with no overlap.
+    """
 
     _INHERIT = ("background", "foreground", "font")
 

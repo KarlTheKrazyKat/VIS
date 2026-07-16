@@ -116,39 +116,6 @@ def make_rounded_image(width: int, height: int, radius: int,
                           supersample=supersample))
 
 
-def _glyph_to_pil(glyph) -> "Image.Image | None":
-    """Coerce a caller-supplied ``image=`` into an RGBA PIL ``Image``.
-
-    A rounded v-widget owns its single Tk image slot for the fill, so a caller
-    glyph can't be handed to the native widget — it must be composited into the
-    fill (see :meth:`vWidget._composite_glyph`).  That compositing is a PIL
-    operation, so the glyph has to be a PIL image.  Accepts either a PIL
-    :class:`~PIL.Image.Image` directly or a :class:`PIL.ImageTk.PhotoImage`
-    (recovered via :func:`PIL.ImageTk.getimage`).  Returns ``None`` for anything
-    that can't be converted (e.g. a plain ``tk.PhotoImage``), so the caller
-    silently keeps its plain-fill behaviour rather than crashing.
-    """
-    if glyph is None:
-        return None
-    if isinstance(glyph, Image.Image):
-        return glyph.convert("RGBA")
-    try:
-        return PIL.ImageTk.getimage(glyph).convert("RGBA")
-    except Exception:
-        return None
-
-
-# Tk ``anchor`` value → (fx, fy) placement fractions (0 = left/top … 1 = right/
-# bottom), used to position a composited glyph within the rounded fill the same
-# way tk's ``anchor`` positions content within a widget.  Matched as whole tokens
-# (not substrings) — note "center" contains the letters n and e.
-_ANCHOR_FRAC = {
-    "center": (0.5, 0.5),
-    "n": (0.5, 0.0), "s": (0.5, 1.0), "e": (1.0, 0.5), "w": (0.0, 0.5),
-    "ne": (1.0, 0.0), "nw": (0.0, 0.0), "se": (1.0, 1.0), "sw": (0.0, 1.0),
-}
-
-
 # ── Native-option doc surfacing ────────────────────────────────────────────────
 # tkinter hides each widget's options behind **kw and only lists them in the
 # widget's __init__ docstring (Label/Button: "STANDARD OPTIONS"; Frame: "Valid
@@ -246,13 +213,9 @@ class vWidget:
         self._v_corner_bg = corner_bg
         self._v_bg_image = None              # keep a ref so Tk won't GC it
         self._v_last_size = (0, 0)           # debounce identical-size redraws
-        self._v_glyph = None                 # caller image=, composited into fill
 
-        # A rounded widget owns its single Tk image slot for the fill, so a
-        # caller image= can't reach the native widget — stash it (as a PIL image)
-        # to composite onto the fill in _render_rounded instead of discarding it.
-        if self._v_radius > 0 and kwargs.get("image") is not None:
-            self._v_glyph = _glyph_to_pil(kwargs.pop("image"))
+        # Leaves round via overlay tiles and containers via a lowered label, so a
+        # caller image= reaches the native widget untouched (native compound).
 
         # Record which options the caller set explicitly (canonical names) so
         # inheritance / refresh() never clobber them.
@@ -384,7 +347,12 @@ class vWidget:
             return None
 
     def _render_rounded(self, event=None) -> None:
-        """`<Configure>` handler: regenerate the rounded image on size change."""
+        """`<Configure>` handler: regenerate the rounded image on size change.
+
+        This base version paints the fill into the widget's own image slot; the
+        leaf (``RoundedLeaf``) and container (``RoundedContainer``) mixins
+        override it so the slot stays free for native content.
+        """
         w = self.winfo_width()
         h = self.winfo_height()
         if w <= 1 or h <= 1:
@@ -396,106 +364,39 @@ class vWidget:
         fill = self._fill_color() or (255, 255, 255)
         corner = self._resolve_color(self._v_corner) or (240, 240, 240)
         outline = self._resolve_color(self._v_outline)
-        glyph = getattr(self, "_v_glyph", None)
-        if glyph is None:
-            img = make_rounded_image(w, h, self._v_radius, fill, corner,
-                                     outline=outline,
-                                     outline_width=self._v_outline_width)
-        else:
-            # Composite the caller's glyph onto the PIL fill before it becomes a
-            # PhotoImage, so it rides along on every repaint (hover, resize,
-            # state/bg change) — all of which re-run this method.
-            base = rounded_pil_image(w, h, self._v_radius, fill, corner,
-                                     outline=outline,
-                                     outline_width=self._v_outline_width
-                                     ).convert("RGBA")
-            self._composite_glyph(base, glyph)
-            img = PIL.ImageTk.PhotoImage(base.convert("RGB"))
+        img = make_rounded_image(w, h, self._v_radius, fill, corner,
+                                 outline=outline,
+                                 outline_width=self._v_outline_width)
         self._paint(img)
 
-    def _composite_glyph(self, base: "Image.Image", glyph: "Image.Image") -> None:
-        """Alpha-composite *glyph* onto the rounded fill *base* in place, at the
-        position given by the widget's ``anchor`` option.
-
-        Both are RGBA PIL images.  The glyph keeps its native size (matching
-        native ``tk`` ``image=``) and is downscaled — preserving aspect ratio —
-        only when it would overflow the widget interior.  ``anchor`` positions it
-        just like tk positions content within a widget: ``"center"`` (the
-        default) centres it, ``"w"`` pins it to the left edge, ``"ne"`` to the
-        top-right corner, and so on — so callers place the image wherever they
-        want instead of being stuck at centre.  Edge/corner anchors are inset by
-        the corner-clearing margin so the glyph stays off the rounded arc.
-        """
-        bw, bh = base.size
-        gw, gh = glyph.size
-        max_w, max_h = max(1, bw - 4), max(1, bh - 4)
-        if gw > max_w or gh > max_h:
-            scale = min(max_w / gw, max_h / gh)
-            gw, gh = max(1, int(gw * scale)), max(1, int(gh * scale))
-            glyph = glyph.resize((gw, gh), Resampling.LANCZOS)
-
-        try:
-            anchor = str(self.cget("anchor")) or "center"
-        except Exception:
-            anchor = "center"
-        fx, fy = _ANCHOR_FRAC.get(anchor, (0.5, 0.5))
-        # Inset edge/corner anchors off the rounded corner arc (the vFrame margin).
-        pad = max(0, round(self._v_radius * (1 - 2 ** -0.5)))
-        x = min(max(0, round((bw - gw - 2 * pad) * fx) + pad), bw - gw)
-        y = min(max(0, round((bh - gh - 2 * pad) * fy) + pad), bh - gh)
-        base.alpha_composite(glyph, (x, y))
-
     def _prepare_rounded(self) -> None:
-        """Configure *self* to show a centred background image.
+        """Configure *self* to show a centred background image (base fallback).
 
         Borders / highlight / internal padding are zeroed so the painted image
-        exactly covers the widget — this also prevents an image⇄requested-size
-        feedback loop under content-sizing geometry managers.
-
-        A 1×1 transparent placeholder image is installed immediately so that
-        ``width`` / ``height`` are interpreted in **pixels** from the start
-        (Tk reads them as character cells until the widget has an image), letting
-        callers size a rounded widget in pixels without a first-frame flash.
-
-        Subclasses that paint elsewhere (e.g. vFrame) override this.
+        exactly covers the widget.  A 1×1 transparent placeholder is installed so
+        ``width`` / ``height`` read in pixels from the first frame.  The concrete
+        v-widgets override this (leaves via ``RoundedLeaf``, containers via
+        ``RoundedContainer``).
         """
         self._v_bg_image = PhotoImage(master=self, width=1, height=1)
         self.configure(bd=0, highlightthickness=0, padx=0, pady=0,
-                       compound="center")
-        # Set the image slot via the native base, not self.configure — the
-        # latter now intercepts image= as a caller glyph (see configure).
-        super().configure(image=self._v_bg_image)
+                       compound="center", image=self._v_bg_image)
 
     def _paint(self, image: "PIL.ImageTk.PhotoImage") -> None:
         """Composite *image* onto the widget.  Default: set it as our image."""
         self._v_bg_image = image
-        # Bypass self.configure's image= intercept: this IS the fill, not a glyph.
-        super().configure(image=image)
+        self.configure(image=image)
 
     def configure(self, cnf=None, **kw):
         """Native ``configure`` that also repaints when a rounded widget's fill
         changes — so runtime recolouring (``widget.configure(bg=...)``) and, for
-        subclasses, state changes are reflected in the rounded image.
-
-        On a rounded widget a runtime ``image=`` is likewise intercepted: the
-        image slot holds the fill, so the caller glyph is stashed and composited
-        into the fill on the forced repaint instead of replacing it.
-        """
-        glyph_set = False
-        if getattr(self, "_v_radius", 0) > 0:
-            if isinstance(cnf, dict) and "image" in cnf:
-                cnf = dict(cnf)
-                self._v_glyph = _glyph_to_pil(cnf.pop("image"))
-                glyph_set = True
-            if "image" in kw:
-                self._v_glyph = _glyph_to_pil(kw.pop("image"))
-                glyph_set = True
+        subclasses, state changes are reflected in the rounded corners."""
         result = super().configure(cnf, **kw)
         if getattr(self, "_v_radius", 0) > 0:
             keys = set(kw)
             if isinstance(cnf, dict):
                 keys |= set(cnf)
-            if glyph_set or keys.intersection(self._REPAINT_OPTS):
+            if keys.intersection(self._REPAINT_OPTS):
                 self._v_last_size = (0, 0)   # force a redraw at the current size
                 self._render_rounded()
         return result
