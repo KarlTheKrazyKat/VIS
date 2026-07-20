@@ -16,12 +16,14 @@ two conveniences as :class:`~VIStk.Widgets.vLabel`::
 
 * **Inheritance** — ``background``/``foreground``/``font`` default to the
   parent's values when omitted; explicit options win.
-* **Rounded corners** — opt in with ``radius`` > 0.  The button stays an
-  ordinary solid-background ``Button`` (relief flattened, hand cursor) and the
-  corners are rounded with overlay tiles
-  (:class:`~VIStk.Widgets._vLeaf.RoundedLeaf`), so ``image`` / ``text`` /
-  ``compound`` / ``anchor`` behave exactly like a native ``Button`` — an icon
-  and text lay out side by side via ``compound`` with no overlap.  An optional
+* **Rounded corners** — opt in with ``radius`` > 0 (relief flattened, hand
+  cursor; see :class:`~VIStk.Widgets._vLeaf.RoundedLeaf`).  A text-only button
+  paints the rounded fill into its image slot and draws the label over it, so
+  the text is never covered at *any* radius — including a true circle.  Passing
+  your own ``image=`` switches to corner-tile rounding, which leaves the native
+  image slot free so ``image`` / ``compound`` / ``anchor`` behave exactly like a
+  native ``Button`` — an icon and text lay out side by side with no overlap
+  (keep the radius modest in that mode — the tiles are opaque).  An optional
   ``active_fill`` recolours the button on hover (``<Enter>``/``<Leave>``) and
   ``disabled_fill`` greys it when ``state="disabled"`` (gating the click).  At
   ``radius=0`` it is an ordinary ``Button``.

@@ -14,11 +14,14 @@ methods work unchanged) that adds two conveniences::
 * **Inheritance** — ``background``, ``foreground`` and ``font`` default to the
   parent's values when omitted, so a label dropped into a white frame no
   longer shows the default grey background.  Anything passed explicitly wins.
-* **Rounded corners** — opt in with ``radius`` > 0; the Label stays an ordinary
-  solid-background Label and the corners are rounded with overlay tiles
-  (:class:`~VIStk.Widgets._vLeaf.RoundedLeaf`), so ``image`` / ``text`` /
-  ``compound`` / ``anchor`` behave exactly as on a native ``Label``.  With
-  ``radius=0`` (the default) it is an ordinary ``Label``.
+* **Rounded corners** — opt in with ``radius`` > 0 (see
+  :class:`~VIStk.Widgets._vLeaf.RoundedLeaf`).  A text-only label paints the
+  rounded fill into its image slot and draws the text over it, so the text is
+  never covered at *any* radius — including a true circle.  Passing your own
+  ``image=`` switches to corner-tile rounding, which leaves the native image
+  slot free so ``image`` / ``compound`` / ``anchor`` behave exactly as on a
+  native ``Label`` (keep the radius modest in that mode — the tiles are opaque).
+  With ``radius=0`` (the default) it is an ordinary ``Label``.
 """
 
 from __future__ import annotations

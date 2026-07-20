@@ -55,25 +55,33 @@ def run_vlabel(root, tk):
     # radius=0 → plain Label, no image painted.
     check("radius=0 sets no image", lbl.cget("image") in ("", ()))
 
-    # radius>0 → rounded via overlay tiles; the widget's OWN image slot stays
-    # free (native content), and the fill lives on four corner tiles.
+    # radius>0, text-only → FILL mode: the fill is painted into the image slot
+    # and the text draws over it, so nothing can cover the text at any radius.
     pill = vLabel(pane, text="PILL", bg="#2f78d3", fg="white", radius=12)
     pill.place(x=10, y=80, width=120, height=40)
     root.update()
-    check("rounded label keeps its own image slot free (native)",
-          pill.cget("image") in ("", ()))
-    check("rounded label builds four corner tiles",
-          len(getattr(pill, "_v_tiles", {})) == 4)
-    check("corner tiles are painted",
-          all(str(t.cget("image")) != "" for t in pill._v_tiles.values()))
+    check("text-only rounded label uses fill mode", pill._v_tile_mode is False)
+    check("fill mode paints the fill into the image slot",
+          str(pill.cget("image")) != "")
+    check("fill mode adds no overlays (text is never covered)",
+          len(pill._v_tiles) == 0 and len(pill._v_strips) == 0)
     check("rounded label keeps its text", pill.cget("text") == "PILL")
 
-    # runtime recolor repaints the corner tiles
-    tl_before = str(pill._v_tiles["tl"].cget("image"))
+    # runtime recolor repaints the fill
+    img_before = str(pill.cget("image"))
     pill.configure(bg="#d23f3f")
     root.update()
-    check("configure(bg=) repaints the corner tiles",
-          str(pill._v_tiles["tl"].cget("image")) != tl_before)
+    check("configure(bg=) repaints the rounded fill",
+          str(pill.cget("image")) != img_before)
+
+    # a true circle (radius = half the short side) must still show its text —
+    # this is why text-only rounding stays in fill mode.
+    circ = vLabel(pane, text="7", bg="#2f78d3", fg="white", radius=30)
+    circ.place(x=200, y=80, width=60, height=60)
+    root.update()
+    check("circle (radius = half) renders", str(circ.cget("image")) != "")
+    check("circle adds no overlays (text stays visible)",
+          len(circ._v_tiles) == 0 and len(circ._v_strips) == 0)
 
     # a caller's bind("<Configure>") WITHOUT add="+" (e.g. fUtil.autosize) must
     # not stop the rounded render — it lives on a dedicated bindtag.
@@ -82,10 +90,9 @@ def run_vlabel(root, tk):
     clob.place(x=140, y=80, width=110, height=36)
     root.update()
     check("rounded render survives a clobbering bind('<Configure>')",
-          len(getattr(clob, "_v_tiles", {})) == 4
-          and str(clob._v_tiles["br"].cget("image")) != "")
+          str(clob.cget("image")) != "")
 
-    # A rounded leaf keeps NATIVE image + compound (icon beside text, no overlap).
+    # A caller image= switches to TILE mode: native image + compound (no overlap).
     from PIL import Image as _PILImage
     import PIL.ImageTk as _ImageTk
     _icon = _ImageTk.PhotoImage(_PILImage.new("RGBA", (16, 16), (255, 0, 0, 255)))
@@ -93,12 +100,12 @@ def run_vlabel(root, tk):
                  bg="#dddddd")
     ico.place(x=10, y=130, width=140, height=36)
     root.update()
-    check("rounded label keeps the caller's native image=", str(ico.cget("image")) != "")
-    check("rounded label keeps native compound=", str(ico.cget("compound")) == "left")
-    check("native image is NOT the widget's fill (fill is on tiles)",
-          str(ico.cget("image")) != str(ico._v_tiles["tl"].cget("image")))
+    check("caller image= selects tile mode", ico._v_tile_mode is True)
+    check("tile mode keeps the caller's native image=", str(ico.cget("image")) != "")
+    check("tile mode keeps native compound=", str(ico.cget("compound")) == "left")
+    check("tile mode builds four corner tiles", len(ico._v_tiles) == 4)
 
-    for w in (lbl, lbl_bg, child, pill, clob, ico, pane, host):
+    for w in (lbl, lbl_bg, child, pill, circ, clob, ico, pane, host):
         w.destroy()
 
 
@@ -127,38 +134,34 @@ def run_vbutton(root, tk):
     from PIL import Image
     import PIL.ImageTk
 
-    # Rounded button: corners are overlay tiles; the image slot stays free.
+    # Rounded, text-only button → fill mode (nothing overlays the label).
     chip = vButton(pane, text="Quote", bg="#eef1f6", fg="#2f78d3",
                    radius=8, active_fill="#dbe6f6")
     chip.place(x=10, y=80, width=90, height=34)
     root.update()
-    check("rounded button keeps its image slot free (native)",
-          chip.cget("image") in ("", ()))
-    check("rounded button builds four corner tiles",
-          len(getattr(chip, "_v_tiles", {})) == 4)
+    check("text-only rounded button uses fill mode", chip._v_tile_mode is False)
+    check("fill mode paints the fill into the image slot",
+          str(chip.cget("image")) != "")
+    check("fill mode adds no overlays", len(chip._v_tiles) == 0)
     check("hover binding installed", chip.bind("<Enter>") != "")
 
-    tl0 = str(chip._v_tiles["tl"].cget("image"))
+    img0 = str(chip.cget("image"))
     chip._on_enter()                     # deterministic stand-in for <Enter>
     root.update()
     check("hover recolours the button bg to active_fill",
           chip.cget("background") == "#dbe6f6")
-    check("hover repaints the corner tiles",
-          str(chip._v_tiles["tl"].cget("image")) != tl0)
+    check("hover repaints the rounded fill", str(chip.cget("image")) != img0)
 
-    # disabled state: greys the button (and tiles) and gates the command
+    # disabled state: greys the button and gates the command
     dcalls = []
     dbtn = vButton(pane, text="X", bg="#2f78d3", fg="white", radius=8,
                    disabled_fill="#eceef1", command=lambda: dcalls.append(1))
     dbtn.place(x=10, y=140, width=80, height=34)
     root.update()
     rest_bg = dbtn.cget("background")
-    tl0 = str(dbtn._v_tiles["tl"].cget("image"))
     dbtn.configure(state="disabled")
     root.update()
     check("disable recolours bg to disabled_fill", dbtn.cget("background") == "#eceef1")
-    check("disable repaints corner tiles",
-          str(dbtn._v_tiles["tl"].cget("image")) != tl0)
     dbtn.invoke()
     check("disabled button does not fire command", dcalls == [])
     dbtn.configure(state="normal")
@@ -173,15 +176,16 @@ def run_vbutton(root, tk):
     check("radius=0 passes image= through to native", str(flat.cget("image")) != "")
     check("radius=0 builds no corner tiles", not getattr(flat, "_v_tiles", None))
 
-    # rounded: NATIVE image + compound (icon beside text, no overlap).
+    # caller image= → tile mode: NATIVE image + compound (icon beside text).
     ib = vButton(pane, text="Save", image=icon, compound="left", bg="#eef1f6",
-                 radius=8, command=lambda: None)
+                 radius=8, outline="#888", command=lambda: None)
     ib.place(x=120, y=140, width=120, height=36)
     root.update()
-    check("rounded button keeps the caller's native image=", str(ib.cget("image")) != "")
-    check("rounded button keeps native compound=", str(ib.cget("compound")) == "left")
-    check("native image is NOT the fill (fill is on tiles)",
-          str(ib.cget("image")) != str(ib._v_tiles["tl"].cget("image")))
+    check("caller image= selects tile mode", ib._v_tile_mode is True)
+    check("tile mode keeps the caller's native image=", str(ib.cget("image")) != "")
+    check("tile mode keeps native compound=", str(ib.cget("compound")) == "left")
+    check("tile mode builds four corner tiles", len(ib._v_tiles) == 4)
+    check("outline adds edge strips thicker than 0", len(ib._v_strips) == 4)
     check("corner tiles forward clicks to the button",
           ib._v_tiles["tl"].bind("<ButtonRelease-1>") != "")
 
