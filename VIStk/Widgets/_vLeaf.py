@@ -72,7 +72,7 @@ class RoundedLeaf:
             return
         self._v_last_size = (w, h)
 
-        r = min(self._v_radius, w // 2, h // 2)
+        r = self._effective_radius(w, h)
         fill = self._fill_color() or (255, 255, 255)
         corner = self._resolve_color(self._v_corner) or (240, 240, 240)
         outline = self._resolve_color(self._v_outline)

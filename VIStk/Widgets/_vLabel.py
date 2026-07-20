@@ -53,13 +53,20 @@ class vLabel(RoundedLeaf, vWidget, Label):
     _INHERIT = ("background", "foreground", "font")
 
     def __init__(self, master: Misc | None = None, *,
-                 radius: int = 0, outline: str | None = None,
+                 radius: int = 0, radius_style: str = "pixels",
+                 outline: str | None = None,
                  outline_width: int = 1, corner_bg: str | None = None,
                  **kwargs: Unpack[_LabelKw]):
         """
         Args:
             master:        Parent widget.
-            radius:        Corner radius in px; ``0`` (default) → plain Label.
+            radius:        Corner radius; ``0`` (default) → plain Label.  Read as
+                           pixels, or as a percentage per *radius_style*.
+            radius_style:  ``"pixels"`` (default) → *radius* is a pixel radius;
+                           ``"percent"`` → it is a percentage of the maximum
+                           round (half the short side), so ``radius=100`` is a
+                           full pill/circle at any size.  Re-resolved on every
+                           resize.
             outline:       Optional border colour for the rounded fill.
             outline_width: Border width in px (default ``1``; needs *outline*).
             corner_bg:     Corner blend colour (defaults to the parent's bg).
@@ -67,6 +74,7 @@ class vLabel(RoundedLeaf, vWidget, Label):
                            ``bg`` / ``fg`` / ``font`` are inherited from
                            *master* when omitted.
         """
-        super().__init__(master, radius=radius, outline=outline,
+        super().__init__(master, radius=radius, radius_style=radius_style,
+                         outline=outline,
                          outline_width=outline_width, corner_bg=corner_bg,
                          **kwargs)

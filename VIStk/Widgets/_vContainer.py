@@ -70,7 +70,9 @@ class RoundedContainer:
         self._v_inset = inset
         self._v_border_pil = None     # last rendered border image (cropped for marks)
         self._v_eff_ow = 0            # effective outline width actually painted
-        if self._v_radius > 0:
+        # Seed the margin from a pixel radius; a percentage one depends on the
+        # size, which isn't known until the first render sets it properly.
+        if self._v_radius > 0 and self._v_radius_style == "pixels":
             self.Layout.margin = self._inset_for(self._v_radius)
 
     def _skip_child(self, child) -> bool:
@@ -117,16 +119,18 @@ class RoundedContainer:
         outline = self._resolve_color(self._v_outline)
         ow = self._v_outline_width if (self._v_outline and outline) else 0
 
-        pil = rounded_pil_image(w, h, self._v_radius, fill, corner,
+        # Size-aware radius: clamped to the short side, and recomputed here on
+        # every resize so a percentage radius_style tracks the frame.
+        r = self._effective_radius(w, h)
+        pil = rounded_pil_image(w, h, r, fill, corner,
                                 outline=outline, outline_width=ow)
         self._v_border_pil = pil
         self._v_eff_ow = ow
         self._v_bg_image = PIL.ImageTk.PhotoImage(pil)
         self._v_bg_label.configure(image=self._v_bg_image)
 
-        # Keep the inset size-aware: on a small frame the radius (and therefore
-        # the inset that keeps content off it) clamps to the short side.
-        r = min(self._v_radius, w // 2, h // 2)
+        # Keep the inset size-aware too: the inset that keeps content off the
+        # corner arc follows whatever radius was actually drawn.
         self.Layout.margin = self._inset_for(r)
 
         # Re-inset once children have settled at the new size (catches both a
@@ -162,7 +166,7 @@ class RoundedContainer:
         if pil is None:
             return
         w, h = self.winfo_width(), self.winfo_height()
-        r = min(self._v_radius, w // 2, h // 2)
+        r = self._effective_radius(w, h)
         if r <= 0:
             for child in self.winfo_children():
                 self._clear_marks(child)

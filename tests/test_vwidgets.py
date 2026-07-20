@@ -436,6 +436,65 @@ def run_vlabelframe(root, tk):
         w.destroy()
 
 
+def run_radius_style(root, tk):
+    """radius_style="percent" resolves the radius from the live size, re-bound on
+    every <Configure>, so a pill/circle survives resizing."""
+    from VIStk.Widgets import vLabel, vFrame, effective_radius
+
+    print("radius_style:")
+
+    # Pure function first (no Tk needed for the maths).
+    check("percent 100 -> half the short side", effective_radius(100, "percent", 60, 60) == 30)
+    check("percent 100 on a wide box -> half the SHORT side",
+          effective_radius(100, "percent", 200, 40) == 20)
+    check("percent 50 -> a quarter of the short side",
+          effective_radius(50, "percent", 200, 40) == 10)
+    check("percent 0 -> square", effective_radius(0, "percent", 80, 80) == 0)
+    check("pixels passes through", effective_radius(12, "pixels", 200, 80) == 12)
+    check("pixels clamps to half the short side",
+          effective_radius(999, "pixels", 200, 40) == 20)
+    check("unknown style falls back to pixels",
+          effective_radius(7, "bogus", 200, 80) == 7)
+    check("spellings normalise ('%' / 'percentage' / 'px')",
+          effective_radius(100, "%", 60, 60) == 30
+          and effective_radius(100, "percentage", 60, 60) == 30
+          and effective_radius(9, "px", 60, 60) == 9)
+
+    pane = tk.Frame(root, bg="#ffffff")
+    pane.place(x=0, y=0, width=300, height=200)
+
+    # A percent-radius label stays fully round as it is resized.
+    pill = vLabel(pane, text="7", bg="#2f78d3", fg="white",
+                  radius=100, radius_style="percent")
+    pill.place(x=10, y=10, width=60, height=60)
+    root.update()
+    check("percent radius resolves to half the short side (60x60 -> 30)",
+          pill._effective_radius(60, 60) == 30)
+
+    pill.place(width=120, height=40)          # resize → radius must follow
+    root.update()
+    check("percent radius re-resolves on resize (120x40 -> 20)",
+          pill._effective_radius(*(pill.winfo_width(), pill.winfo_height())) == 20)
+    check("percent label still paints its fill (text stays visible)",
+          str(pill.cget("image")) != "" and pill._v_tile_mode is False)
+
+    # Default is unchanged (pixels).
+    px = vLabel(pane, text="px", bg="#2f78d3", radius=12)
+    check("default radius_style is pixels", px._v_radius_style == "pixels")
+    check("pixel radius ignores size", px._effective_radius(200, 80) == 12)
+
+    # Containers honour it too, and the content inset follows the drawn radius.
+    card = vFrame(pane, bg="#ffffff", radius=100, radius_style="percent")
+    card.place(x=150, y=10, width=80, height=80)
+    root.update()
+    check("vFrame percent radius resolves from live size",
+          card._effective_radius(80, 80) == 40)
+    check("vFrame inset follows the resolved radius", card.Layout.margin > 0)
+
+    for w in (pill, px, card, pane):
+        w.destroy()
+
+
 def run_docs():
     """No Tk needed — just verifies native options were composed into the docs."""
     from VIStk.Widgets._vLabel import vLabel
@@ -482,6 +541,7 @@ def main():
         run_vframe(root, tk)
         run_vlabelframe(root, tk)
         run_vimage(root, tk)
+        run_radius_style(root, tk)
     finally:
         try:
             root.destroy()

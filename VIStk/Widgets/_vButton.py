@@ -53,14 +53,21 @@ class vButton(RoundedLeaf, vWidget, Button):
     _REPAINT_OPTS = ("background", "bg", "state")
 
     def __init__(self, master: Misc | None = None, *,
-                 radius: int = 0, outline: str | None = None,
+                 radius: int = 0, radius_style: str = "pixels",
+                 outline: str | None = None,
                  outline_width: int = 1, corner_bg: str | None = None,
                  active_fill: str | None = None,
                  disabled_fill: str = "#e9ecef", **kwargs: Unpack[_ButtonKw]):
         """
         Args:
             master:        Parent widget.
-            radius:        Corner radius in px; ``0`` (default) → plain Button.
+            radius:        Corner radius; ``0`` (default) → plain Button.  Read as
+                           pixels, or as a percentage per *radius_style*.
+            radius_style:  ``"pixels"`` (default) → *radius* is a pixel radius;
+                           ``"percent"`` → it is a percentage of the maximum
+                           round (half the short side), so ``radius=100`` is a
+                           full pill/circle at any size.  Re-resolved on every
+                           resize.
             outline:       Optional border colour for the rounded edge.
             outline_width: Border width in px (default ``1``; needs *outline*).
             corner_bg:     Corner blend colour (defaults to the parent's bg).
@@ -78,7 +85,8 @@ class vButton(RoundedLeaf, vWidget, Button):
         self._v_disabled_fill = disabled_fill
         self._v_hover = False
         self._v_rest_bg = None            # the button's non-hover/non-disabled bg
-        super().__init__(master, radius=radius, outline=outline,
+        super().__init__(master, radius=radius, radius_style=radius_style,
+                         outline=outline,
                          outline_width=outline_width, corner_bg=corner_bg,
                          **kwargs)
         if self._v_radius > 0:

@@ -49,7 +49,7 @@ from PIL import Image, ImageChops, ImageDraw
 from PIL.Image import Resampling
 import PIL.ImageTk
 
-from VIStk.Widgets._vWidget import vWidget
+from VIStk.Widgets._vWidget import vWidget, effective_radius
 from VIStk.Objects._VIMG import VIMG
 
 if TYPE_CHECKING:
@@ -128,7 +128,7 @@ class vImage(vWidget, Label):
                  size: tuple[int, int] | list[int] | None = None,
                  fit: bool | str = True,
                  resample: "Resampling" = Resampling.BICUBIC,
-                 radius: int = 0,
+                 radius: int = 0, radius_style: str = "pixels",
                  outline: str | None = None, outline_width: int = 1,
                  **kwargs: Unpack[_LabelKw]):
         """
@@ -154,7 +154,13 @@ class vImage(vWidget, Label):
                            :attr:`Resampling.BICUBIC`).  Use
                            :attr:`Resampling.NEAREST` for crisp, unblended edges
                            when stretching hard-boundary images.
-            radius:        Corner radius in px; ``0`` (default) → square image.
+            radius:        Corner radius; ``0`` (default) → square image.  Read as
+                           pixels, or as a percentage when *radius_style* says so.
+            radius_style:  ``"pixels"`` (default) → *radius* is a pixel radius;
+                           ``"percent"`` → it is a percentage of the maximum round
+                           (half the short side of the *rendered image*), so
+                           ``radius=100`` is fully rounded — a circle on a square
+                           image — and follows the image as it is re-fitted.
             outline:       Optional border colour stroked on the rounded edge.
             outline_width: Border width in px (default ``1``; needs *outline*).
             **kwargs:      Any native :class:`tkinter.Label` option (see below).
@@ -166,6 +172,7 @@ class vImage(vWidget, Label):
         # (so it stays a plain Label) and handle rounding image-side below.
         kwargs.pop("image", None)
         self._v_img_radius = int(radius or 0)
+        self._v_img_radius_style = radius_style
         self._v_img_outline_width = int(outline_width or 0)
         self._v_size = tuple(size) if size else None
         self._v_fit_mode = self._norm_fit(fit)
@@ -267,7 +274,11 @@ class vImage(vWidget, Label):
             left, top = (nw - bw) // 2, (nh - bh) // 2
             img = img.crop((left, top, left + bw, top + bh))
         if self._v_img_radius > 0:
-            img = round_image(img, self._v_img_radius,
+            # Resolve against the *rendered* image, so a percentage radius tracks
+            # the picture as it is re-fitted (100% → a circle on a square image).
+            img = round_image(img, effective_radius(self._v_img_radius,
+                                                    self._v_img_radius_style,
+                                                    *img.size),
                               outline=self._v_img_outline_rgb,
                               outline_width=self._v_img_outline_width)
         self._v_photo = PIL.ImageTk.PhotoImage(img)

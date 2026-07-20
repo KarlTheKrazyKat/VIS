@@ -116,6 +116,38 @@ def make_rounded_image(width: int, height: int, radius: int,
                           supersample=supersample))
 
 
+#: Accepted ``radius_style`` spellings → canonical form.
+_RADIUS_STYLES = {
+    "pixels": "pixels", "pixel": "pixels", "px": "pixels", "": "pixels",
+    "percent": "percent", "percentage": "percent", "pct": "percent", "%": "percent",
+}
+
+
+def _norm_radius_style(style) -> str:
+    """Normalise a ``radius_style`` to ``"pixels"`` or ``"percent"``.
+
+    Accepts the obvious spellings (``"px"``, ``"percentage"``, ``"%"``, …)
+    case-insensitively; anything unrecognised falls back to ``"pixels"`` so a
+    typo degrades to the default rather than raising mid-render.
+    """
+    return _RADIUS_STYLES.get(str(style or "").strip().lower(), "pixels")
+
+
+def effective_radius(radius: int, style: str, w: int, h: int) -> int:
+    """Resolve *radius* to a pixel radius for a *w*×*h* box.
+
+    ``style="pixels"`` returns *radius* as-is; ``"percent"`` reads it as a
+    percentage of the maximum round — half the short side — so ``100`` is fully
+    rounded (a circle on a square box) and ``50`` is half that.  The result is
+    always clamped to half the short side, so a radius can never exceed what the
+    box can show.  Callers pass the *live* size, so a percentage radius tracks
+    resizes.
+    """
+    limit = max(0, min(w, h) // 2)
+    r = radius * limit / 100.0 if _norm_radius_style(style) == "percent" else radius
+    return max(0, min(int(round(r)), limit))
+
+
 # ── Native-option doc surfacing ────────────────────────────────────────────────
 # tkinter hides each widget's options behind **kw and only lists them in the
 # widget's __init__ docstring (Label/Button: "STANDARD OPTIONS"; Frame: "Valid
@@ -196,18 +228,25 @@ class vWidget:
             pass
 
     def __init__(self, master=None, *,
-                 radius: int = 0, outline: str | None = None,
+                 radius: int = 0, radius_style: str = "pixels",
+                 outline: str | None = None,
                  outline_width: int = 1, corner_bg: str | None = None,
                  **kwargs):
         """Build the native widget with inheritance + optional rounded corners.
 
         ``master`` and any native widget options pass straight through to the
         underlying tk widget; only the rounded kwargs above are intercepted.
+
+        ``radius_style`` selects how ``radius`` is read: ``"pixels"`` (default) is
+        a fixed pixel radius, ``"percent"`` makes it a percentage of the maximum
+        round — ``100`` is fully rounded (half the short side, i.e. a circle on a
+        square widget) — recomputed on every resize.
         """
         # Stash rounded config (set before super().__init__ — safe, these are
         # plain Python attributes on the object, not Tcl options).
         self._v_master = master
         self._v_radius = int(radius or 0)
+        self._v_radius_style = _norm_radius_style(radius_style)
         self._v_outline = outline
         self._v_outline_width = int(outline_width or 0)
         self._v_corner_bg = corner_bg
@@ -346,6 +385,16 @@ class vWidget:
         except Exception:
             return None
 
+    def _effective_radius(self, w: int, h: int) -> int:
+        """This widget's corner radius **in pixels** at the current size.
+
+        Thin wrapper over :func:`effective_radius` using the widget's own
+        ``radius`` / ``radius_style``.  Every render path calls it with the
+        *live* size, so a percentage radius is recomputed on each
+        ``<Configure>`` and stays correct through resizes.
+        """
+        return effective_radius(self._v_radius, self._v_radius_style, w, h)
+
     def _render_rounded(self, event=None) -> None:
         """`<Configure>` handler: regenerate the rounded image on size change.
 
@@ -364,7 +413,7 @@ class vWidget:
         fill = self._fill_color() or (255, 255, 255)
         corner = self._resolve_color(self._v_corner) or (240, 240, 240)
         outline = self._resolve_color(self._v_outline)
-        img = make_rounded_image(w, h, self._v_radius, fill, corner,
+        img = make_rounded_image(w, h, self._effective_radius(w, h), fill, corner,
                                  outline=outline,
                                  outline_width=self._v_outline_width)
         self._paint(img)

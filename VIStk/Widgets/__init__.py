@@ -15,7 +15,8 @@ from VIStk.Widgets._AutocompleteEntry import AutocompleteEntry
 from VIStk.Widgets._DateEntry import DateEntry
 from VIStk.Widgets._ContextMenu import ContextMenu
 from VIStk.Widgets._SettingsWindow import SettingsWindow
-from VIStk.Widgets._vWidget import vWidget, make_rounded_image, rounded_pil_image
+from VIStk.Widgets._vWidget import (vWidget, make_rounded_image,
+                                    rounded_pil_image, effective_radius)
 from VIStk.Widgets._vLabel import vLabel
 from VIStk.Widgets._vButton import vButton
 from VIStk.Widgets._vFrame import vFrame
@@ -45,6 +46,7 @@ __all__ = ["VISMenu",
            "vWidget",
            "make_rounded_image",
            "rounded_pil_image",
+           "effective_radius",
            "vLabel",
            "vButton",
            "vFrame",

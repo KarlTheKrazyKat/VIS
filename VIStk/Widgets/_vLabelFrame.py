@@ -66,14 +66,21 @@ class vLabelFrame(RoundedContainer, vWidget, LabelFrame):
     _TITLE_OPTS = ("text", "fg", "foreground", "font")
 
     def __init__(self, master: Misc | None = None, *,
-                 radius: int = 0, outline: str | None = None,
+                 radius: int = 0, radius_style: str = "pixels",
+                 outline: str | None = None,
                  outline_width: int = 1, corner_bg: str | None = None,
                  inset: int | None = None, **kwargs: Unpack[_LabelFrameKw]):
         """
         Args:
             master:        Parent widget.
-            radius:        Corner radius in px; ``0`` (default) → plain
-                           ``LabelFrame``.
+            radius:        Corner radius; ``0`` (default) → plain
+                           ``LabelFrame``.  Read as pixels, or as a percentage
+                           per *radius_style*.
+            radius_style:  ``"pixels"`` (default) → *radius* is a pixel radius;
+                           ``"percent"`` → it is a percentage of the maximum
+                           round (half the short side), so ``radius=100`` is a
+                           full pill/circle at any size.  Re-resolved on every
+                           resize (the content inset follows it).
             outline:       Border colour for the rounded box (strongly
                            recommended in rounded mode — it draws the group box).
             outline_width: Border width in px (default ``1``; needs *outline*).
@@ -89,7 +96,8 @@ class vLabelFrame(RoundedContainer, vWidget, LabelFrame):
                            when omitted; ``bg`` is the rounded fill colour.
         """
         self._v_title = None        # internal title Label (rounded + text mode)
-        super().__init__(master, radius=radius, outline=outline,
+        super().__init__(master, radius=radius, radius_style=radius_style,
+                         outline=outline,
                          outline_width=outline_width, corner_bg=corner_bg,
                          **kwargs)
         # LabelFrame is not a LayoutFrame, so attach the Layout helper directly
