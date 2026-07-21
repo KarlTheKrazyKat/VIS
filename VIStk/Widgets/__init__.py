@@ -14,7 +14,7 @@ from VIStk.Widgets._CollapsibleFrame import CollapsibleFrame
 from VIStk.Widgets._AutocompleteEntry import AutocompleteEntry
 from VIStk.Widgets._DateEntry import DateEntry
 from VIStk.Widgets._ContextMenu import ContextMenu
-from VIStk.Widgets._SettingsWindow import SettingsWindow
+from VIStk.Widgets._SettingsWindow import SettingsWindow, SettingsTab
 from VIStk.Widgets._vWidget import (vWidget, make_rounded_image,
                                     rounded_pil_image, effective_radius)
 from VIStk.Widgets._vLabel import vLabel
@@ -43,6 +43,7 @@ __all__ = ["VISMenu",
            "DateEntry",
            "ContextMenu",
            "SettingsWindow",
+           "SettingsTab",
            "vWidget",
            "make_rounded_image",
            "rounded_pil_image",

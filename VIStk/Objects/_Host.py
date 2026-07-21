@@ -52,6 +52,17 @@ class Host:
         self.Active: bool = True
         self.Project = Project()
 
+        # Registered settings panels (name -> setup_fn), surfaced as extra
+        # tabs in the Settings surface.  Set up-front — before any of the
+        # single-instance / CLI early-returns below — so an app's Host.py
+        # ``register_settings_panel`` call is safe even on a stub Host that
+        # only forwards a launch to the already-running primary and exits.
+        self._settings_panels: dict = {}
+        # Registered menubar accessories (builder(parent) -> widget), mounted
+        # right-aligned in each window's top tab-bar strip.  Same up-front
+        # reasoning as ``_settings_panels``.
+        self._menubar_accessories: list = []
+
         # When invoked as ``VIS <Project> <ScreenName>`` the screen name is
         # forwarded as ``sys.argv[1]`` (or ``argv[0]`` for a frozen Host
         # exe).  Resolve it (and any trailing CLI args) BEFORE creating any
@@ -178,9 +189,8 @@ class Host:
         self.detached_windows: list = []
         self.default_menu_setup = None
 
-        # 0.6.0 — developer-registered settings panels (name -> setup_fn),
-        # surfaced as extra tabs in the Settings window.
-        self._settings_panels: dict = {}
+        # (``_settings_panels`` is initialised at the top of ``__init__`` so it
+        # exists on every early-return path — see there.)
 
         # FPS tracking
         self.fps: float = 0.0
@@ -1780,32 +1790,96 @@ class Host:
     def register_settings_panel(self, name: str, setup_fn) -> None:
         """Register a custom panel for the built-in Settings window.
 
-        ``setup_fn(parent_frame)`` is called once each time the Settings
-        window opens, with a ``ttk.Frame`` tab body to build into (mirrors a
-        screen's ``setup(parent)``).  The panel is responsible for its own
-        widgets and for reading/writing ``host.Project.Settings`` (call
-        ``.save()`` from within, or rely on its own controls).  ``name`` is
-        the notebook tab label; registering the same name again replaces it.
+        The panel is called each time the Settings surface is built, with a
+        ``ttk.Frame`` tab body to build into (mirrors a screen's
+        ``setup(parent)``).  Two forms are supported:
 
-        Call before entering the update loop (typically in ``.VIS/Host.py``).
+        * ``setup_fn(frame)`` — self-managed: the panel builds its own widgets
+          and reads/writes ``host.Project.Settings`` itself (call ``.save()``
+          from within, or drive its own controls).
+        * ``setup_fn(frame, ui)`` — integrated: *ui* is the settings
+          controller; build fields with ``ui.add_check`` / ``ui.add_int`` /
+          ``ui.add_combo`` and they ride the surface's own Save / Restore
+          Defaults just like the General tab.
+
+        ``name`` is the notebook tab label; registering the same name again
+        replaces it.  Call before entering the update loop (typically in
+        ``.VIS/Host.py``).
         """
         self._settings_panels[name] = setup_fn
 
+    def register_menubar_accessory(self, builder) -> None:
+        """Register a widget to sit at the top-right of the menubar strip.
+
+        The native OS menubar can't host widgets and can't right-align an
+        entry, so accessories live at the trailing (right) edge of each
+        window's top tab-bar row — the first Tk-controlled strip, which reads
+        as the menubar's right side.
+
+        ``builder(parent)`` is called once per window with the accessory
+        container (a ``tk.Frame`` pinned to that corner); build a small widget
+        into it (return value is ignored).  Typical use: a current-user badge,
+        a status pill, a notifications bell.  The widget owns its own refresh
+        (e.g. a ``widget.after`` tick) — the Host does not drive it.
+
+        Call before entering the update loop (typically in ``.VIS/Host.py``).
+        """
+        self._menubar_accessories.append(builder)
+
+    def _mount_menubar_accessories(self, tab_bar) -> None:
+        """Build every registered accessory into *tab_bar*'s right-aligned slot.
+
+        Called by :class:`DetachedWindow` for its primary pane's tab bar.  A
+        vertical tab bar has no accessory slot (returns ``None``) and is
+        skipped; a failing builder is isolated so it can't take down the
+        window.
+        """
+        if not self._menubar_accessories:
+            return
+        slot = getattr(tab_bar, "get_accessory", lambda: None)()
+        if slot is None:
+            return
+        for builder in self._menubar_accessories:
+            try:
+                builder(slot)
+            except Exception:
+                import traceback
+                traceback.print_exc()
+
     def _open_settings(self) -> None:
-        """Open the modal Settings window, centred on the active window.
+        """Open the application Settings as a single-instance tab.
 
         Wired onto every window's HostMenu as the persistent **Settings**
-        entry by :class:`DetachedWindow`.
+        entry by :class:`DetachedWindow`.  Settings lives in the tab strip
+        like a screen: an already-open Settings tab is focused rather than
+        duplicated.  When there is no chromed window to host a tab (nothing
+        but standalone windows, or none at all) it falls back to the legacy
+        modal :class:`SettingsWindow`.
         """
-        from VIStk.Widgets._SettingsWindow import SettingsWindow
-        parent = None
-        tm = self.active_tab_manager
-        dw = getattr(tm, "_detached_window", None) if tm is not None else None
-        if dw is not None:
-            parent = dw.win
-        elif self.detached_windows:
-            parent = self.detached_windows[0].win
-        SettingsWindow(self, parent).show()
+        # Focus an existing Settings tab if one is open anywhere.
+        tm, tab_id = self._find_tab_by_base("Settings")
+        if tm is not None and tab_id is not None:
+            tm.focus_tab(tab_id)
+            dw = self._window_for_tab_manager(tm)
+            if dw is not None:
+                try:
+                    dw.win.deiconify()
+                    dw.win.lift()
+                    dw.win.focus_force()
+                except Exception:
+                    pass
+            return
+
+        target = self._tab_target()
+        if target is None:
+            # No chromed window to host a tab — fall back to the modal window.
+            from VIStk.Widgets._SettingsWindow import SettingsWindow
+            parent = self.detached_windows[0].win if self.detached_windows else None
+            SettingsWindow(self, parent).show()
+            return
+
+        from VIStk.Widgets._SettingsWindow import SettingsTab
+        target.open_tab("Settings", SettingsTab(self), base_name="Settings")
 
     # ── Startup registration (opt-in) ─────────────────────────────────────────
 

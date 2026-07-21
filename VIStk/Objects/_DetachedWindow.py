@@ -74,13 +74,15 @@ class DetachedWindow:
             except Exception:
                 import traceback
                 traceback.print_exc()
-        # Framework-provided persistent Settings entry (0.6.0) — present on
-        # every window's menubar so every app gets it for free.
-        try:
-            self.HostMenu.add_project_command("Settings", host._open_settings)
-        except Exception:
-            import traceback
-            traceback.print_exc()
+        # Framework-provided persistent Settings entry (0.6.0) — opt-in via
+        # project.json  host.settings_menu  (default false).  An app that wants
+        # it sets that flag true; PYWOM and others get no Settings entry.
+        if getattr(host.Project, "host_settings_menu", False):
+            try:
+                self.HostMenu.add_project_command("Settings", host._open_settings)
+            except Exception:
+                import traceback
+                traceback.print_exc()
         self.HostMenu.save_defaults()
 
         # ── Tab content area (SplitView for split panes) ──────────────────────
@@ -106,6 +108,15 @@ class DetachedWindow:
         # Wire TabManager back-references
         self.tab_manager._menubar = self.HostMenu
         self.tab_manager._detached_window = self
+
+        # Mount any app-registered menubar accessories (e.g. a current-user
+        # badge) into the primary pane's tab-bar right corner.  Splits create
+        # fresh panes without accessories, so this stays one-per-window.
+        try:
+            host._mount_menubar_accessories(self.tab_manager.tab_bar)
+        except Exception:
+            import traceback
+            traceback.print_exc()
 
         # Register with Host
         host.registered_tab_managers.append(self.tab_manager)

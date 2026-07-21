@@ -60,6 +60,11 @@ class Project(VINFO):
             self.collect_packages:list[str] = info[self.title]["release_info"].get("collect_packages", [])
             self.host_script: str = info[self.title].get("host", {}).get("script", ".VIS/Host.py")
             """Filename of the Host entry-point script"""
+            self.host_settings_menu: bool = info[self.title].get("host", {}).get("settings_menu", False)
+            """Whether the framework's built-in Settings menu entry is shown on
+            every window's menubar.  Opt-in: absent or false hides it (default).
+            An app that wants it sets ``host.settings_menu`` true in its
+            ``project.json``."""
             self.default_docs: str | None = info[self.title].get("defaults", {}).get("docs")
             """Project-level fallback documentation URL.
 

@@ -121,6 +121,28 @@ class TabBar(Frame):
         self._rebuild_packing(ids)
         self._update_empty_state()
 
+    def get_accessory(self):
+        """Right-aligned container at the trailing edge of a *horizontal* bar.
+
+        Lazily created and packed ``side="right"`` so it stays pinned to the
+        strip's right corner no matter how many tabs are added: tabs pack from
+        the left, and ``_rebuild_packing`` only forgets/repacks widgets tracked
+        in ``self._tabs`` — this frame is not one of them, so it is never
+        disturbed.  Returns ``None`` for vertical (left/right) bars, which have
+        no top-right corner that reads as a menubar accessory slot.
+
+        Host uses this to mount app-registered menubar accessories (e.g. a
+        current-user badge) since the native OS menubar can't host widgets.
+        """
+        if self._is_vertical():
+            return None
+        acc = getattr(self, "_accessory", None)
+        if acc is None or not acc.winfo_exists():
+            acc = Frame(self, bg=_BG_BAR)
+            acc.pack(side="right", fill="y", padx=(0, 6))
+            self._accessory = acc
+        return acc
+
     # ── Public API ─────────────────────────────────────────────────────────────
 
     def open_tab(self, tab_id: int, label: str, icon=None,
