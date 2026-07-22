@@ -64,6 +64,11 @@ class HostMenu:
         self._shared_defaults: dict[str, dict[str, dict]] = {}
         self._hidden_shared: list[tuple[str, int, Menu]] = []
 
+    @property
+    def window(self) -> Tk | Toplevel:
+        """The window this menu bar is attached to."""
+        return self._parent
+
     # ── Public API ─────────────────────────────────────────────────────────────
 
     def attach(self):
@@ -106,7 +111,8 @@ class HostMenu:
         self.menubar.add_cascade(label=label, menu=cascade)
         self._project_labels.append(label)
 
-    def add_project_command(self, label: str, command) -> None:
+    def add_project_command(self, label: str, command, image=None,
+                            compound=None) -> None:
         """Add one leaf command directly to the menubar (project layer).
 
         Unlike :meth:`set_project_items` which adds a cascade (a dropdown),
@@ -118,10 +124,25 @@ class HostMenu:
         command, side by side, in call order.
 
         Args:
-            label:   Top-level label shown on the menubar.
-            command: Zero-arg callable invoked when the user clicks.
+            label:    Top-level label shown on the menubar.
+            command:  Zero-arg callable invoked when the user clicks.
+            image:    Optional ``PhotoImage`` shown with the label.  NOTE: the
+                      menubar is a native OS menu — Tk accepts the option but
+                      whether the image renders on the top-level menubar strip
+                      is platform-dependent (Windows often shows text only).
+                      Keep the caller's reference alive to avoid GC.
+            compound: Icon/text arrangement when *image* is set (default
+                      ``"left"``).
+
+        The entry can be relabelled later with
+        ``host_menu.menubar.entryconfigure(<current label>, label=...,
+        image=...)``.
         """
-        self.menubar.add_command(label=label, command=command)
+        kw = {"label": label, "command": command}
+        if image is not None:
+            kw["image"] = image
+            kw["compound"] = compound or "left"
+        self.menubar.add_command(**kw)
         self._project_labels.append(label)
 
     def clear_project_items(self):

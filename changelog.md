@@ -743,6 +743,153 @@ The License/EULA page, `\r` quiet-mode progress bar, and `metadata.installer_ico
 
 ---
 
+### 0.5.5 Outside Installable Media (OIM)
+
+Lets a project ship non-VIStk installable media (e.g. a COM-registered SolidWorks/.NET add-in) *inside* the same installer, surfaced as an opt-in install choice with a developer-supplied post-extract script.
+
+**Folder convention** (`<project>/OIM/<name>/`, no `project.json` registration — discovered like `commands/`):
+
+- `manifest.json` *(optional)* — `label`, `description`, `default` (default `false`), `required` (default `false`).
+- `media/` — the payload; staged into the install dir, then the script installs it.
+- `icon/<image>` — the checkbox icon shown in the installer.
+- `script/install.py` *(optional)* — run **in-process** in the installer's interpreter after the entry's media is extracted.
+- `script/uninstall.py` *(optional)* — persisted to `runtime/.VIS/oim/<name>/` and run by the Uninstaller on a full uninstall.
+
+**Release pipeline**
+
+- `Release.clean()` copies `OIM/` to the install **root** of the build (`self.final/OIM/`, not `runtime/`) so it rides into `binaries.zip` via `root_dir=self.final` while staying out of the host-selected `runtime/` catch-all. `VINFO.p_oim` added as the canonical path.
+
+**Installer**
+
+- OIM entries are discovered by scanning the appended archive for `OIM/<name>/…` and rendered as `kind:"media"` rows under an **Additional Software** header on the installables page; required entries render checked + disabled, optional default to off. Integrated into the master **All** / tri-state accounting (required entries excluded so *All* can still reach fully-off).
+- Selected media are handled by `_install_oim()` (shared by GUI and `--Quiet`): stage → exec `install.py` → on success persist `uninstall.py` + record in `install_log.json` (`"oim"` array, merged on repair) + delete the staged folder; the empty `OIM/` root is then removed. A failing script logs to `vis_installer.log`, is surfaced in the status line, and **never** rolls back the committed app install.
+- Script execution is **in-process `exec()`** (the frozen installer can't shell out to a system Python, and `sys.executable` is the installer). Scripts receive `INSTALL_ROOT`, `RUNTIME_DIR`, `MEDIA_DIR`, `OIM_NAME`, `APP_TITLE`, and a `log()` callable, inherit the installer's `--uac-admin` elevation, and must be idempotent (re-run on every install/repair).
+- `--Quiet` selects required media always, all media on a bare `--Quiet`, and named media otherwise.
+
+**Uninstaller**
+
+- `run_oim_uninstall()` execs each recorded `uninstall.py` (same in-process model + context) **before** the file sweep, on a full uninstall only — closing the orphaning gap for media that registers state outside the install dir (COM/regasm, GAC, plugin folders).
+
+---
+
+### 0.6.0 Application Settings
+
+Per-project application settings stored in `.VIS/settings.json`, accessed via `Project.Settings`, surfaced through a built-in tabbed Settings window.
+
+**Storage & API** — `VIStk/Structures/_Settings.py`
+
+- `ProjectSettings` — `project.Settings.get(key, default)` / `.set(key, value)` / `.save()`, backed by `.VIS/settings.json` (new `VINFO.p_settings` path; `Project.Settings` attached in `Project.__init__`).
+- `get` resolution order: stored override → explicit `default` arg → framework `DEFAULTS` table → `None`.
+- **Default file materialized** — a full `settings.json` (every key at its default) is generated at `VIS new` scaffolding and on first Host launch (`ProjectSettings.ensure_file()`, idempotent — never clobbers an existing file), so all options are visible and hand-editable. In memory only genuine overrides are tracked (`reset()` / `in` mean "explicitly customised"); `save()` writes the complete resolved set back. A missing or corrupt file falls back to defaults without crashing. All `DEFAULTS` values are immutable (no shared-reference mutation).
+- Also `effective()` (full resolved map, for the UI), `reset(key)`, `__contains__`, and a `dirty` flag — the Host skips the shutdown write when nothing changed.
+- Saved automatically on Host shutdown via both the `quit_host` and last-window-close paths. The shutdown capture commits **only after** every window has closed without veto, so a vetoed quit leaves settings untouched.
+
+**Window & display**
+
+- `window.default_width` / `default_height` / `default_align` (center + 8 compass points) / `min_width` / `min_height` applied to the session's first window.
+- `window.remember_geometry` — capture the primary window's size + position on close, restore it on next launch.
+- `window.fullscreen_on_launch` — open the first window maximized.
+
+**Host & startup**
+
+- `host.start_with_os` — toggles the Windows startup-registry entry (`_register_startup` / `unregister_startup`), reconciled on Save. Disabled (and not persisted over) on non-Windows.
+- `host.remember_tabs` — record the open screens on close and reopen them on next launch. The `max_tabs` limit is bypassed during restore so a remembered session isn't truncated; screens no longer present in the project are dropped silently (no missing-screen banner).
+
+**Appearance**
+
+- `appearance.font_family` / `appearance.font_size` applied at launch to Tk's named fonts (`TkDefaultFont`, `TkTextFont`, `TkMenuFont`, `TkHeadingFont`, `TkFixedFont`), which default and ttk widgets inherit.
+- `appearance.color_scheme` — stored placeholder for the future styles system (no effect yet).
+- Live re-styling of already-open windows is deferred to **0.6.1**.
+
+**Notifications**
+
+- `notifications.enabled` (stored; consumed by the 0.9 Toast widget) and `notifications.duration_ms` — the latter is now the default duration for `InfoRow.show_banner` when a caller omits it.
+
+**Settings UI** — `VIStk/Widgets/_SettingsWindow.py`
+
+- Modal, tabbed (`ttk.Notebook`) window opened from a framework-provided **HostMenu → Settings** entry present on every window. **Save** / **Cancel** / **Restore Defaults**; controls seeded from `effective()`; Save rejects negative / non-numeric numeric input.
+- `host.register_settings_panel(name, setup_fn)` — apps contribute their own tabs; `setup_fn(parent_frame)` builds into the tab body (mirrors a screen's `setup`). A panel that raises shows an inline error rather than a blank tab.
+
+**Scope notes**
+
+- The spec's **tray** items — start-minimized-to-tray and a tray Settings entry — were dropped: the 0.5.3 always-Host refactor removed the system tray, so the Host now lives only as long as its windows. The stale tray documentation has been corrected.
+- Remember-open-tabs is a **screens-only** restore: the open screens reopen as tabs in one window; split-pane layouts and multiple windows are not reconstructed.
+- Window-size settings apply to the session's primary window; drag-detached / popped-out windows keep the default size.
+
+---
+
+### 0.6.2 v-Prefixed Widgets
+
+A family of `v`-prefixed widgets in `VIStk.Widgets` that subclass the **classic** tk widgets (so per-instance `bg`/`fg`/`font` work — ttk can't) and (1) inherit visual properties from their parent by default and (2) optionally render rounded corners. They consolidate the rounded "pill / chip / card" pattern that callers otherwise hand-roll per screen with Canvas polygons. (Issue #187.)
+
+**`vWidget` base** — `VIStk/Widgets/_vWidget.py`
+
+- A pure mixin (subclasses `object`, never `tk.Widget`), combined with a native widget via multiple inheritance: `class vLabel(vWidget, Label)`. `vWidget.__init__` runs first in the MRO — computes inheritance, pops the rounded kwargs — then cooperative `super().__init__()` creates the underlying Tcl widget exactly once. A `vLabel` is genuinely both a `vWidget` and a `tk.Label`.
+- **Parent inheritance** — each subclass sets `_INHERIT` (e.g. `("background","foreground","font")`); any of those the caller omits are filled from the parent at construction. Explicit options always win. Reads classic parents via `cget` and ttk parents via `Style().lookup(winfo_class(), …)` (the "f_steps trick", with a `SystemButtonFace` fallback). Snapshot at construction; `refresh()` re-pulls on demand.
+- **Rounded corners** — opt-in via `radius` (`0` → a plain native widget, no extra machinery). The classic widgets are always rectangular, so the rounded look is built from an anti-aliased PIL rounded-rectangle image (`rounded_pil_image`, 4× supersampled, Lanczos-downscaled) regenerated on `<Configure>`; corners are painted with the parent background so they blend on a solid-colour parent. Colours resolve through `winfo_rgb`, so every Tk colour name works (`greyNN`, hex, `SystemButtonFace`). Optional `outline` / `outline_width` / `corner_bg`. **Two concrete strategies** override the base `_prepare_rounded` / `_render_rounded`: leaf widgets round via `RoundedLeaf` (corner-tile overlays over a solid bg — leaves the native image slot free), and containers via `RoundedContainer` (a lowered background label + child insetting). The base's own `_prepare_rounded`/`_paint` (fill into the image slot) remain only as a generic fallback.
+- **`radius_style` — pixel *or* percentage radii.** `radius` has always been a pixel value, which is the right default but can't express "always fully round" on a widget whose size isn't fixed. Every rounded v-widget (`vLabel`, `vButton`, `vFrame`, `vLabelFrame`, `vImage`) now takes `radius_style`: `"pixels"` (default, unchanged behaviour) or `"percent"`, where `radius` is read as a percentage of the **maximum round** — half the short side — so `radius=100, radius_style="percent"` is a full pill/circle, `50` is half that. Spellings normalise (`"px"`, `"percentage"`, `"%"`, case-insensitive); an unrecognised value degrades to `"pixels"` rather than raising mid-render. The radius is resolved by `effective_radius(radius, style, w, h)` (exported) from the **live** size inside every render path, so it is re-bound on each `<Configure>` and a percentage radius stays correct through resizes — including `vFrame`/`vLabelFrame`, whose content inset (`Layout.margin`) follows the radius actually drawn, and `vImage`, which resolves against the *rendered* image. The result is always clamped to half the short side, so a radius can never exceed what the widget can show (this also replaces the ad-hoc `min(radius, w//2, h//2)` clamps that were duplicated across the render paths).
+- **Runtime recolour** — `configure()`/`config()` repaints the rounded corners live when a paint-affecting option changes (`_REPAINT_OPTS`, default `bg`/`background`; `vButton` adds `state`), so runtime recolouring, hover and disabled states are reflected in the corners. (Leaf widgets size to their native content like a normal Label/Button — no placeholder-image pixel-sizing trick.)
+- **Clobber-proof resize repaint** — the `<Configure>` repaint is installed on a dedicated bindtag (`_RENDER_TAG`) routed through one class-level dispatcher, so a caller's own `widget.bind("<Configure>", fn)` *without* `add="+"` (e.g. wiring up `fUtil.autosize`) no longer silently replaces it and leave the widget rendering square.
+- **Native `image` / `compound` in rounded mode (#188) — `RoundedLeaf`, two modes.** A classic Label/Button has **one** image slot, and the rounded fill and a caller's `image=` both want it — so the leaf mixin (`VIStk/Widgets/_vLeaf.py`) picks the mechanism that can actually satisfy each case:
+  - **Fill mode (default — no caller `image=`).** The fill is painted *into* the image slot with `compound="center"`; the widget's text is its own content and is drawn **over** the fill, so it is never covered. Works at **any** radius — including a true circle (`radius` = half the short side) — and reproduces the `outline` exactly. This is the proven path and covers the vast majority of v-widgets.
+  - **Tile mode (the caller passed `image=`).** The slot is left to the caller's image, so `image` / `compound` / `anchor` behave **exactly like native tkinter** (icon beside/above text, no overlap — previously the fill stole the slot and forced `compound="center"`, drawing text *over* the icon). The corners are rounded by four `r`×`r` **tiles**, each an exact crop of the same `rounded_pil_image`, plus thin **edge strips** carrying the outline along the straight edges. Strip thickness is *measured* from the rendered image (`_border_band`) rather than assumed to be `outline_width`: the outline is supersampled then Lanczos-downscaled so it bleeds wider than `outline_width`, and fixed-`ow` strips clipped it, leaving a broken/vanishing border. Caveat: the tiles are opaque, so at large radii they swallow content (at `radius` = half they cover the whole widget) — large radii / circles therefore need fill mode, i.e. no caller `image=`.
+
+  Hover (`active_fill`) and `disabled_fill` recolour the widget's real `bg` in both modes (the fill / tiles follow on the forced repaint); in tile mode the tiles forward clicks and hover so the rounded corners stay clickable. Removes the old glyph machinery (`_glyph_to_pil` / `_composite_glyph` / the `image=` interception in `configure`). Containers (`vFrame`/`vLabelFrame`) round via `RoundedContainer` (a lowered background label) and are unchanged.
+- `make_rounded_image(...)` is exported for direct use; `vWidget` is exported so callers can build further v-widgets.
+
+**`vLabel`** — `VIStk/Widgets/_vLabel.py`
+
+- `class vLabel(RoundedLeaf, vWidget, Label)` — inherits `bg`/`fg`/`font`. Rounded mode uses `RoundedLeaf`: text-only labels paint the fill in-slot (text drawn over it — any radius, circles included), and a caller `image=` switches to tile mode so `image`/`compound`/`anchor` behave exactly like a native `Label`. Drop-in for `tkinter.Label` at `radius=0`.
+
+**`vButton`** — `VIStk/Widgets/_vButton.py`
+
+- `class vButton(RoundedLeaf, vWidget, Button)` — inherits `bg`/`fg`/`font`; `command`/`invoke()` and all native button options pass through, including native `image`/`compound` (icon beside/above text) when an `image=` is given. Rounded mode flattens the relief (`relief="flat"`, `overrelief="flat"`), shows a hand cursor, and rounds via `RoundedLeaf` (fill in-slot for text-only chips/pills/circles; corner tiles when the caller supplies an image). An optional `active_fill` recolours the button on hover (`<Enter>`/`<Leave>`) and `disabled_fill` + `configure(state="disabled")` greys it, swaps the cursor, and gates the click (native `state` already blocks `invoke`) — in tile mode the corners follow the recolour and forward clicks/hover so they stay live. Drop-in for `tkinter.Button` at `radius=0`.
+
+**`vFrame`** — `VIStk/Widgets/_vFrame.py`
+
+- `class vFrame(RoundedContainer, vWidget, LayoutFrame)` — keeps the `.Layout` helper; inherits `background` only (Frames have no fg/font). The frame's `bg` is the **fill**; rounded mode draws one anti-aliased rounded rectangle (fill + optional `outline`) onto a *lowered* background `Label`. Two layers keep the corners clean:
+  - **Inset every child (all geometry managers).** A Tk child is an opaque rectangle with no per-widget transparency, so a child that reaches a rounded corner squares it off. `vFrame` insets **every** child by `ceil(radius·(1 − 1/√2))` ≈ `0.293·radius` (size-aware as the corner clamps on small frames), regardless of how it was placed: `.Layout.cell`, plain relative `place`, `pack`, or `grid` (the caller's own `padx`/`pady` is preserved via a one-time captured base). The inset is **invisible** when the child shares the frame's `bg` (the fill reads as continuous to the edge — the inherited default). Pass `inset=` (or set `.Layout.margin`) to pull content further in, or `0` for none.
+  - **Sub-pixel corner patch (drawn on the child).** The inset is whole-pixel, so a child's corner can still land a fraction of a pixel proud of the border — its *fill* then shows where the *outline* (or corner background) should be, notching the border. That can't be repainted on the frame (the border is on the lowered image *behind* the child, which covers it at that pixel), so the patch is drawn **on the child**: a ~1px `Label` at the child's own corner, above its content, showing an exact crop of the border image for that spot (outline colour where the outline is, corner-blend colour beyond). It is sized to the *actual* overhang past the fill arc (`r − outline_width`), so it never reaches the child's text, and only the corners a child actually occupies are patched (`_refresh_corner_marks`).
+
+  Drop-in for `LayoutFrame` at `radius=0` (no inset, no painting). Children added at runtime are picked up on the next resize, or immediately via `refresh()`. (Corner blending assumes a solid-colour parent.)
+
+  *History:* an earlier build floated **opaque, radius-sized** corner pieces over content, which covered child text at the corners; it was replaced by insetting all children. This revision adds the tiny per-corner patch back — but minimal (≈1px, sized to the real overhang) and drawn *on the child above its content* rather than as a big overlay — to close the sub-pixel notch that whole-pixel insetting leaves on outlined frames.
+- **`Layout.margin`** (`VIStk/Objects/_Layout.py`) — a uniform pixel inset on a `Layout`: every `cell()` (and `apply()`) shrinks away from the frame edges by `margin`, while inter-cell boundaries stay shared. Layered onto the relative geometry as a fixed pixel offset, so it stays correct on resize. Used by rounded `vFrame` to keep content clear of the corners.
+
+**`RoundedContainer`** — `VIStk/Widgets/_vContainer.py`
+
+- Shared rounded-corner machinery for the v-prefixed *containers* (`vFrame`, `vLabelFrame`), extracted so the two differ only by native base. Provides the lowered fill-image render, the size-aware inset of **every** child across all geometry managers, and the per-child sub-pixel corner patch. A container mixes it in *before* `vWidget` (`class vFrame(RoundedContainer, vWidget, LayoutFrame)`) so its `_prepare_rounded`/`_render_rounded` win the MRO; `_setup_container(inset)` is called from the host `__init__`. `vFrame`'s behaviour is byte-for-byte unchanged by the extraction (verified by the existing tests). A `_skip_child(child)` hook lets a subclass exclude children the machinery must not touch (the lowered background label, and `vLabelFrame`'s title).
+
+**`vLabelFrame`** — `VIStk/Widgets/_vLabelFrame.py`
+
+- `class vLabelFrame(RoundedContainer, vWidget, LabelFrame)` — a drop-in `tk.LabelFrame` (every native option/method works: `text`, `labelanchor`, `labelwidget`, `fg`/`font` for the title, `relief`, `bd`, …) with the v-widget conveniences. Inherits `background`, `foreground` **and** `font` (it has a title); carries a `.Layout` like `vFrame`. At `radius=0` it is an ordinary `LabelFrame`.
+- **Rounded title, the hard part.** A `LabelFrame` lays children out in a *content area* below the title band, so a background image placed there (relative to the content area) misses the top/bottom border — only the side borders show. Rounded `vLabelFrame` instead floats the lowered fill image across the **whole** frame (placed with the measured content-origin offset negated, `relwidth/height` cleared so `place()` doesn't double the size) and keeps the title on top by routing it through a **labelwidget**: an internal `Label` mirroring `text`/`fg`/`font` (created lazily when there's title text), or the caller's own `labelwidget`, lifted above the fill. Tk still positions it per `labelanchor`, so the title breaks the rounded border exactly like a native label. `configure(text=/fg=/foreground=/font=)`, `cget(...)` and `widget["text"]` transparently proxy to that title; `bg` changes keep the title chip on-fill.
+- Children are inset off the rounded corners by the shared machinery (the native title widget is excluded via `_skip_child`). The native rectangular border is flattened (`bd=0`, `relief="flat"`) so the rounded outline is the only chrome — a rounded box almost always wants an `outline`. Registered in `Widgets/__init__.py` and `_vtypes.py` (`_LabelFrameKw`).
+
+**`vImage`** — `VIStk/Widgets/_vImage.py`
+
+- `class vImage(vWidget, Label)` — an **image-only** widget (the mirror of `vLabel`'s "text with an optional image"). Loads through the existing `Objects/_VIMG.py` `VIMG` object, so `Project().p_images` resolution, the glob-prefix fallback and `absolute_path` behave exactly as everywhere else `VIMG` is used; `vImage` owns only the Tk rendering, so a single clobber-proof `<Configure>` handler refits instead of competing with `VIMG`'s own resize bind. Exposes the loaded `VIMG` as `.VIMG`, and `set_path(path, absolute_path=…)` swaps the source and repaints.
+- **Inheritance** — `background` only (an image carries its own pixels; no fg/font). The inherited bg fills the aspect-ratio letterbox bars — and, in rounded mode, the transparent corners — so the image blends on a solid parent.
+- **Fit** — default `fit=True` *contains* the image in the live widget size, re-fitting on resize (the `VIMG` "fill" behaviour). `size=(w, h)` contains it in a fixed pixel box; `fit=False` shows it at natural size. All modes preserve aspect ratio (contain, never distort).
+- **Rounded corners** — opt in with `radius` > 0: an anti-aliased rounded mask (4× supersampled, multiplied into the image's own alpha so source PNG transparency is preserved) makes the corners transparent, so the widget's inherited `bg` shows through and re-blends on a `bg` change with **no** re-render. Optional `outline`/`outline_width` strokes the rounded edge. `round_image(img, radius, outline=…)` is exported for direct use. Drop-in image `Label` at `radius=0`.
+
+**Native-option discoverability** — tkinter hides each widget's options behind `**kw` and only lists them in the `__init__` docstring, so `vButton(...)` gave callers no hint that `command`/`relief`/`anchor`/… are accepted. Both surfaces now expose them:
+
+- **`help()` / REPL / Sphinx** — `vWidget.__init_subclass__` lifts the native option block straight from the tk base's `__init__.__doc__` (Label/Button "STANDARD OPTIONS", Frame "Valid resource names") and appends it to each v-widget's `__init__` doc at class-creation time. Authoritative and always in sync with the installed Tk.
+- **Editor hover/autocomplete** — each `__init__` types `**kwargs: Unpack[_XKw]` (`VIStk/Widgets/_vtypes.py` `TypedDict`s mirroring `<widget>.keys()`), so Pylance/PyCharm list every native option next to the v-widget's own `radius`/`outline`/… params. The `Unpack`/`_vtypes` imports are `TYPE_CHECKING`-only (annotations are strings under `from __future__ import annotations`), so there's zero runtime cost and no new runtime dependency (`typing_extensions` is only needed by a type-checker running on Python < 3.11).
+
+**Packaging** — `pillow` added to `pyproject.toml` dependencies (already used by `Objects/_VIMG.py`, previously undeclared).
+
+### 0.6.3 AutocompleteEntry Popup Scoping & Tracking
+
+Two fixes to `AutocompleteEntry`'s suggestion popup (`VIStk/Widgets/_AutocompleteEntry.py`).
+
+- **Popup scoped to its own window (#189)** — the suggestion popup was a borderless `Toplevel` pinned with `attributes("-topmost", True)`, which is *global to the desktop*: while suggestions showed it floated above **every** application, so any Alt-Tab / notification / focus race left an orphan-looking box over whatever app was now active. It is now `transient(top)` + `lift(top)` to its own toplevel — above its own window (and out of the taskbar) only, never over other applications. `overrideredirect` stays (borderless is right for a dropdown).
+- **Popup tracks window move/resize** — the popup's geometry was computed once in `_show_popup`, so moving or resizing the parent window while suggestions were open left the popup stranded at stale screen coordinates. A `<Configure>` handler on the toplevel now re-runs positioning (extracted into `_position_popup`), keeping the popup glued below the entry and matching its width. Positioning is deferred to `after_idle` because a toplevel `<Configure>` fires *before* the geometry manager re-lays-out the entry — reading the entry width synchronously would use the pre-resize value.
+- **Clobber-proof cleanup** — the `<Configure>` handler is routed through a per-instance private bindtag (`_AutocompletePopup<id>`) rather than a direct `top.bind(...)`, so hiding the popup removes only our own binding and can never clobber another `<Configure>` handler on the window (and sidesteps the Tk `unbind`-by-funcid behaviour that differs across versions). Mirrors the 0.6.2 "clobber-proof resize repaint" approach.
+
+---
+
 ## Planned
 
 ### 0.5.2 Screen Isolation (per-tab namespaces, wrapper `.pyd`s, always-Host)
@@ -828,73 +975,12 @@ A reusable right-click popup menu so screens stop hand-coding the `tkinter.Menu`
 
 ---
 
-### 0.5.5 Outside Installable Media (OIM)
+### 0.6.1 Live Appearance Apply
 
-Lets a project ship non-VIStk installable media (e.g. a COM-registered SolidWorks/.NET add-in) *inside* the same installer, surfaced as an opt-in install choice with a developer-supplied post-extract script.
+Deferred from 0.6.0. Apply appearance settings to **already-open** windows immediately when changed in the Settings window, instead of only on next launch:
 
-**Folder convention** (`<project>/OIM/<name>/`, no `project.json` registration — discovered like `commands/`):
-
-- `manifest.json` *(optional)* — `label`, `description`, `default` (default `false`), `required` (default `false`).
-- `media/` — the payload; staged into the install dir, then the script installs it.
-- `icon/<image>` — the checkbox icon shown in the installer.
-- `script/install.py` *(optional)* — run **in-process** in the installer's interpreter after the entry's media is extracted.
-- `script/uninstall.py` *(optional)* — persisted to `runtime/.VIS/oim/<name>/` and run by the Uninstaller on a full uninstall.
-
-**Release pipeline**
-
-- `Release.clean()` copies `OIM/` to the install **root** of the build (`self.final/OIM/`, not `runtime/`) so it rides into `binaries.zip` via `root_dir=self.final` while staying out of the host-selected `runtime/` catch-all. `VINFO.p_oim` added as the canonical path.
-
-**Installer**
-
-- OIM entries are discovered by scanning the appended archive for `OIM/<name>/…` and rendered as `kind:"media"` rows under an **Additional Software** header on the installables page; required entries render checked + disabled, optional default to off. Integrated into the master **All** / tri-state accounting (required entries excluded so *All* can still reach fully-off).
-- Selected media are handled by `_install_oim()` (shared by GUI and `--Quiet`): stage → exec `install.py` → on success persist `uninstall.py` + record in `install_log.json` (`"oim"` array, merged on repair) + delete the staged folder; the empty `OIM/` root is then removed. A failing script logs to `vis_installer.log`, is surfaced in the status line, and **never** rolls back the committed app install.
-- Script execution is **in-process `exec()`** (the frozen installer can't shell out to a system Python, and `sys.executable` is the installer). Scripts receive `INSTALL_ROOT`, `RUNTIME_DIR`, `MEDIA_DIR`, `OIM_NAME`, `APP_TITLE`, and a `log()` callable, inherit the installer's `--uac-admin` elevation, and must be idempotent (re-run on every install/repair).
-- `--Quiet` selects required media always, all media on a bare `--Quiet`, and named media otherwise.
-
-**Uninstaller**
-
-- `run_oim_uninstall()` execs each recorded `uninstall.py` (same in-process model + context) **before** the file sweep, on a full uninstall only — closing the orphaning gap for media that registers state outside the install dir (COM/regasm, GAC, plugin folders).
-
----
-
-### 0.6.X Application Settings
-
-Settings stored per-project in `.VIS/settings.json`, accessed via `Project.settings`.
-
-**Storage and API**
-
-- `Project.settings.get(key, default)` — read a setting
-- `Project.settings.set(key, value)` — write a setting
-- `Project.settings.save()` — persist to `.VIS/settings.json`; called automatically on Host close
-
-**Window and display**
-
-- Default window size, alignment, and minimum size
-- Remember last window size and position; restore on next open
-- Open fullscreen on launch toggle
-
-**Host and tray**
-
-- Start Host with OS — toggle that enables/disables the startup registry entry
-- Start minimized — Host starts hidden in tray rather than showing the window
-- Remember open tabs — reopen the tabs that were open when the Host last closed
-
-**Appearance**
-
-- Default font family and size
-- Color scheme selection — placeholder for styles system
-
-**Notifications**
-
-- Enable/disable toast notifications globally
-- Toast display duration in milliseconds
-
-**Settings UI**
-
-- Built-in settings panel opens from HostMenu → Settings
-- Settings panel is a tabbed interface — VIStk settings on one tab, developer's custom settings on additional tabs
-- Developer registers a custom settings panel via `host.register_settings_panel(name, setup_fn)`
-- Tray menu includes a Settings entry
+- Re-apply `appearance.font_family` / `appearance.font_size` live (walk the live widget tree / re-configure the named fonts and force a relayout).
+- Wire `appearance.color_scheme` to a real styles layer once the tkinter styles system lands (see 1.0.0) — in 0.6.0 it is a stored placeholder only.
 
 ---
 

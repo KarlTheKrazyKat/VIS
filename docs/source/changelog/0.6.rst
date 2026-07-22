@@ -1,50 +1,85 @@
-0.6 --- Application Settings
-============================
+0.6.0 --- Application Settings
+==============================
 
-*Upcoming*
+*Released.*
 
-Settings stored per-project in ``.VIS/settings.json``, accessed via ``Project.settings``.
+Per-project application settings stored in ``.VIS/settings.json``, accessed via
+``Project.Settings``, surfaced through a built-in tabbed Settings window.
 
-Storage and API
----------------
-
-- ``Project.settings.get(key, default)`` --- read a setting
-- ``Project.settings.set(key, value)`` --- write a setting
-- ``Project.settings.save()`` --- persist to ``.VIS/settings.json``; called automatically
-  on Host close
-
-Window and Display
-------------------
-
-- Default window size, alignment, and minimum size
-- Remember last window size and position; restore on next open
-- Open fullscreen on launch toggle
-
-Host and Tray
+Storage & API
 -------------
 
-- Start Host with OS --- toggle that enables/disables the startup registry entry
-- Start minimized --- Host starts hidden in tray rather than showing the window
-- Remember open tabs --- reopen the tabs that were open when the Host last closed
+- ``ProjectSettings`` (``VIStk/Structures/_Settings.py``) ---
+  ``project.Settings.get(key, default)`` / ``.set(key, value)`` / ``.save()``,
+  backed by ``.VIS/settings.json`` (new ``VINFO.p_settings`` path).
+- ``get`` resolution order: stored override → explicit ``default`` argument →
+  framework ``DEFAULTS`` table → ``None``.
+- A full default ``settings.json`` is generated at ``VIS new`` and on first
+  Host launch (``ProjectSettings.ensure_file()``, idempotent) so all options
+  are visible/editable; in memory only genuine overrides are tracked and
+  ``save()`` writes the complete resolved set back. A missing or corrupt file
+  falls back to defaults without crashing.
+- ``effective()`` (full resolved map, for the UI), ``reset(key)``,
+  ``__contains__``, and a ``dirty`` flag --- the Host skips the shutdown write
+  when nothing changed.
+- Saved automatically on Host shutdown. The capture commits **only after** every
+  window has closed without veto, so a vetoed quit leaves settings untouched.
+
+Window & display
+----------------
+
+- ``window.default_width`` / ``default_height`` / ``default_align`` (center +
+  8 compass points) / ``min_width`` / ``min_height`` applied to the session's
+  first window.
+- ``window.remember_geometry`` --- restore the primary window's last size and
+  position.
+- ``window.fullscreen_on_launch`` --- open the first window maximized.
+
+Host & startup
+--------------
+
+- ``host.start_with_os`` --- toggles the Windows startup-registry entry
+  (``_register_startup`` / ``unregister_startup``), reconciled on Save; disabled
+  and not persisted over on non-Windows.
+- ``host.remember_tabs`` --- reopen the previous session's screens as tabs. The
+  ``max_tabs`` limit is bypassed during restore so a remembered session isn't
+  truncated; screens no longer in the project are dropped silently.
 
 Appearance
 ----------
 
-- Default font family and size
-- Color scheme selection --- placeholder for the styles system
+- ``appearance.font_family`` / ``font_size`` applied at launch to Tk's named
+  fonts (``TkDefaultFont`` etc.), which default and ttk widgets inherit.
+- ``appearance.color_scheme`` --- stored placeholder for the styles system (no
+  effect yet).
+- Live re-styling of already-open windows is deferred to 0.6.1.
 
 Notifications
 -------------
 
-- Enable/disable toast notifications globally
-- Toast display duration in milliseconds
+- ``notifications.enabled`` (stored; consumed by the 0.9 Toast widget) and
+  ``notifications.duration_ms`` --- now the default ``InfoRow.show_banner``
+  duration when a caller omits it.
 
 Settings UI
-------------
+-----------
 
-- Built-in settings panel opens from HostMenu > Settings
-- Tabbed interface --- VIStk settings on one tab, developer's custom settings on
-  additional tabs
-- Developer registers a custom settings panel via
-  ``host.register_settings_panel(name, setup_fn)``
-- Tray menu includes a Settings entry
+- Modal, tabbed (``ttk.Notebook``) window opened from a framework-provided
+  **HostMenu > Settings** entry present on every window. Save / Cancel / Restore
+  Defaults; controls seeded from ``effective()``; Save writes overrides-only and
+  rejects negative / non-numeric numeric input.
+- ``host.register_settings_panel(name, setup_fn)`` --- apps contribute their own
+  tabs; ``setup_fn(parent_frame)`` builds into the tab body (mirrors a screen's
+  ``setup``). A panel that raises shows an inline error rather than a blank tab.
+
+Scope notes
+-----------
+
+- The spec's **tray** items (start-minimized-to-tray, a tray Settings entry)
+  were dropped: the 0.5.3 always-Host refactor removed the system tray, so the
+  Host now lives only as long as its windows.
+- Remember-open-tabs is a **screens-only** restore: the open screens reopen as
+  tabs in one window; split-pane layouts and multiple windows are not
+  reconstructed.
+- Window-size settings apply to the session's primary window; drag-detached /
+  popped-out windows keep the default size.

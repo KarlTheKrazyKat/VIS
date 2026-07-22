@@ -1,8 +1,8 @@
-from tkinter import ttk
 from tkinter import *
 import sys
+from VIStk.Widgets._vFrame import LayoutFrame
 
-class ScrollableFrame(ttk.Frame):
+class ScrollableFrame(Frame):
     _active = None  # class-level: which instance currently owns the scroll
     _is_linux = sys.platform == "linux"
     _bound = False  # class-level: whether the global scroll binding exists
@@ -24,11 +24,11 @@ class ScrollableFrame(ttk.Frame):
         self._scroll_remaining = 0.0  # pixels still to travel (signed)
         self._scroll_anim = None      # pending after() id, or None when idle
         self._scrollregion_job = None # pending scrollregion recompute, or None
-        self.scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
-        """The `ttk.Scrollbar`"""
-        self.scrollable_frame = Frame(self.canvas)
+        self.scrollbar = Scrollbar(self, orient="vertical", command=self.canvas.yview)
+        """The `Scrollbar`"""
+        self.scrollable_frame = LayoutFrame(self.canvas)
         self.scrollable_frame.columnconfigure(0,weight=1)
-        """The `ttk.Frame` to Scroll"""
+        """The `Frame` to Scroll"""
 
         self.sfid = self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
         """The Object ID of the Window Drawn to the Canvas"""

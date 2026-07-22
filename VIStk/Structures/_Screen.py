@@ -313,15 +313,19 @@ class Screen(VINFO):
         If a Host is running in-process, routes through it.  Otherwise
         spawns a Host subprocess with this screen name as the first arg.
         In a compiled (frozen) app, subprocess spawning is skipped.
+
+        ``*args`` are CLI-style tokens (e.g. ``"--won", "21930"``) forwarded
+        to the screen's ``ArgHandler``; the Host parses trailing argv tokens
+        for the subprocess path the same way.
         """
         from VIStk.Objects._Host import _HOST_INSTANCE
         if _HOST_INSTANCE is not None:
-            _HOST_INSTANCE.open(self.name)
+            _HOST_INSTANCE.open(self.name, list(args) or None)
             return
         if is_compiled():
             return  # compiled exe is the Host; can't spawn another
         host_path = str(Path(getPath()) / ".VIS" / "Host.py")
-        subprocess.Popen([sys.executable, host_path, self.name])
+        subprocess.Popen([sys.executable, host_path, self.name, *args])
 
     def close(self) -> bool:
         """Ask the Host to close this screen's tab.

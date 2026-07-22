@@ -31,6 +31,10 @@ class InfoRow(Frame):
         kwargs.setdefault("bg", _BG)
         super().__init__(parent, **kwargs)
 
+        self.project = project
+        """The owning ``Project`` — used by :meth:`show_banner` to read the
+        ``notifications.*`` application settings."""
+
         # ── Copyright normalisation ────────────────────────────────────────────
         raw = (project.copyright or "").strip()
         if "©" not in raw:
@@ -107,7 +111,7 @@ class InfoRow(Frame):
         """Update the FPS counter."""
         self._fps_lbl.config(text=f"{fps:.1f} fps")
 
-    def show_banner(self, text: str, duration_ms: int = 5000,
+    def show_banner(self, text: str, duration_ms: int | None = None,
                     level: str = "warn") -> None:
         """Show a transient inline message across the InfoRow.
 
@@ -119,9 +123,15 @@ class InfoRow(Frame):
         ``level`` selects the background colour: ``"warn"`` (amber),
         ``"error"`` (red), or ``"info"`` (blue).
 
+        ``duration_ms`` defaults to the project's
+        ``notifications.duration_ms`` application setting (5000 ms out of the
+        box) when ``None``; pass an explicit value to override per-call.
+
         Calling this while a banner is already visible replaces the text
         and resets the auto-dismiss timer rather than stacking.
         """
+        if duration_ms is None:
+            duration_ms = self._notification_duration()
         bg = _BANNER_BG.get(level, _BANNER_BG["warn"])
         if self._banner_frame is not None:
             self._banner_text_lbl.config(text=text)
@@ -159,3 +169,14 @@ class InfoRow(Frame):
         self._banner_frame = None
         self._banner_text_lbl = None
         self._banner_after_id = None
+
+    def _notification_duration(self) -> int:
+        """Default banner duration (ms) from the ``notifications.duration_ms``
+        application setting, falling back to 5000 if unset/invalid."""
+        try:
+            val = int(self.project.Settings.get("notifications.duration_ms"))
+            if val > 0:
+                return val
+        except Exception:
+            pass
+        return 5000

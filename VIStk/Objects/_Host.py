@@ -52,6 +52,17 @@ class Host:
         self.Active: bool = True
         self.Project = Project()
 
+        # Registered settings panels (name -> setup_fn), surfaced as extra
+        # tabs in the Settings surface.  Set up-front — before any of the
+        # single-instance / CLI early-returns below — so an app's Host.py
+        # ``register_settings_panel`` call is safe even on a stub Host that
+        # only forwards a launch to the already-running primary and exits.
+        self._settings_panels: dict = {}
+        # Registered menubar accessories (builder(parent) -> widget), mounted
+        # right-aligned in each window's top tab-bar strip.  Same up-front
+        # reasoning as ``_settings_panels``.
+        self._menubar_accessories: list = []
+
         # When invoked as ``VIS <Project> <ScreenName>`` the screen name is
         # forwarded as ``sys.argv[1]`` (or ``argv[0]`` for a frozen Host
         # exe).  Resolve it (and any trailing CLI args) BEFORE creating any
@@ -163,10 +174,23 @@ class Host:
         # Set the hidden root title (shows in taskbar if accidentally mapped)
         self.root.title(self.Project.title)
 
+        # Materialise the default settings file on first run so every
+        # available setting is visible/editable (idempotent; never clobbers
+        # an existing file or user edits).
+        self.Project.Settings.ensure_file()
+
+        # Apply saved appearance (default font) to Tk's named fonts so all
+        # default + ttk widgets inherit it.  Applied once at launch; live
+        # restyling of open windows is deferred (see 0.6.1 changelog).
+        self._apply_appearance()
+
         self.registered_tab_managers: list = []
         self.active_tab_manager = None
         self.detached_windows: list = []
         self.default_menu_setup = None
+
+        # (``_settings_panels`` is initialised at the top of ``__init__`` so it
+        # exists on every early-return path — see there.)
 
         # FPS tracking
         self.fps: float = 0.0
@@ -186,6 +210,20 @@ class Host:
         # again -- but is NOT killed during startup before its first window
         # has been created.
         self._ever_had_window = False
+
+        # 0.6.0 application-settings shutdown bookkeeping.
+        self._shutting_down: bool = False
+        """True while ``quit_host`` tears windows down.  The all-windows
+        session snapshot is taken up-front there, so per-window
+        ``DetachedWindow._on_close`` must not re-capture a single-window
+        subset over it."""
+        self._primary_window = None
+        """The session's first ``DetachedWindow`` — source for the remembered
+        ``window.last_geometry``."""
+        self._restoring: bool = False
+        """True while ``_open_startup`` reopens a remembered session, so the
+        ``max_tabs`` limit doesn't truncate a session the user already had
+        open (the limit is re-enforced on the next user-initiated open)."""
 
         _HOST_INSTANCE = self
 
@@ -1311,10 +1349,25 @@ class Host:
     def _active_detached_window(self):
         """Return the DetachedWindow that owns ``active_tab_manager``, or
         the first open window as fallback."""
-        for dw in self.detached_windows:
-            if self.active_tab_manager in dw.tab_managers:
-                return dw
+        owner = self._window_for_tab_manager(self.active_tab_manager)
+        if owner is not None:
+            return owner
         return self.detached_windows[0] if self.detached_windows else None
+
+    def _window_for_tab_manager(self, tm):
+        """Return the DetachedWindow that owns *tm*, or ``None``.
+
+        Walks each window's live SplitView tree rather than the seeded
+        ``dw.tab_managers`` list (which isn't maintained across splits),
+        so a pane created by ``SplitView.split`` still resolves to its
+        window.
+        """
+        if tm is None:
+            return None
+        for dw in self.detached_windows:
+            if tm in dw._split_view.all_tab_managers():
+                return dw
+        return None
 
     # ── Tabs ───────────────────────────────────────────────────────────────────
 
@@ -1375,20 +1428,21 @@ class Host:
             if tm is not None and tab_id is not None:
                 tm.focus_tab(tab_id)
                 # Raise the DetachedWindow that owns the target pane
-                for dw in self.detached_windows:
-                    if tm in dw.tab_managers:
-                        try:
-                            dw.win.deiconify()
-                            dw.win.lift()
-                            dw.win.focus_force()
-                        except Exception:
-                            pass
-                        break
+                dw = self._window_for_tab_manager(tm)
+                if dw is not None:
+                    try:
+                        dw.win.deiconify()
+                        dw.win.lift()
+                        dw.win.focus_force()
+                    except Exception:
+                        pass
                 return
 
-        # Enforce max_tabs limit
+        # Enforce max_tabs limit — but not while restoring a remembered
+        # session (the user already had these tabs open; don't truncate them
+        # with mid-restore dialogs).  The limit applies to user-opened tabs.
         max_t = getattr(self.Project, "max_tabs", None)
-        if max_t is not None:
+        if max_t is not None and not self._restoring:
             from tkinter import messagebox
             total = sum(len(tm._tabs) for tm in self.registered_tab_managers)
             if total >= max_t:
@@ -1402,17 +1456,37 @@ class Host:
         display = self._unique_display_name(scr.name)
         icon = self._load_tab_icon(scr)
 
-        # Open in the active TabManager, or the first window's primary pane
-        target = self.active_tab_manager
-        if target is None and self.detached_windows:
-            target = self.detached_windows[0].tab_manager
+        # Pick a chromed window to host the tab.  A tabbed screen must never
+        # land in a chromeless standalone window (its tab bar is hidden and
+        # its SplitView is locked) — that's how navigating out of a
+        # standalone screen, e.g. FloorView -> WorderEditor, used to leave
+        # the new screen tab-less and headerless.
+        target = self._tab_target()
         if target is None:
-            # No window exists yet — create one; it opens the tab itself.
+            # No chromed window exists yet — create one; it opens the tab.
             from VIStk.Objects._DetachedWindow import DetachedWindow
             dw = DetachedWindow(self, scr, args=args)
             return
 
         target.open_screen(scr, display, icon=icon, args=args)
+
+    def _tab_target(self):
+        """Return a TabManager in a chromed window to open a new tab into.
+
+        Prefers the active pane when its owning window has chrome; otherwise
+        the first non-chromeless window's focused pane.  Returns ``None``
+        when every open window is chromeless (or none exist), so the caller
+        spins up a fresh chromed DetachedWindow instead of stuffing a tabbed
+        screen into a standalone window.
+        """
+        active = self.active_tab_manager
+        owner = self._window_for_tab_manager(active)
+        if active is not None and owner is not None and not owner.chromeless:
+            return active
+        for dw in self.detached_windows:
+            if not dw.chromeless:
+                return dw.tab_manager
+        return None
 
     def _open_standalone(self, scr, args: list | None = None):
         """Open a standalone (tabbed=False) screen as a new DetachedWindow.
@@ -1499,18 +1573,44 @@ class Host:
         """
         if not self._opened_default:
             self._opened_default = True
-            startup = self._startup_screen or self.Project.default_screen
-            if startup:
-                # Forward CLI args only when the startup screen is the one
-                # named on the command line — not when falling back to the
-                # project default (the args weren't meant for it).
-                startup_args = (self._startup_args
-                                if startup == self._startup_screen else None)
-                self.open(startup, startup_args)
+            self._open_startup()
         self._drain_ipc_queue()
         self._tick_screens()
         self.root.update()
         self._quit_if_no_windows()
+
+    def _open_startup(self) -> None:
+        """Open the initial screen(s) on the Host's first update tick.
+
+        Priority:
+
+          1. An explicit ``<Project> <Screen>`` named on the command line —
+             opened with its forwarded args.  A deliberate launch target wins,
+             so session restore is skipped.
+          2. ``host.remember_tabs`` + a saved ``host.last_tabs`` from the
+             previous session — each still-installed screen reopened as a tab
+             in launch order.  Screens no longer in the project are dropped
+             silently (no missing-screen banner on restore).
+          3. ``Project.default_screen``.
+        """
+        if self._startup_screen:
+            self.open(self._startup_screen, self._startup_args)
+            return
+
+        if self.Project.Settings.get("host.remember_tabs"):
+            last = self.Project.Settings.get("host.last_tabs") or []
+            restorable = [b for b in last if self.Project.getScreen(b) is not None]
+            if restorable:
+                self._restoring = True
+                try:
+                    for base in restorable:
+                        self.open(base)
+                finally:
+                    self._restoring = False
+                return
+
+        if self.Project.default_screen:
+            self.open(self.Project.default_screen)
 
     def _quit_if_no_windows(self):
         """Shut the Host down once the last window has closed.
@@ -1529,6 +1629,9 @@ class Host:
             return
         if not self._ever_had_window:
             return
+        # Last window closed by the user: flush settings (the session was
+        # persisted in that window's _on_close) before the root is gone.
+        self._save_settings()
         self.Active = False
         self._close_lock()
         try:
@@ -1543,18 +1646,240 @@ class Host:
         window vetoes (e.g. unsaved changes), the shutdown stops and the
         Host stays alive.
         """
+        # Capture the session across ALL windows while they're still open,
+        # but DON'T write it into settings yet — a vetoed close must leave
+        # settings untouched.  _shutting_down suppresses the per-window
+        # capture in _on_close so it can't double-write a single-window
+        # subset over this full snapshot.
+        self._shutting_down = True
+        captured = self._capture_session()
+
         for dw in list(self.detached_windows):
             dw._on_close()
             if dw in self.detached_windows:
-                # Window vetoed — abort shutdown
+                # Window vetoed — abort shutdown; nothing was committed.
+                self._shutting_down = False
                 return
 
+        self._commit_session(captured)
+        self._save_settings()
         self.Active = False
         self._close_lock()
         try:
             self.root.destroy()
         except Exception:
             pass
+
+    # ── Application settings: session persistence (0.6.0) ──────────────────────
+
+    def _snapshot_open_tabs(self) -> list[str]:
+        """Ordered ``base_name`` of every open tab across all windows/panes."""
+        out: list[str] = []
+        for dw in self.detached_windows:
+            for tm in dw._split_view.all_tab_managers():
+                for tab in tm._tabs.values():
+                    b = tab.get("base_name")
+                    if b:
+                        out.append(b)
+        return out
+
+    def _capture_session(self, open_tabs: list | None = None, geo_window=None) -> dict:
+        """Read session state into a plain dict WITHOUT touching settings.
+
+        Honours the ``host.remember_tabs`` / ``window.remember_geometry``
+        toggles (omits whatever is disabled).  Separating *capture* from
+        *commit* matters for ``quit_host``: it must read tab/geometry state
+        while the windows are still open, yet must NOT write anything into
+        settings until the close has fully succeeded — a vetoed quit has to
+        leave settings exactly as they were.  Never raises.
+
+        Args:
+            open_tabs:  Pre-captured base names (the per-window close path
+                        passes these because its tabs are destroyed by the
+                        time the close commits).  ``None`` snapshots all
+                        currently-open windows live.
+            geo_window: Window whose geometry to remember; ``None`` uses
+                        :attr:`_primary_window`.
+        """
+        cap: dict = {}
+        try:
+            settings = self.Project.Settings
+            if settings.get("host.remember_tabs"):
+                cap["tabs"] = (open_tabs if open_tabs is not None
+                               else self._snapshot_open_tabs())
+            if settings.get("window.remember_geometry"):
+                win = geo_window if geo_window is not None else self._primary_window
+                if win is not None and win in self.detached_windows:
+                    cap["geometry"] = win.win.geometry()
+        except Exception:
+            import traceback
+            traceback.print_exc()
+        return cap
+
+    def _commit_session(self, cap: dict) -> None:
+        """Write a captured session dict into settings (in memory).  Never raises."""
+        try:
+            settings = self.Project.Settings
+            if "tabs" in cap:
+                settings.set("host.last_tabs", cap["tabs"])
+            if "geometry" in cap:
+                settings.set("window.last_geometry", cap["geometry"])
+        except Exception:
+            import traceback
+            traceback.print_exc()
+
+    def _persist_session(self, open_tabs: list | None = None, geo_window=None) -> None:
+        """Capture and immediately commit the session.
+
+        For the *committed* single-window close path
+        (``DetachedWindow._on_close``), where the window is already closing
+        so there is no veto left to honour.
+        """
+        self._commit_session(self._capture_session(open_tabs, geo_window))
+
+    def _save_settings(self) -> None:
+        """Flush application settings to ``.VIS/settings.json`` when changed.
+
+        Skips the write (and the mtime bump) when nothing was modified this
+        session — the common case for an app that touched no settings.  Never
+        raises (shutdown must not block).
+        """
+        try:
+            if self.Project.Settings.dirty:
+                self.Project.Settings.save()
+        except Exception:
+            import traceback
+            traceback.print_exc()
+
+    def _apply_appearance(self) -> None:
+        """Apply the saved default font to Tk's named fonts at launch.
+
+        Configures ``TkDefaultFont`` / ``TkTextFont`` / ``TkMenuFont`` /
+        ``TkHeadingFont`` / ``TkFixedFont`` so default and ttk widgets inherit
+        the project's ``appearance.font_family`` / ``appearance.font_size``.
+        No-op when neither is set.  ``appearance.color_scheme`` is a stored
+        placeholder with no effect yet (full theming: see 0.6.1).  Never
+        raises — appearance must never block launch.
+        """
+        try:
+            settings = self.Project.Settings
+            family = settings.get("appearance.font_family")
+            size = settings.get("appearance.font_size")
+            if not family and not size:
+                return
+            import tkinter.font as tkfont
+            for name in ("TkDefaultFont", "TkTextFont", "TkMenuFont",
+                         "TkHeadingFont", "TkFixedFont"):
+                try:
+                    f = tkfont.nametofont(name)
+                except Exception:
+                    continue
+                if family:
+                    f.configure(family=family)
+                if size:
+                    try:
+                        f.configure(size=int(size))
+                    except (TypeError, ValueError):
+                        pass
+        except Exception:
+            import traceback
+            traceback.print_exc()
+
+    # ── Application settings: UI (0.6.0) ───────────────────────────────────────
+
+    def register_settings_panel(self, name: str, setup_fn) -> None:
+        """Register a custom panel for the built-in Settings window.
+
+        The panel is called each time the Settings surface is built, with a
+        ``ttk.Frame`` tab body to build into (mirrors a screen's
+        ``setup(parent)``).  Two forms are supported:
+
+        * ``setup_fn(frame)`` — self-managed: the panel builds its own widgets
+          and reads/writes ``host.Project.Settings`` itself (call ``.save()``
+          from within, or drive its own controls).
+        * ``setup_fn(frame, ui)`` — integrated: *ui* is the settings
+          controller; build fields with ``ui.add_check`` / ``ui.add_int`` /
+          ``ui.add_combo`` and they ride the surface's own Save / Restore
+          Defaults just like the General tab.
+
+        ``name`` is the notebook tab label; registering the same name again
+        replaces it.  Call before entering the update loop (typically in
+        ``.VIS/Host.py``).
+        """
+        self._settings_panels[name] = setup_fn
+
+    def register_menubar_accessory(self, builder) -> None:
+        """Register a widget to sit at the top-right of the menubar strip.
+
+        The native OS menubar can't host widgets and can't right-align an
+        entry, so accessories live at the trailing (right) edge of each
+        window's top tab-bar row — the first Tk-controlled strip, which reads
+        as the menubar's right side.
+
+        ``builder(parent)`` is called once per window with the accessory
+        container (a ``tk.Frame`` pinned to that corner); build a small widget
+        into it (return value is ignored).  Typical use: a current-user badge,
+        a status pill, a notifications bell.  The widget owns its own refresh
+        (e.g. a ``widget.after`` tick) — the Host does not drive it.
+
+        Call before entering the update loop (typically in ``.VIS/Host.py``).
+        """
+        self._menubar_accessories.append(builder)
+
+    def _mount_menubar_accessories(self, tab_bar) -> None:
+        """Build every registered accessory into *tab_bar*'s right-aligned slot.
+
+        Called by :class:`DetachedWindow` for its primary pane's tab bar.  A
+        vertical tab bar has no accessory slot (returns ``None``) and is
+        skipped; a failing builder is isolated so it can't take down the
+        window.
+        """
+        if not self._menubar_accessories:
+            return
+        slot = getattr(tab_bar, "get_accessory", lambda: None)()
+        if slot is None:
+            return
+        for builder in self._menubar_accessories:
+            try:
+                builder(slot)
+            except Exception:
+                import traceback
+                traceback.print_exc()
+
+    def _open_settings(self) -> None:
+        """Open the application Settings as a single-instance tab.
+
+        Wired onto every window's HostMenu as the persistent **Settings**
+        entry by :class:`DetachedWindow`.  Settings lives in the tab strip
+        like a screen: an already-open Settings tab is focused rather than
+        duplicated.  When there is no chromed window to host a tab (nothing
+        but standalone windows, or none at all) it falls back to the legacy
+        modal :class:`SettingsWindow`.
+        """
+        # Focus an existing Settings tab if one is open anywhere.
+        tm, tab_id = self._find_tab_by_base("Settings")
+        if tm is not None and tab_id is not None:
+            tm.focus_tab(tab_id)
+            dw = self._window_for_tab_manager(tm)
+            if dw is not None:
+                try:
+                    dw.win.deiconify()
+                    dw.win.lift()
+                    dw.win.focus_force()
+                except Exception:
+                    pass
+            return
+
+        target = self._tab_target()
+        if target is None:
+            # No chromed window to host a tab — fall back to the modal window.
+            from VIStk.Widgets._SettingsWindow import SettingsWindow
+            parent = self.detached_windows[0].win if self.detached_windows else None
+            SettingsWindow(self, parent).show()
+            return
+
+        from VIStk.Widgets._SettingsWindow import SettingsTab
+        target.open_tab("Settings", SettingsTab(self), base_name="Settings")
 
     # ── Startup registration (opt-in) ─────────────────────────────────────────
 

@@ -5,6 +5,7 @@ import shutil
 from VIStk.Structures._VINFO import *
 from VIStk.Structures._Screen import *
 from VIStk.Structures._Group import Group
+from VIStk.Structures._Settings import ProjectSettings
 
 _EDITABLE_SCREEN_ATTRS = {
     "script", "release", "icon", "desc", "tabbed",
@@ -59,6 +60,11 @@ class Project(VINFO):
             self.collect_packages:list[str] = info[self.title]["release_info"].get("collect_packages", [])
             self.host_script: str = info[self.title].get("host", {}).get("script", ".VIS/Host.py")
             """Filename of the Host entry-point script"""
+            self.host_settings_menu: bool = info[self.title].get("host", {}).get("settings_menu", False)
+            """Whether the framework's built-in Settings menu entry is shown on
+            every window's menubar.  Opt-in: absent or false hides it (default).
+            An app that wants it sets ``host.settings_menu`` true in its
+            ``project.json``."""
             self.default_docs: str | None = info[self.title].get("defaults", {}).get("docs")
             """Project-level fallback documentation URL.
 
@@ -68,6 +74,12 @@ class Project(VINFO):
             """
         self.Screen: Screen = None
         """The Currently Running `Screen`"""
+
+        self.Settings: ProjectSettings = ProjectSettings(self)
+        """Per-project application settings, persisted to
+        ``.VIS/settings.json``.  Use ``project.Settings.get(key, default)`` /
+        ``.set(key, value)`` / ``.save()``.  See
+        :class:`~VIStk.Structures._Settings.ProjectSettings`."""
 
     def _save_groups(self) -> None:
         """Persist every non-``"all"`` Group back to ``release_info.groups``.
@@ -431,8 +443,9 @@ class Project(VINFO):
             screen: Name of the target screen.
             target: Optional TabManager whose action queue is used to defer
                 the call. Defaults to the active TabManager.
-            args:   Optional dict of args passed to the screen's ArgHandler
-                (currently ignored in the Host path; TODO: thread through).
+            args:   Optional list of CLI-style tokens (e.g.
+                ``["--won", "21930"]``) forwarded to the target screen's
+                ``ArgHandler`` before its ``setup()`` runs.
         """
         from VIStk.Objects._Host import _HOST_INSTANCE
         scr = self.getScreen(screen)
@@ -441,11 +454,11 @@ class Project(VINFO):
         if _HOST_INSTANCE is not None:
             tm = target or _HOST_INSTANCE.active_tab_manager
             if tm is not None:
-                tm._action_queue.put(lambda: _HOST_INSTANCE.open(screen))
+                tm._action_queue.put(lambda: _HOST_INSTANCE.open(screen, args))
             else:
-                _HOST_INSTANCE.open(screen)
+                _HOST_INSTANCE.open(screen, args)
         else:
-            scr.load()
+            scr.load(*(args or []))
 
     def reload(self) -> None:
         """Reloads the current screen

@@ -373,69 +373,113 @@ while root.Active:
 
 ### Host
 
-`Host(Root)` — A persistent application host that owns the Tk root window. Pressing the window close button hides the window to the system tray instead of destroying it. The Host never exits unless the user explicitly selects **Quit** from the tray menu or code calls `host.quit_host()`.
+`Host` — A persistent application host that owns a hidden Tk root. The Host is not itself a visible window: every visible application window is a `DetachedWindow` (a `Toplevel`) that the Host manages. The Host lives exactly as long as its windows — it starts with the first window and shuts down once the last `DetachedWindow` closes. It is **not** a background service, and there is **no system tray**; single-instance launches are coordinated over a localhost socket.
 
-All screen navigation routes through `host.open()`. Tabbed screens open as `Frame`-based tabs inside the Host window; standalone screens are spawned as `subprocess.Popen` subprocesses.
-
-Requires `pystray` for system tray support (installed automatically as a VIStk dependency).
+All screen navigation routes through `host.open()`. Tabbed screens (`tabbed: true`) open as tabs inside a `DetachedWindow`'s `SplitView`; standalone screens (`tabbed: false`) open as chromeless `DetachedWindow`s.
 
 ```python
 from VIStk.Objects import Host
 
-host = Host()                # starts hidden in tray by default
-host.WindowGeometry.setGeometry(width=1200, height=800, align="center")
+host = Host()
 
 while host.Active:
     host.tick_fps()
     host.update()
 ```
 
-To show the window immediately on launch, pass `start_hidden=False`:
+`Host()` takes no arguments. The startup screen comes from the command line (`<Project> <Screen>`) or, failing that, `Project.default_screen` — unless the `host.remember_tabs` application setting is on and a previous session was saved, in which case those screens are reopened (see [Application Settings](#application-settings)).
 
-```python
-host = Host(start_hidden=False)
-host.open("Dashboard")   # open a tab programmatically
-```
-
-**Constructor:**
-
-```python
-Host(start_hidden=True)
-```
-
-| Parameter      | Default | Description |
-|----------------|---------|-------------|
-| `start_hidden` | True    | If True, the window is hidden to the tray immediately on creation. Set to False to show the window on launch. |
-
-**Attributes (in addition to `Root`):**
+**Selected attributes:**
 
 | Attribute | Type | Description |
 |-----------|------|-------------|
-| `host.TabManager` | `TabManager` | Owns the tab strip and all screen content frames |
-| `host.HostMenu` | `HostMenu` | The persistent menu bar |
-| `host.InfoRow` | `InfoRow` | Status bar at the bottom of the window (screen name, copyright, FPS) |
-| `host.fps` | `float` | Frames per second — updated by `tick_fps()` each loop iteration |
+| `host.root` | `Tk` | The hidden root window. |
+| `host.Project` | `Project` | The VIS project; `host.Project.Settings` holds application settings. |
+| `host.detached_windows` | `list` | All live `DetachedWindow`s. |
+| `host.active_tab_manager` | `TabManager / None` | The most recently focused pane. |
+| `host.default_menu_setup` | `callable / None` | Called with each new window's `HostMenu` to contribute project-layer menu items. |
+| `host.fps` | `float` | Frames per second. |
+| `host.Active` | `bool` | Drives the update loop; cleared on shutdown. |
 
-**Methods (in addition to `Root`):**
+**Selected methods:**
 
 | Method | Description |
 |--------|-------------|
-| `host.open(screen_name, stay_open=False)` | Unified navigation. Tabbed screens open as tabs; standalone screens open as managed `Toplevel` windows. |
-| `host.tick_fps()` | Call once per update loop iteration to maintain `host.fps` and update the `InfoRow` counter. |
-| `host.quit_host()` | Fully shuts down the Host — closes all detached windows, tabs, and Toplevels, stops the tray icon, stops the IPC server, and destroys the window. Safe to call from any thread. Also wired to the tray **Quit** item. |
-| `host.unregister_startup()` | Removes the Host from the Windows startup registry. |
+| `host.open(screen_name, args=None)` | Unified navigation. Tabbed screens open as tabs; standalone screens open as chromeless `DetachedWindow`s. `args` are forwarded to the screen's `ArgHandler`. |
+| `host.tick_fps()` | Call once per update-loop iteration to maintain `host.fps`. |
+| `host.update()` | Pump one iteration: open the startup screen(s) on the first tick, drain IPC, tick screens, update Tk, and shut down when the last window closes. |
+| `host.quit_host()` | Close every window (running the two-pass `on_quit` veto) and shut the Host down. Aborts cleanly if any window vetoes. |
+| `host.register_settings_panel(name, setup_fn)` | Add a tab to the built-in Settings window — see [Application Settings](#application-settings). |
+| `host._register_startup()` / `host.unregister_startup()` | Add / remove the Windows startup-registry entry. Driven by the `host.start_with_os` setting via the Settings window. |
 
 #### OS startup registration
 
-On first run, `Host.__init__` registers the project's `Host.py` script in the Windows startup registry under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`. Call `host.unregister_startup()` to remove it. The entry is named `<ProjectTitle>Host`.
+`_register_startup()` adds the project's `Host.py` (dev) or app binary (compiled) to `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` as `<ProjectTitle>Host`; `unregister_startup()` removes it. Both are idempotent and Windows-only, and are wired to the **Start with operating system** toggle in the Settings window (0.6.0) — registration is no longer performed automatically on first run.
 
-#### System tray
-
-The tray icon is built from the project's default icon (`Icons/<d_icon>.*`). If no icon file is found, a small placeholder image is used. The tray menu contains two items: **Show** (restores the window) and **Quit** (calls `quit_host()`). The tray runs in a daemon thread and stops automatically when `quit_host()` is called.
+> **No system tray.** Earlier versions hid the Host to a system tray on window close. The 0.5.3 always-Host refactor removed the tray: closing the last window ends the process, and a localhost socket provides single-instance forwarding while a Host is alive.
 
 #### Singleton
 
 `Host.__init__` sets `VIStk.Objects._Host._HOST_INSTANCE = self`. `Project.open()` checks this reference to route navigation. Only one `Host` should exist per process.
+
+---
+
+### Application Settings
+
+Per-project application settings (0.6.0), stored in `.VIS/settings.json` and reached through `project.Settings` (a `ProjectSettings`). The Host saves them automatically on shutdown.
+
+```python
+from VIStk.Structures._Project import Project
+
+settings = Project().Settings
+settings.get("notifications.duration_ms")      # 5000 (framework default)
+settings.get("my.custom.key", "fallback")      # explicit per-call default
+settings.set("appearance.font_family", "Consolas")
+settings.save()                                # persist to .VIS/settings.json
+```
+
+**API:**
+
+| Call | Description |
+|------|-------------|
+| `settings.get(key, default)` | Resolution order: stored override → explicit `default` → framework `DEFAULTS` → `None`. |
+| `settings.set(key, value)` | Set in memory; call `save()` to persist. |
+| `settings.save()` | Write overrides to `.VIS/settings.json`. |
+| `settings.reset(key)` | Drop an override so the key resolves back to its default. |
+| `settings.effective()` | Full resolved map (`DEFAULTS` merged with overrides) — used by the Settings UI. |
+| `settings.dirty` | Whether an override has changed since the last `save()`. |
+
+A full default `settings.json` (every key at its default) is generated automatically — at `VIS new` and on first Host launch — so all options are visible and hand-editable. In memory only genuine overrides are tracked (so `reset()` and `in` mean "explicitly customised"); `save()` writes the complete resolved set back. A missing or corrupt file falls back to defaults without crashing.
+
+**Built-in settings (`ProjectSettings.DEFAULTS`):**
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `window.default_width` / `default_height` | `None` | First-window size (blank → 1200×800). |
+| `window.default_align` | `None` | `center` or a compass point (`n`…`nw`). |
+| `window.min_width` / `min_height` | `None` | Minimum window size. |
+| `window.remember_geometry` | `False` | Restore the primary window's last size/position. |
+| `window.fullscreen_on_launch` | `False` | Open the first window maximized. |
+| `host.start_with_os` | `False` | Launch the Host at login (Windows). |
+| `host.remember_tabs` | `False` | Reopen the previous session's screens as tabs. |
+| `appearance.font_family` / `font_size` | `None` | Default font, applied to Tk's named fonts at launch. |
+| `appearance.color_scheme` | `"system"` | Placeholder for the styles system (no effect yet). |
+| `notifications.enabled` | `True` | Global notification toggle (consumed by the 0.9 Toast widget). |
+| `notifications.duration_ms` | `5000` | Default `InfoRow.show_banner` duration. |
+
+The framework also writes `window.last_geometry` and `host.last_tabs` to remember the last session.
+
+**Settings window:** a framework-provided **HostMenu → Settings** entry on every window opens a modal, tabbed dialog. The **General** tab edits the keys above; apps add their own tabs via `host.register_settings_panel(name, setup_fn)`, where `setup_fn(parent_frame)` builds into the tab body (mirrors a screen's `setup`):
+
+```python
+def my_panel(parent):                 # parent is the tab's ttk.Frame
+    import tkinter.ttk as ttk
+    ttk.Checkbutton(parent, text="Enable widget X").pack(anchor="w")
+
+host.register_settings_panel("My Plugin", my_panel)
+```
+
+Appearance changes apply on the **next launch** — live re-styling of open windows is planned for 0.6.1.
 
 ---
 
