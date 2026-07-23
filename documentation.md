@@ -886,9 +886,16 @@ The menubar has three ordered layers:
 |--------|-------------|
 | `attach()` | Configure the parent window to show this menu bar and build the base items. Called once by `Host`. |
 | `set_project_items(items, label="Project")` | Add one cascade to the project layer. May be called multiple times to add multiple project-layer cascades in order. Persists across all tab changes. |
+| `add_project_command(label, command, image=None, compound=None, align=None)` | Add one leaf command directly to the menubar (project layer) — a top-level entry whose label *is* the action (e.g. `Help`). `image` accepts a Tk `PhotoImage` or a `PIL.Image.Image`; a PIL image renders **natively on the Windows menubar strip** (see below). `align="right"` right-justifies the entry on the native bar (ignored off-Windows). |
 | `clear_project_items()` | Remove all project-layer cascades. Intended for teardown; not normally needed during regular use. |
 | `set_screen_items(items, label="Screen")` | **Accumulates** — adds one cascade to the screen layer. Call multiple times in one `configure_menu` hook to contribute multiple cascades side by side; all are cleared together on tab deactivation. |
 | `clear_screen_items()` | Remove all accumulated screen cascades. Called automatically on tab deactivation. |
+| `set_native_image(label, pil_image)` | Swap the native bitmap on an existing entry in place, without touching the Tk entry (so Tk does not rebuild the menu). Frees the replaced `HBITMAP`. Returns `False` off-Windows or on failure. |
+| `refresh_native()` | Re-apply every registered native patch by each label's current index (unresolvable labels are skipped). Runs automatically (coalesced) after every menubar-mutating method; public escape hatch for direct `menubar` mutations. |
+| `native_menubar_supported()` *(static)* | `True` when native menubar patching (bitmaps / right-align) is available — i.e. on Windows. |
+| `native_menu_height()` *(static)* | Native menu bar height in pixels (`SM_CYMENU`); falls back to `20` off-Windows. Use it to size a bitmap to the bar. |
+
+**Native menubar images & right-alignment (Windows, 0.6.1):** Tk accepts `image=` on a menubar entry but the native Windows menu never renders it, and Tk exposes no right-justify. When `add_project_command` is given a **PIL** image (and/or `align="right"`), `HostMenu` patches the real `HMENU` after Tk builds it (`VIStk/Widgets/_MenuNative.py` — premultiplied-alpha DIB bitmaps, `MFT_RIGHTJUSTIFY`). Tk rebuilds the native menu on every Tk-side mutation and drops these patches, so `HostMenu` re-applies them automatically after each of its mutating methods and on `<Map>`. Note the Win32 quirk: a right-justified entry drags **every entry after it** to the right, so new left-side entries are inserted before the right-aligned block. Off-Windows a PIL image degrades to `ImageTk.PhotoImage` (rendered by Tk-drawn menubars, e.g. X11) and `align` is ignored. For a *live widget* at the menubar's right edge, use `host.register_menubar_accessory` instead.
 
 **Attribute:**
 
