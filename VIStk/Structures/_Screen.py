@@ -86,6 +86,15 @@ class Screen(VINFO):
         self.s_version = Version(scr_data.get("version", "0.0.0"))
         """Screen `Version`"""
         self.current = scr_data.get("current", "0.0.0")#remove later
+        self.window_icon: str | None = scr_data.get("window_icon")
+        """Optional window *title-bar* icon (Windows ``ICON_SMALL``) for this
+        screen.
+
+        Only honored when the screen owns a *standalone* (chromeless) window.
+        A tabbed screen shares a chromed window that may host other screens,
+        so its ``window_icon`` is ignored — that window uses the project-level
+        :attr:`~VIStk.Structures._Project.Project.d_window_icon`.
+        """
         self.tabbed: bool = info[self.title]["Screens"][self.name].get("tabbed", False)
         """Whether this screen opens as a tab inside the Host window"""
         self.single_instance: bool = info[self.title]["Screens"][self.name].get("single_instance", False)

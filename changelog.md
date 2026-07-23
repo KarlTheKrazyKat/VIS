@@ -890,7 +890,7 @@ Two fixes to `AutocompleteEntry`'s suggestion popup (`VIStk/Widgets/_Autocomplet
 
 ---
 
-### 0.6.1 Native Menubar Images & Right-Aligned Entries
+### 0.6.1 Native Menubar Images, Right-Aligned Entries & Separate Window Title-Bar Icon
 
 Top-level `HostMenu` entries can now carry an **image on the real Windows menubar strip** and be **right-aligned** on it — Tk accepts `image=` on a menubar entry but the native Windows menu never rendered it, and Tk exposes no right-justify at all. The new private module `VIStk/Widgets/_MenuNative.py` patches the actual `HMENU` Tk built (ctypes/user32, `SetMenuItemInfoW`), after Tk builds it. Everything degrades gracefully off-Windows.
 
@@ -909,6 +909,24 @@ Top-level `HostMenu` entries can now carry an **image on the real Windows menuba
 - `native_menubar_supported()` / `native_menu_height()` — staticmethod delegates to `_MenuNative` so callers (e.g. PYWOM's user badge) can pick the native path and size their bitmap without importing the private module.
 - **Ordering with a right-aligned entry** — since `MFT_RIGHTJUSTIFY` drags all subsequent items right, once any right-aligned entry exists the add paths (`set_project_items`, `set_screen_items`, `add_project_command`, `build_shared_menu`) insert new left-side entries *before* the leftmost right-aligned entry instead of appending; right-aligned entries themselves still append at the end.
 - `Host.register_menubar_accessory` remains the path for **live widgets** at the menubar's right edge; its docstring now points static text/bitmap badges at the native path.
+
+#### Separate Window Title-Bar Icon
+
+A window's **title-bar (chrome) icon** and its **taskbar icon** can now differ. Windows keeps two icon slots per window — `ICON_SMALL` (title bar / alt-tab small) and `ICON_BIG` (taskbar) — but Tk's `iconphoto` fills both with one image, so previously they were always identical. VIStk now drives them independently; degrades to shared-image behavior off-Windows and when unconfigured.
+
+**`Project`** — `VIStk/Structures/_Project.py`
+
+- `d_window_icon` — new attribute read from `defaults.window_icon` in `project.json` (optional; `None` preserves prior behavior). The **only** project-level way to set the window title-bar icon. The taskbar icon remains `d_icon` (`defaults.icon`).
+
+**`Screen`** — `VIStk/Structures/_Screen.py`
+
+- `window_icon` — new attribute read from a screen's `window_icon` in `project.json` (optional). Overrides `d_window_icon` for the title bar **only when the screen owns a standalone (chromeless) window**. Tabbed screens share a chromed window that may host other screens, so their `window_icon` is ignored by design.
+
+**`DetachedWindow`** — `VIStk/Objects/_DetachedWindow.py`
+
+- `_load_icon` now fills the two slots separately: taskbar (`ICON_BIG`) via `iconphoto` exactly as before (screen `icon` for chromeless, else `d_icon`); title bar (`ICON_SMALL`) from `d_window_icon`, overridable by a chromeless screen's `window_icon`. Because `_load_icon` only receives a `screen_name` for chromeless windows, a tabbed screen can never repaint its shared window's icon — the constraint is structural, not a runtime check.
+- `_apply_titlebar_icon(icon_name)` — Windows-only; resolves the wrapper HWND via `GetParent(winfo_id())` and sets `ICON_SMALL` with `WM_SETICON`. No-op elsewhere.
+- `_titlebar_hicon(icons_dir, icon_name)` (module-level) + `_HICON_CACHE` — builds an HICON from any PIL-readable icon (`<icons_dir>/<icon_name>.*`, rendered to a small temp ICO and `LoadImageW`'d), cached process-wide so handles are built once and outlive the `WM_SETICON` call (Windows does not copy the icon).
 
 ---
 
