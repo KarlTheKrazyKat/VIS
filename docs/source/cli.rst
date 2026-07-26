@@ -338,16 +338,6 @@ Examples:
    VIS docs clear Settings
    VIS docs list
 
-Stop the Host
--------------
-
-.. code-block:: text
-
-   VIS stop
-
-Sends a quit signal to the running Host via IPC. The Host shuts down gracefully. Prints a
-message if no Host is running.
-
 Check version
 -------------
 

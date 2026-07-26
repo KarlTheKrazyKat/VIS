@@ -78,7 +78,9 @@ VIStk supports two runtime models: **standalone** (original) and **Host-based** 
 
 ### Standalone mode
 
-Each screen is its own Python process. Switching screens replaces the current process via `os.execl`. This is the original VIStk behaviour and still works for any screen where `tabbed` is `false`.
+A screen script run directly (`python Screens/MyScreen.py`) builds its UI into its own `Root` window and drives its own update loop. This is the original VIStk behaviour and is still what the `if __name__ == "__main__":` block in every screen template does.
+
+Note that `Project.open()` / `Screen.load()` no longer replace the process — `os.execl` is gone. With no Host in-process they spawn a Host subprocess (skipped in a compiled build, where the exe *is* the Host).
 
 ```python
 from VIStk.Objects import Root
@@ -96,7 +98,9 @@ if __name__ == "__main__":
 
 ### Host mode
 
-The `Host` is a persistent process that owns the Tk root window. **It starts hidden in the system tray by default** — no window appears on launch. The user clicks the tray icon to restore the window, which also opens the project's default screen. The Host never closes unless the user selects **Quit** from the tray menu or code calls `host.quit_host()`. Screens marked `tabbed: true` in `project.json` open as `Frame`-based tabs inside the Host window. Standalone screens are spawned as subprocesses by the Host.
+The `Host` owns a **hidden** Tk root and is never itself a visible window — every visible window is a `DetachedWindow` (Toplevel) it manages. **There is no system tray** (it was removed in the 0.5.3 always-Host refactor). The Host lives exactly as long as its windows: it starts with the first window, and once the last one closes it tears down the root, releases the single-instance lock, and the process exits. While a Host is alive, a localhost socket forwards subsequent launches into it instead of starting a second process.
+
+Screens marked `tabbed: true` in `project.json` open as `Frame`-based tabs inside a chromed window. A `tabbed: false` screen opens as its own **chromeless `DetachedWindow` inside the same Host process** — not as a separate subprocess.
 
 ```python
 from VIStk.Objects import Host
@@ -119,7 +123,7 @@ while host.Active:
 Screen navigation from anywhere in the app:
 
 ```python
-# Routes through Host if running, otherwise os.execl
+# Routes through the Host if one is running, otherwise spawns a Host subprocess
 root.Project.open("WorkOrders")
 ```
 
@@ -164,9 +168,9 @@ The CLI will prompt for:
 - Icon name
 - Description
 - **Whether the screen opens as a tab inside the Host** (`tabbed`)
-- **Whether this screen is the default screen** — prompted only if no default is set yet; the default screen is opened when the user clicks **Show** on the tray icon
+- **Whether this screen is the default screen** — prompted only if no default is set yet; the default screen is the one the Host opens when launched with no screen argument
 
-The `tabbed` flag is stored in `project.json` and read by `Host.open()` to decide whether to open a tab or spawn a subprocess.
+The `tabbed` flag is stored in `project.json` and read by `Host.open()` to decide whether to open the screen as a tab or as its own chromeless window.
 
 ### Add elements to a screen
 
@@ -294,15 +298,6 @@ VIS edit Dashboard tabbed false
 VIS edit Settings version 2.0.0
 ```
 
-### Stop the Host
-
-```text
-VIS stop
-```
-
-Sends a quit signal to the running Host for the current project via IPC. The Host shuts down gracefully — stopping the tray icon, closing all tabs, and cleaning up the port file. Prints a message if no Host is running.
-
-This is the recommended way to stop the Host from the command line or from a script, without needing a reference to the `Host` object.
 
 ### Check version
 
@@ -1175,7 +1170,7 @@ You do not instantiate `VINFO` directly. It is initialized automatically when `P
 | `Version` | Project `Version` object |
 | `company` | Company name (from `project.json`) |
 | `copyright` | Copyright string (from `project.json`); defaults to `company` if not set explicitly |
-| `default_screen` | Name of the screen opened when the Host is restored from the system tray; `None` if not set |
+| `default_screen` | Name of the screen the Host opens when launched with no screen argument; `None` if not set |
 
 **Methods:**
 
@@ -1216,8 +1211,8 @@ project = Project()
 | `getScreen(name)` | `Screen / None` | Returns the `Screen` object for the given name |
 | `verScreen(name)` | `Screen` | Returns the screen if it exists, or creates it via `newScreen` |
 | `setScreen(name)` | `None` | Sets `self.Screen` to the named screen |
-| `load(name, *args)` | `None` | Calls `Screen.load(*args)` for the named screen (always `os.execl`) |
-| `open(name, stay_open=False)` | `None` | Unified navigation — routes through Host if running, else `os.execl` |
+| `load(screen, *args)` | `None` | Calls `Screen.load(*args)` for the named screen |
+| `open(screen, target=None, args=None)` | `None` | Unified navigation — routes through the Host if one is running, else falls back to `Screen.load()` |
 | `reload()` | `None` | Reloads the currently active screen |
 | `getInfo()` | `str` | Returns `"ProjectName ScreenName Version"` as a string |
 | `newScreen(name)` | `int` | Interactively creates a new screen (CLI use); prompts to set as default screen if none is set |
@@ -1225,19 +1220,20 @@ project = Project()
 | `rename_screen(old, new)` | `int` | Renames a screen: updates `project.json`, renames script/Screens/modules directories and hooks file, rewrites import references, re-stitches; returns `1` on success, `0` on failure |
 | `edit_screen(name, attr, value)` | `int` | Sets any attribute in a screen's `project.json` entry with automatic type coercion; keeps the in-memory `Screen` object in sync; returns `1` on success, `0` on failure |
 
-#### `open(name, stay_open=False)`
+#### `open(screen, target=None, args=None)`
 
 Preferred navigation method when a Host may be running. Routing rules:
 
-- **Host running + target is tabbed** → opens or focuses the tab in the Host window.
-- **Host running + target is standalone, `stay_open=False`** → Host spawns a subprocess; the caller should close.
-- **Host running + target is standalone, `stay_open=True`** → Host spawns a subprocess; caller keeps running.
-- **No Host** → falls back to `Screen.load()` (`os.execl`), preserving standalone behaviour.
+- **Host running + target is tabbed** → opens a new tab in the active TabManager's window; a single-instance tab is focused instead of duplicated.
+- **Host running + target is standalone** → opens a new chromeless `DetachedWindow` in the same Host process.
+- **No Host** → falls back to `Screen.load()`, which spawns a Host subprocess (a no-op in a compiled build, where the exe *is* the Host).
+
+When a Host is active the call is deferred through the active TabManager's action queue so it runs safely from the main loop. Pass `target` to use a specific TabManager's queue. To *replace* the current pane instead of opening a new tab, call `tab_manager.navigate(screen)` directly.
 
 ```python
 # Prefer open() over load() for portable navigation
 root.Project.open("WorkOrders")
-root.Project.open("Settings", stay_open=True)
+root.Project.open("WorkOrders", args=["--won", "21930"])
 ```
 
 ---
@@ -1265,7 +1261,7 @@ root.Project.open("Settings", stay_open=True)
 
 | Method | Description |
 |--------|-------------|
-| `screen.load(*args)` | Switches to this screen. If a Host is running, routes via IPC (`send_to_host`) so the Host opens the screen. Falls back to replacing the current process with `os.execl` if no Host is detected. Any `args` are passed as command-line arguments and can be read with `ArgHandler`. |
+| `screen.load(*args)` | Loads this screen. If a Host is running in-process, routes through it. Otherwise spawns a Host subprocess with this screen name as the first argument — skipped in a compiled build, where the exe *is* the Host. Any `args` are passed as command-line arguments and can be read with `ArgHandler`. |
 | `screen.close()` | Asks the Host to close this screen (tab or Toplevel) via `__VIS_CLOSE__:<name>` IPC. Returns `True` if delivered, `False` if no Host is running. |
 | `screen.addElement(name)` | Creates `f_<name>.py` and `m_<name>.py` from templates |
 | `screen.addMenu(name)` | Creates `modules/<screen>/m_<name>.py` with a `configure_menu` stub; wires it into the hooks module if one exists |
@@ -1661,7 +1657,7 @@ The matching `script/uninstall.py` would run `RegAsm /u` on the same DLL using `
 
 ### Do not call `root.mainloop()`
 
-Using `mainloop()` traps the application in Tkinter's event loop and prevents the `while root.Active` pattern from working. Screen switching via `os.execl` cannot occur from inside `mainloop()`.
+Using `mainloop()` traps the application in Tkinter's event loop and prevents the `while root.Active` pattern from working, so the Host's per-frame `loop()` dispatch and its queued navigation actions never run.
 
 ### Do not call `root.destroy()` to quit
 

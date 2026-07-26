@@ -116,11 +116,11 @@ The full generated screen template:
         """Register menu items with the containing TabManager."""
         menubar.set_screen_items([], label="ScreenName")
 
-    def on_activate():
+    def on_focused():
         """Called when this tab gains focus."""
         pass
 
-    def on_deactivate():
+    def on_unfocused():
         """Called when this tab loses focus."""
         pass
 
@@ -194,8 +194,8 @@ Do not call ``root.mainloop()``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Using ``mainloop()`` traps the application in Tkinter's event loop and prevents the
-``while root.Active`` pattern from working. Screen switching via ``os.execl`` cannot occur
-from inside ``mainloop()``.
+``while root.Active`` pattern from working, so the Host's per-frame ``loop()`` dispatch and
+its queued navigation actions never run.
 
 Do not call ``root.destroy()`` to quit
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

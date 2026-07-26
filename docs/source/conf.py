@@ -1,16 +1,30 @@
 import sys
 import os
+import datetime
+import pathlib
+import tomllib
 
 # Configuration file for the Sphinx documentation builder.
 
 # -- Project information -----------------------------------------------------
 
+
+def _project_version() -> str:
+    """Read the version from pyproject.toml so it can never go stale here."""
+    pyproject = pathlib.Path(__file__).resolve().parents[2] / "pyproject.toml"
+    try:
+        with pyproject.open("rb") as f:
+            return tomllib.load(f)["project"]["version"]
+    except Exception:
+        return "0.0.0"
+
+
 project = 'VIStk'
-copyright = '2025, bmi CAD Services'
+copyright = f'2025-{datetime.date.today().year}, bmi CAD Services'
 author = 'Elijah Love'
 master_doc = 'index'
-version = '0.4.4'
-release = '0.4.4'
+version = _project_version()
+release = version
 
 # -- General configuration ---------------------------------------------------
 

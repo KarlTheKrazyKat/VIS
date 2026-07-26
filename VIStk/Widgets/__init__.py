@@ -23,6 +23,7 @@ from VIStk.Widgets._vFrame import vFrame
 from VIStk.Widgets._vLabelFrame import vLabelFrame
 from VIStk.Widgets._vImage import vImage, round_image
 from VIStk.Widgets._ScrollableFrame import ScrollableFrame
+from VIStk.Widgets._ScrollMenu import ScrollMenu
 
 
 __all__ = ["VISMenu",
@@ -54,5 +55,6 @@ __all__ = ["VISMenu",
            "vLabelFrame",
            "vImage",
            "round_image",
-           "ScrollableFrame"
+           "ScrollableFrame",
+           "ScrollMenu"
            ]

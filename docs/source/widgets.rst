@@ -242,6 +242,12 @@ Methods
    * - ``set_project_items(items, label="Project")``
      - Add one cascade to the project layer. May be called multiple times. Persists
        across all tab changes.
+   * - ``add_project_command(label, command, image=None, compound=None, align=None)``
+     - Add one *leaf* command directly to the menu bar (project layer) — a top-level
+       entry whose label **is** the action, e.g. ``Help``. ``image`` accepts a Tk
+       ``PhotoImage`` or a ``PIL.Image.Image``; a PIL image is rendered natively on the
+       Windows menu bar strip (see below). ``align="right"`` right-justifies the entry
+       natively; ignored off-Windows. May be called multiple times.
    * - ``clear_project_items()``
      - Remove all project-layer cascades. Intended for teardown.
    * - ``set_screen_items(items, label="Screen")``
@@ -250,6 +256,65 @@ Methods
        tab deactivation.
    * - ``clear_screen_items()``
      - Remove all accumulated screen cascades. Called automatically on tab deactivation.
+   * - ``set_native_image(label, pil_image)``
+     - Swap the native bitmap on an existing entry **in place**. The Tk entry is not
+       touched, so Tk does not rebuild the native menu (an ``entryconfigure`` would drop
+       every native patch and flicker). Frees the replaced ``HBITMAP``. Returns ``False``
+       off-Windows, for an unknown *label*, or on any native failure.
+   * - ``refresh_native()``
+     - Re-apply every registered native patch by each label's *current* index; labels
+       that no longer resolve are skipped. Runs automatically (coalesced) after every
+       menu-bar-mutating method — public only as an escape hatch for callers that mutate
+       ``menubar`` directly.
+   * - ``native_menubar_supported()`` *(static)*
+     - ``True`` when native menu bar patching (bitmaps / right-align) is available —
+       i.e. on Windows.
+   * - ``native_menu_height()`` *(static)*
+     - Native menu bar height in pixels (``SM_CYMENU``); falls back to ``20`` elsewhere.
+       Use it to size a bitmap to the bar.
+
+``build_shared_menu`` / ``apply_overrides`` / ``reset_overrides`` / ``save_defaults`` /
+``restore_defaults`` / ``detach`` also exist but are framework lifecycle plumbing driven
+by ``Host`` and ``DetachedWindow`` — application and screen code should not call them.
+
+Native menu bar images & right-alignment (Windows, 0.6.1)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Tk accepts ``image=`` on a menu bar entry, but the native Windows menu never renders it,
+and Tk exposes no right-justify at all. When ``add_project_command`` is given a **PIL**
+image (and/or ``align="right"``), ``HostMenu`` patches the real ``HMENU`` *after* Tk has
+built it — ``VIStk/Widgets/_MenuNative.py`` renders premultiplied-alpha DIB bitmaps and
+sets ``MFT_RIGHTJUSTIFY`` through ``SetMenuItemInfoW``.
+
+Tk rebuilds the native menu on **every** Tk-side mutation and drops those out-of-band
+patches, so ``HostMenu`` re-applies them automatically — coalesced on ``after_idle`` —
+after each mutating method and on ``<Map>`` (a remap recreates the wrapper window, so the
+old ``HMENU`` handle is gone).
+
+.. code-block:: python
+
+    from PIL import Image
+
+    host.HostMenu.add_project_command(
+        "Status",
+        command=show_status,
+        image=Image.open(badge_path),
+        align="right",
+    )
+
+    # Later: swap the bitmap without a Tk-side rebuild
+    host.HostMenu.set_native_image("Status", Image.open(alert_path))
+
+.. note::
+
+   Win32 quirk: a right-justified entry drags **every entry after it** to the right, so
+   ``HostMenu`` inserts new left-side entries *before* the right-aligned block rather
+   than appending them.
+
+Off-Windows a PIL image degrades to an ``ImageTk.PhotoImage`` (which Tk-drawn menu bars,
+e.g. on X11, do render) and ``align`` is ignored. For a *live widget* pinned at the menu
+bar's right edge — rather than a static bitmap — use ``host.register_menubar_accessory``
+instead.
 
 Attributes
 ~~~~~~~~~~
@@ -755,3 +820,435 @@ Per-item extras: ``"state": "disabled"``, ``"accelerator": str``, and
 args: ``master`` (Menu parent when no ``widget`` is given), ``tearoff=0``,
 ``font``, ``button="<Button-3>"``. Method ``set_items(items)`` swaps the
 source. Owned menus are destroyed with the bound widget.
+
+----
+
+SettingsWindow / SettingsTab (0.6.0)
+------------------------------------
+
+The built-in application-settings surface: a ``ttk.Notebook`` whose first tab
+("General") edits the framework's window / host / appearance / notification
+preferences, backed by ``Project.Settings``. Both classes share one builder
+(``_SettingsUI``) and render the identical surface — they differ only in where it
+lives.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - Class
+     - Role
+   * - ``SettingsTab(host)``
+     - The surface as a **tab module** — duck-typed like a screen (``setup(frame)``,
+       ``on_quit()``, no ``loop``), so Settings sits in the tab strip like any screen.
+       This is what ``Host`` opens. ``base_name = "Settings"`` gives it a stable
+       identity for single-instance focus.
+   * - ``SettingsWindow(host, parent=None)``
+     - The original modal ``tk.Toplevel`` (Save / Cancel / Restore Defaults). Retained
+       as a fallback for when there is no chromed window to host a tab, and for callers
+       that still construct it directly. Call ``.show()`` to grab input and block until
+       it closes.
+
+Neither is normally constructed by application code — ``Host`` opens the surface from
+its framework-provided menu entry.
+
+Behaviour
+~~~~~~~~~
+
+- Controls are seeded from ``ProjectSettings.effective()``, so each shows its current
+  effective value (default *or* override).
+- On **Save**, a control whose value equals the framework default is written as a
+  *reset* rather than a redundant override, so ``settings.json`` stays minimal; the
+  rest are stored and flushed with a single ``ProjectSettings.save()``.
+- Blank numeric fields mean "unset"; non-numeric or negative input is rejected silently
+  in favour of the stored value rather than corrupting it.
+- ``SettingsTab.setup`` may run more than once for one logical tab (VIStk re-runs it
+  when a tab is dragged between panes), so it rebuilds and re-seeds from scratch each
+  time — unsaved edits are dropped on a move, the same "closing discards" contract as
+  the modal window's Cancel.
+- Appearance settings are persisted but applied on next launch.
+
+Application panels
+~~~~~~~~~~~~~~~~~~
+
+Apps contribute their own tabs with ``host.register_settings_panel(name, setup_fn)``.
+Each ``setup_fn`` receives the tab frame and builds into it, mirroring a screen's
+``setup``. A panel that raises shows an inline error in its own tab rather than a blank
+one.
+
+``setup_fn`` may take **one** argument (the frame — the panel manages its own
+persistence) or **two** (``frame, ui``), where *ui* is the settings surface itself. The
+two-argument form lets a panel build fields that ride the window's own Save / Restore
+Defaults:
+
+.. code-block:: python
+
+    def build_panel(frame, ui):
+        ui.add_check(frame, 0, "Enable fast mode", "myapp.fast_mode")
+        ui.add_int(frame,   1, "Row height", "myapp.row_height", "px")
+        ui.add_combo(frame, 2, "Units", "myapp.units", ["mm", "in"])
+
+    host.register_settings_panel("My App", build_panel)
+
+.. list-table::
+   :header-rows: 1
+   :widths: 45 55
+
+   * - Method
+     - Description
+   * - ``add_check(parent, row, label, key)``
+     - Checkbox bound to boolean setting *key*.
+   * - ``add_int(parent, row, label, key, hint="")``
+     - Spinbox bound to integer setting *key* (blank = unset/default). *hint* is grey
+       trailing text, e.g. a unit.
+   * - ``add_combo(parent, row, label, key, values, editable=False)``
+     - Combobox bound to string setting *key*. ``editable=True`` allows free text.
+
+Fields built through these helpers are registered in the surface's read-back registry,
+so they are saved, restored and defaulted exactly like the General tab — no per-panel
+Save button, and no apply-on-change surprise. The ``ProjectSettings`` storage API and
+``Host.register_settings_panel`` are covered in :doc:`structures` and :doc:`objects`.
+
+----
+
+v-prefixed widgets (0.6.0)
+--------------------------
+
+A family of widgets that subclass the **classic** tk widgets rather than ttk, so
+per-instance ``bg`` / ``fg`` / ``font`` actually work, and that add two things on top:
+
+1. **Parent-property inheritance** — each widget declares which visual options it
+   inherits; any the caller omits are filled in from the parent at construction.
+   Explicitly-passed options always win. A ``vLabel`` dropped into a white frame is
+   white, not default grey.
+2. **Optional rounded corners** — opt in with ``radius``. This consolidates the
+   hand-rolled Canvas-polygon "pill / chip / card" pattern that screens otherwise
+   reimplement one at a time.
+
+At ``radius=0`` (the default) every one of them is a plain native widget with no extra
+machinery — they are drop-in replacements.
+
+Hierarchy
+~~~~~~~~~
+
+``vWidget`` is a pure mixin (it subclasses ``object``, never ``tk.Widget``) combined with
+a native widget through multiple inheritance, so a ``vLabel`` genuinely *is* both a
+``vWidget`` and a ``tk.Label``. ``vWidget.__init__`` runs first in the MRO — it computes
+inheritance and pops the rounded kwargs — then defers to the native base through
+cooperative ``super().__init__()``, so the Tcl widget is created exactly once.
+
+.. code-block:: text
+
+    vLabel(RoundedLeaf, vWidget, Label)
+    vButton(RoundedLeaf, vWidget, Button)
+    vImage(vWidget, Label)
+    vFrame(RoundedContainer, vWidget, LayoutFrame)
+    vLabelFrame(RoundedContainer, vWidget, LabelFrame)
+
+``RoundedLeaf`` and ``RoundedContainer`` are internal mixins holding the two rounding
+strategies. They are mixed in *before* ``vWidget`` so their render hooks win the MRO.
+Leaves round by painting the fill into the widget's single image slot (or, when the
+caller needs that slot for their own ``image=``, by overlaying corner tiles); containers
+round with a lowered background label plus a child inset. You do not import them
+directly — subclass ``vWidget`` if you need a further v-widget of your own.
+
+Shared keyword arguments
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. list-table::
+   :header-rows: 1
+   :widths: 25 15 60
+
+   * - Argument
+     - Type
+     - Description
+   * - ``radius``
+     - ``int``
+     - Corner radius. ``0`` (default) disables all rounded rendering.
+   * - ``radius_style``
+     - ``str``
+     - ``"pixels"`` (default) — *radius* is a pixel value. ``"percent"`` — *radius* is a
+       percentage of the maximum round (half the short side), so ``100`` is a full
+       pill/circle at any size. Spellings normalise (``"px"``, ``"%"``, ``"percentage"``,
+       case-insensitive); an unrecognised value degrades to ``"pixels"``.
+   * - ``outline``
+     - ``str / None``
+     - Stroke colour drawn around the rounded rectangle.
+   * - ``outline_width``
+     - ``int``
+     - Stroke width in px (default ``1``; only used with *outline*).
+   * - ``corner_bg``
+     - ``str / None``
+     - Colour painted outside the corner arc so it blends. Defaults to the parent's
+       background. *(Not on* ``vImage`` *, which makes its corners genuinely
+       transparent.)*
+
+Radius semantics
+~~~~~~~~~~~~~~~~
+
+The radius is resolved by ``effective_radius(radius, style, w, h)`` from the **live**
+size inside every render path, not once at construction — so a percentage radius stays
+correct through resizes, and the result is always clamped to half the short side. A
+radius can therefore never exceed what the widget can actually show.
+
+Common behaviour
+~~~~~~~~~~~~~~~~
+
+- **Inheritance is a snapshot** taken at construction. Call ``refresh()`` after the
+  parent's appearance changes to re-pull the inherited options (the ones you never set
+  explicitly) and repaint.
+- **Runtime recolouring works** — ``configure(bg=...)`` repaints the rounded corners
+  live; ``vButton`` also repaints on ``state``.
+- **The resize repaint is clobber-proof.** It lives on a dedicated bindtag rather than
+  an instance binding, so your own ``widget.bind("<Configure>", fn)`` *without*
+  ``add="+"`` cannot silently replace it and leave the widget rendering square.
+- Parents are read via ``cget`` for classic widgets and ``Style().lookup`` for ttk ones,
+  falling back to ``SystemButtonFace``.
+- ``help(vLabel)`` lists every native tk option too: the native option block is lifted
+  from tkinter's own ``__init__`` docstring at class-creation time, and editors see the
+  same set through ``Unpack[TypedDict]`` hints.
+
+.. note::
+
+   Corner blending assumes a **solid-colour parent** — the area outside the arc is
+   painted with the parent's background so it blends in. On a gradient or image
+   background the corners will not disappear.
+
+Rounded-image helpers
+~~~~~~~~~~~~~~~~~~~~~
+
+Exported for direct use when you need the artwork without a v-widget.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 45 55
+
+   * - Function
+     - Description
+   * - ``rounded_pil_image(width, height, radius, fill, corner_bg, outline=None, outline_width=0, supersample=4)``
+     - Anti-aliased rounded rectangle as a raw ``PIL.Image`` — drawn at
+       ``supersample``× resolution and Lanczos-downscaled. Colours are ``(r, g, b)``
+       0-255 tuples.
+   * - ``make_rounded_image(...)``
+     - Same arguments; wraps the result in a ``PIL.ImageTk.PhotoImage``. Keep a
+       reference or Tk will garbage-collect it.
+   * - ``effective_radius(radius, style, w, h)``
+     - Resolve a ``radius``/``radius_style`` pair to a pixel radius for a *w*×*h* box,
+       clamped to half the short side.
+   * - ``round_image(img, radius, outline=None, outline_width=0, supersample=4)``
+     - Return *img* with anti-aliased **transparent** rounded corners and an optional
+       stroked outline. The mask is multiplied into the image's own alpha, so existing
+       PNG transparency survives.
+
+----
+
+vLabel (0.6.0)
+--------------
+
+``vLabel(RoundedLeaf, vWidget, Label)`` — a ``tk.Label`` that inherits ``background``,
+``foreground`` and ``font`` from its parent and can be rounded.
+
+.. code-block:: python
+
+    from tkinter import Frame
+    from VIStk.Widgets import vLabel
+
+    pane = Frame(root, bg="white")
+
+    vLabel(pane, text="Hello").pack()                      # bg/fg/font inherited
+    vLabel(pane, text="Pill", bg="#2f78d3", fg="white",
+           radius=100, radius_style="percent").pack()      # full pill
+    vLabel(pane, text="Item", image=icon,
+           compound="left", radius=8).pack()               # icon laid out natively
+
+Constructor: ``vLabel(master=None, *, radius=0, radius_style="pixels", outline=None,
+outline_width=1, corner_bg=None, **label_options)``.
+
+A **text-only** label paints the rounded fill into its image slot and draws the text over
+it, so the text is never covered at any radius — circles included. Passing your own
+``image=`` switches to corner-tile rounding, which leaves the native image slot free so
+``image`` / ``compound`` / ``anchor`` behave exactly as on a native ``Label``. The tiles
+are opaque, so keep the radius modest in that mode.
+
+----
+
+vButton (0.6.0)
+---------------
+
+``vButton(RoundedLeaf, vWidget, Button)`` — a ``tk.Button`` with the same inheritance and
+rounding as ``vLabel``. ``command`` / ``invoke()`` and every native button option pass
+through unchanged.
+
+.. code-block:: python
+
+    from VIStk.Widgets import vButton
+
+    vButton(bar, text="Save", command=save).pack()          # bg/fg/font inherited
+
+    vButton(bar, text="Quote", command=quote, radius=8,     # rounded chip
+            bg="#eef1f6", fg="#2f78d3",
+            active_fill="#dbe6f6").pack()                   # hover fill
+
+Constructor adds two arguments to the shared set:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 25 15 60
+
+   * - Argument
+     - Type
+     - Description
+   * - ``active_fill``
+     - ``str / None``
+     - Hover fill colour (rounded mode only), applied on ``<Enter>`` / ``<Leave>``.
+   * - ``disabled_fill``
+     - ``str``
+     - Fill painted when ``state="disabled"`` (default ``"#e9ecef"``). Pair it with
+       ``configure(state=...)``.
+
+Rounded mode flattens the relief (``relief="flat"``, ``overrelief="flat"``) and shows a
+hand cursor. Disabling the button greys it, swaps the cursor back to an arrow, and gates
+the click. In tile mode the corner tiles forward clicks and hover events to the button,
+so the rounded corners stay live rather than swallowing them.
+
+----
+
+vFrame (0.6.0)
+--------------
+
+``vFrame(RoundedContainer, vWidget, LayoutFrame)`` — a ``LayoutFrame`` (so it keeps the
+``.Layout`` helper; see :doc:`objects`) that inherits ``background`` only — frames have
+no fg/font — and can be rounded.
+
+.. code-block:: python
+
+    from VIStk.Widgets import vFrame, vLabel
+
+    card = vFrame(root, bg="white", radius=14)              # white card on a grey parent
+    card.place(relx=.1, rely=.1, relwidth=.8, relheight=.8)
+    card.Layout.colSize([1.0]); card.Layout.rowSize([1.0])
+    vLabel(card, text="Inside").place(card.Layout.cell(1, 1))
+
+Constructor adds ``inset`` to the shared set:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 25 15 60
+
+   * - Argument
+     - Type
+     - Description
+   * - ``inset``
+     - ``int / None``
+     - Content inset (``.Layout.margin``) in px applied to every child, however it was
+       placed. ``None`` (default) auto-computes ``ceil(radius·(1 − 1/√2))`` — the largest
+       rectangle that fits inside the corner arc. Pass a larger value to pull content
+       further in, or ``0`` for none.
+
+The frame's ``bg`` is the **fill**. A Tk child is an opaque rectangle with no per-widget
+transparency, so a child reaching a rounded corner would square it off; that is why every
+child is inset — under ``place``, ``pack``, ``grid`` *and* ``.Layout.cell`` alike, with
+the caller's own padding preserved. The inset is invisible when the child shares the
+frame's fill, which is the inherited default.
+
+Children added at runtime, after the frame has been sized, are picked up on the next
+resize; call ``refresh()`` to re-inset them immediately.
+
+----
+
+vLabelFrame (0.6.0)
+-------------------
+
+``vLabelFrame(RoundedContainer, vWidget, LabelFrame)`` — a drop-in ``tk.LabelFrame``
+(``text``, ``labelanchor``, ``labelwidget``, ``relief``, ``bd`` … all work) that inherits
+``background``, ``foreground`` and ``font``, carries a ``.Layout`` like ``vFrame``, and
+takes the same ``inset`` argument.
+
+.. code-block:: python
+
+    from VIStk.Widgets import vLabelFrame, vLabel
+
+    box = vLabelFrame(root, text="Tooling", radius=12, outline="#c8ccd2")
+    box.place(x=20, y=20, width=260, height=180)
+    box.Layout.colSize([1.0]); box.Layout.rowSize([1.0])
+    vLabel(box, text="Inside").place(box.Layout.cell(1, 1))
+
+A rounded box almost always wants an ``outline`` (or a fill that contrasts the parent) —
+the native rectangular border is flattened in rounded mode, so without one the only thing
+drawn is the title.
+
+The title needs special handling: a ``LabelFrame`` lays its children out in a *content
+area* below the title band, so a background image placed there would miss the top and
+bottom border. In rounded mode the background is floated across the **whole** frame
+instead, and the title is routed through a ``labelwidget`` — an internal ``Label``
+mirroring your ``text`` / ``fg`` / ``font``, or the ``labelwidget`` you supply — which Tk
+still positions per ``labelanchor`` and which is lifted above the background, so the
+title breaks the rounded border exactly like a native one. ``configure(text=...)``,
+``cget("text")`` and ``box["text"]`` (plus ``fg`` / ``foreground`` / ``font``)
+transparently proxy to that title. None of this applies at ``radius=0``.
+
+----
+
+vImage (0.6.0)
+--------------
+
+``vImage(vWidget, Label)`` — an **image-only** widget, the mirror of ``vLabel``'s "text
+with an optional image". Path resolution and loading are delegated to ``VIMG``, so
+``Project().p_images`` lookup, the glob fallback and ``absolute_path`` behave exactly as
+everywhere else; ``vImage`` owns only the Tk rendering. It inherits ``background`` only.
+
+.. code-block:: python
+
+    from VIStk.Widgets import vImage
+
+    # Contain a logo in the widget, letterboxed with the inherited bg
+    vImage(pane, "logo").place(relwidth=1, relheight=1)
+
+    # A fixed-size rounded thumbnail
+    vImage(pane, "avatar.png", size=(64, 64), radius=12).pack()
+
+Constructor: ``vImage(master=None, path=None, *, image=None, absolute_path=False,
+size=None, fit=True, resample=Resampling.BICUBIC, radius=0, radius_style="pixels",
+outline=None, outline_width=1, **label_options)``.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 25 15 60
+
+   * - Argument
+     - Type
+     - Description
+   * - ``path``
+     - ``str / None``
+     - Image path resolved by ``VIMG``. ``None`` builds an empty holder — call
+       ``set_path()`` / ``set_image()`` later.
+   * - ``image``
+     - ``PIL.Image / None``
+     - An in-memory image to display instead of loading from disk. Takes precedence over
+       *path*.
+   * - ``absolute_path``
+     - ``bool``
+     - Treat *path* as a literal filesystem path (no ``p_images`` lookup).
+   * - ``size``
+     - ``(w, h) / None``
+     - Fixed pixel box to fit into. Omit to fit the **live** widget size, re-fitting on
+       every resize.
+   * - ``fit``
+     - ``str / bool``
+     - ``"fit"`` (contain, aspect-preserved, letterboxed — the default), ``"stretch"``
+       (fill exactly, ignore aspect), ``"crop"`` (cover, centre-crop the overflow), or
+       ``"none"`` (natural size). ``True`` / ``False`` are aliases for ``"fit"`` /
+       ``"none"``.
+   * - ``resample``
+     - ``Resampling``
+     - PIL resampling filter, default ``BICUBIC``. Use ``NEAREST`` to keep hard colour
+       boundaries crisp when stretching.
+
+Methods: ``set_path(path, *, absolute_path=False)`` swaps the source from disk and
+repaints; ``set_image(pil_image)`` swaps to an in-memory image with no disk load. The
+loaded ``VIMG`` (when there is one) is exposed as ``.VIMG``.
+
+Rounding here is done image-side rather than with the shared machinery: an anti-aliased
+mask makes the corners genuinely **transparent**, so the widget's inherited ``bg`` shows
+through and re-blends on a ``bg`` change with no re-render. A percentage radius resolves
+against the *rendered* image, so it tracks the picture as it is re-fitted.

@@ -14,8 +14,8 @@ Released
      - Title
      - Highlights
    * - :doc:`0.6`
-     - Application Settings
-     - ``Project.Settings`` (``.VIS/settings.json``); tabbed Settings window + ``register_settings_panel``; remember window geometry & open tabs; start-with-OS; font appearance; ``notifications.*``
+     - Application Settings, v-Prefixed Widgets & Native Menubar
+     - **0.6.0** --- ``Project.Settings`` (``.VIS/settings.json``); tabbed Settings window + ``register_settings_panel``; remember window geometry & open tabs; start-with-OS; font appearance; ``notifications.*``; ``vLabel``/``vButton``/``vFrame``/``vLabelFrame``/``vImage`` rounded, parent-inheriting widgets; ``AutocompleteEntry`` popup scoping & tracking. **0.6.1** --- native Windows menubar images + right-aligned entries (``_MenuNative``, ``HostMenu.refresh_native``); separate title-bar vs taskbar window icon
    * - :doc:`0.5`
      - VIS Widgets, Help Button & Popup Polish
      - Tooltip / CollapsibleFrame / AutocompleteEntry / DateEntry; ``HostMenu.add_project_command``; per-screen ``docs`` URL + ``VIS docs`` CLI; ``confirm`` / ``confirm_discard``; ``WindowGeometry.center_on``

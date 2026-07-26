@@ -8,8 +8,10 @@ Root
 
 ``Root(Tk, Window)`` — The application's main window. Wraps ``Tk`` with VIStk attributes.
 
-See also Host — a subclass of Root that adds persistent tray-based lifecycle, tabbed screen
-management, and unified navigation.
+See also Host — **not** a subclass of ``Root``, but a standalone coordinator that owns a hidden
+``Tk`` root and manages visible windows for it. It adds tabbed screen management, multi-window
+lifecycle, and unified navigation. There is no system tray: the Host lives exactly as long as
+its windows.
 
 .. code-block:: python
 
@@ -89,6 +91,11 @@ The hidden root is never shown to the user. All visible UI lives inside ``Detach
 instances, each of which contains its own ``HostMenu``, ``SplitView`` (with ``TabManager``
 panes), and ``InfoRow``.
 
+The Host is not a background service and there is no system tray — the 0.5.3 always-Host
+refactor removed it. The Host starts with the first window and tears itself down once the last
+``DetachedWindow`` closes; a localhost socket provides single-instance forwarding while a Host
+is alive.
+
 On the first call to ``update()``, the Host automatically opens the project's default screen
 (from ``project.json``). This deferred open ensures that ``Host.py`` has time to configure
 ``default_menu_setup`` before any window is created.
@@ -149,19 +156,30 @@ On the first call to ``update()``, the Host automatically opens the project's de
 
    * - Method
      - Description
-   * - ``host.open(screen_name)``
+   * - ``host.open(screen_name, args=None)``
      - Unified navigation. Tabbed screens open as tabs in the active window; standalone
-       screens open as new ``DetachedWindow`` instances.
+       screens open as chromeless ``DetachedWindow`` instances. ``args`` are CLI-style tokens
+       forwarded to the screen's ``ArgHandler`` before its ``setup()`` runs. Refuses to open a
+       screen whose binary is missing from a compiled install, showing an ``InfoRow`` banner
+       instead.
    * - ``host.update()``
-     - Processes all pending Tk events for the root and every ``DetachedWindow``. On the
-       first call, opens the default screen.
+     - Pumps one iteration: opens the startup screen(s) on the first tick, drains the IPC
+       queue, calls ``loop()`` on every open tab, updates Tk, and shuts down when the last
+       window closes.
    * - ``host.tick_fps()``
      - Call once per loop iteration to maintain ``host.fps``.
    * - ``host.quit_host()``
      - Closes all ``DetachedWindow`` instances one by one (respecting ``on_quit`` vetoes),
-       sets ``Active = False``, and destroys the root.
+       persists the session, sets ``Active = False``, and destroys the root. A veto aborts the
+       shutdown and leaves settings untouched.
+   * - ``host.register_settings_panel(name, setup_fn)``
+     - Adds a tab named ``name`` to the built-in Settings window. See `Settings panels`_.
+   * - ``host.register_menubar_accessory(builder)``
+     - Registers a live widget for the menubar's right edge. See `Menubar accessories`_.
    * - ``host.unregister_startup()``
-     - Removes the Host from the Windows startup registry.
+     - Removes the Host from the Windows startup registry (``HKCU\...\CurrentVersion\Run``,
+       keyed ``<ProjectTitle>Host``). The matching ``_register_startup()`` is private and
+       driven by the ``host.start_with_os`` setting; neither runs automatically on first launch.
 
 Shared menus
 ~~~~~~~~~~~~
@@ -183,6 +201,65 @@ callable that receives a ``HostMenu`` instance:
 
 This callback is invoked on every new window, ensuring consistent menus across all windows.
 
+Settings panels
+~~~~~~~~~~~~~~~
+
+``register_settings_panel(name, setup_fn)`` lets an application contribute its own tab to the
+framework's Settings window alongside the built-in **General** tab. ``name`` is the notebook tab
+label; registering the same name twice replaces the earlier panel. Register before entering the
+update loop — typically in ``.VIS/Host.py`` — because the panel list is read each time the
+Settings surface is built.
+
+``setup_fn`` receives the tab body (a ``ttk.Frame``) and builds into it, mirroring a screen's
+``setup(parent)``. Two arities are accepted:
+
+- ``setup_fn(frame)`` — self-managed. The panel builds its own widgets and reads/writes
+  ``host.Project.Settings`` itself.
+- ``setup_fn(frame, ui)`` — integrated. ``ui`` is the settings controller; fields built with
+  ``ui.add_check(parent, row, label, key)``, ``ui.add_int(parent, row, label, key, hint="")``,
+  or ``ui.add_combo(parent, row, label, key, values, editable=False)`` are registered in the
+  window's read-back registry and ride its own **Save** and **Restore Defaults** buttons exactly
+  like the General tab — no per-panel Save button, no apply-on-change surprise.
+
+.. code-block:: python
+
+    def my_panel(parent, ui):
+        ui.add_check(parent, 0, "Enable feature X", "my.feature.enabled")
+        ui.add_int(parent, 1, "Retry limit", "my.feature.retries", "attempts")
+
+    host.register_settings_panel("My Plugin", my_panel)
+
+A panel that raises during ``setup_fn`` does not take the Settings window down — the traceback
+is printed and the tab shows an inline error message, so a broken panel is visible rather than
+blank.
+
+Menubar accessories
+~~~~~~~~~~~~~~~~~~~
+
+``register_menubar_accessory(builder)`` registers a **live widget** for the trailing (right) edge
+of the menubar. The native OS menubar cannot host Tk widgets, so accessories are mounted instead
+in the right-aligned slot of each window's top tab-bar row — the first Tk-controlled strip, which
+reads as the menubar's right side.
+
+``builder(parent)`` is called once per window with that slot (a ``tk.Frame`` pinned to the
+corner); build a small widget into it. The return value is ignored, and the widget owns its own
+refresh (e.g. a ``widget.after`` tick) — the Host does not drive it. Register before entering the
+update loop. A vertical tab bar has no accessory slot and is skipped, and a builder that raises is
+isolated so it cannot take the window down.
+
+.. code-block:: python
+
+    def user_badge(parent):
+        from tkinter import ttk
+        ttk.Label(parent, text=current_user()).pack(side="right", padx=6)
+
+    host.register_menubar_accessory(user_badge)
+
+Reach for an accessory only when the content must stay a live widget — an entry, a combobox, an
+animation. For a *static* text or bitmap badge, prefer the native menubar path
+(``HostMenu.add_project_command`` with a PIL image and/or ``align="right"``), which puts the entry
+on the real Windows menu strip rather than in the tab-bar row below it; see :doc:`widgets`.
+
 Singleton
 ~~~~~~~~~
 
@@ -199,9 +276,9 @@ along the top edge and a content area where each tab's ``Frame`` lives.
 Screen modules are imported by the Host and passed to ``open_tab``. ``TabManager`` calls
 ``setup(frame)``, ``on_focused()``, and ``on_unfocused()`` at the appropriate times.
 
-**Hook lookup priority:** If ``modules/<screen>/m_<screen>.py`` exists, ``TabManager`` checks it
-first for ``on_focused``, ``on_unfocused``, and ``configure_menu``. The screen script is used as a
-fallback.
+**Hook lookup:** Hooks (``on_focused``, ``on_unfocused``, ``on_quit``, ``configure_menu``,
+``has_unsaved``) are read off the tab's own per-tab namespace — the same module that holds the
+rest of the screen's API. There is no separate hooks module to consult.
 
 **Attributes:**
 
@@ -269,8 +346,9 @@ DetachedWindow
 --------------
 
 ``DetachedWindow`` — A floating ``Toplevel`` window containing its own ``SplitView`` (which wraps
-one or more ``TabManager`` panes). Created by the Host when a tab is popped out via the right-click
-context menu or drag-to-detach. Tracked in ``host._detached``.
+one or more ``TabManager`` panes). Every visible application window is a ``DetachedWindow``;
+further ones are created by the Host when a standalone screen opens or when a tab is popped out
+via the right-click context menu or drag-to-detach. Tracked in ``host.detached_windows``.
 
 Popping a tab out re-runs ``setup(parent)`` in the new window, so screen UI state is reset.
 
@@ -291,6 +369,42 @@ Popping a tab out re-runs ``setup(parent)`` in the new window, so screen UI stat
 - **Force refresh** re-imports the screen module and re-runs ``setup(parent)`` in-place.
 - Closing the window runs ``on_unfocused`` on all tabs across all panes and destroys them.
 - When the Host shuts down, all ``DetachedWindow`` instances are closed first.
+
+Window icons (0.6.1)
+~~~~~~~~~~~~~~~~~~~~
+
+Windows keeps two icon slots per window — ``ICON_SMALL`` (title bar and alt-tab) and ``ICON_BIG``
+(taskbar) — but Tk's ``iconphoto`` fills both with a single image, so before 0.6.1 the two were
+always identical. ``DetachedWindow`` now drives them independently.
+
+**Configuration:**
+
+- ``defaults.icon`` in ``project.json`` (read as ``project.d_icon``) — the taskbar icon, and the
+  only icon on non-Windows platforms.
+- ``defaults.window_icon`` (read as ``project.d_window_icon``) — the title-bar icon. This is the
+  **only** project-level way to set it. Leaving it unset preserves the pre-0.6.1 behaviour of one
+  shared image.
+- A screen's ``icon`` and ``window_icon`` entries override the project defaults, but **only for a
+  chromeless (standalone, ``tabbed: false``) window** that the screen owns outright.
+
+All four name a file in the project's ``Icons/`` folder without its extension; any PIL-readable
+format works.
+
+**Behaviour:**
+
+- The taskbar slot is filled via ``iconphoto`` exactly as before: a chromeless screen's ``icon``
+  if it has one, else ``project.d_icon``.
+- The title-bar slot is filled from ``project.d_window_icon``, overridden by a chromeless screen's
+  ``window_icon``.
+- A tabbed screen can never repaint its window's title-bar icon. Its window is chromed and shared
+  with whatever other tabs are open, so the internal icon loader is never handed a screen name for
+  it — the constraint is structural, not a runtime check. Set ``defaults.window_icon`` instead.
+- The title-bar override is Windows-only: it resolves the window's decorated wrapper HWND and
+  sends ``WM_SETICON``. On every other platform it is a no-op and the title bar keeps sharing the
+  ``iconphoto`` image.
+- The underlying HICON handles are cached process-wide, because ``WM_SETICON`` does not copy the
+  icon — the handle must outlive the call. Each distinct icon name is therefore built at most
+  once per process.
 
 ``DetachedWindow`` is created internally — you do not instantiate it directly.
 
@@ -359,7 +473,12 @@ control and icon loading. You do not instantiate it directly.
    * - ``unfullscreen(absolute=False)``
      - Restores window size.
    * - ``setIcon(icon)``
-     - Loads ``Icons/<icon>.*`` as the window icon using PIL.
+     - Loads ``Icons/<icon>.*`` as the window icon using PIL. Pass the name without extension;
+       a name that matches no file prints a warning and leaves the icon untouched.
+
+``setIcon`` uses ``iconphoto``, which fills the title-bar and taskbar slots with the same image.
+The independent title-bar icon added in 0.6.1 applies to Host-managed windows only — see
+`Window icons (0.6.1)`_.
 
 WindowGeometry
 --------------

@@ -20,7 +20,9 @@ class Screen(VINFO):
         self.script:str=script
         """The Name of the python script the screen executes"""
         self.release:bool=release
-        """`True` if `Screen` Should be Released as Its Own Binary"""
+        """`True` if the `Screen` is included in a release build (and gets a
+        Start Menu shortcut).  Per-screen binaries were dropped in 0.5.2 —
+        a release now produces a single executable."""
         self.icon:str=icon
         """The Name of the Icon for the Screen"""
         self.path = self.p_screens+"/"+self.name
