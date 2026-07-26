@@ -1811,10 +1811,14 @@ class Host:
     def register_menubar_accessory(self, builder) -> None:
         """Register a widget to sit at the top-right of the menubar strip.
 
-        The native OS menubar can't host widgets and can't right-align an
-        entry, so accessories live at the trailing (right) edge of each
-        window's top tab-bar row — the first Tk-controlled strip, which reads
-        as the menubar's right side.
+        The native OS menubar can't host live widgets, so accessories live
+        at the trailing (right) edge of each window's top tab-bar row — the
+        first Tk-controlled strip, which reads as the menubar's right side.
+        (Since 0.6.1 a *static* entry — text and/or a bitmap — CAN sit
+        right-aligned on the real Windows menubar via
+        ``HostMenu.add_project_command(..., image=<PIL image>,
+        align="right")``; an accessory remains the path for anything that
+        must stay a live widget — entries, comboboxes, animations.)
 
         ``builder(parent)`` is called once per window with the accessory
         container (a ``tk.Frame`` pinned to that corner); build a small widget

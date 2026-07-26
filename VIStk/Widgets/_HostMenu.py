@@ -47,6 +47,13 @@ class HostMenu:
         {"label": str, "items": [<item spec>, ...]}      # cascade submenu
         {"separator": True}                              # separator
 
+    On Windows, top-level entries added with :meth:`add_project_command` can
+    additionally carry a **native bitmap** (pass a ``PIL.Image.Image``) and be
+    **right-aligned** on the real menubar strip (``align="right"``) — see
+    ``Widgets/_MenuNative.py``.  Tk rebuilds the native menu on every
+    mutation, dropping those patches, so every menubar-mutating method here
+    ends by scheduling a coalesced :meth:`refresh_native`.
+
     Attributes:
         menubar (Menu): The underlying Tk Menu widget.
     """
@@ -63,6 +70,14 @@ class HostMenu:
         self._shared_menus: dict[str, Menu] = {}
         self._shared_defaults: dict[str, dict[str, dict]] = {}
         self._hidden_shared: list[tuple[str, int, Menu]] = []
+        # Native (Windows) menubar patches: label -> {right, image, hbitmap}.
+        # Re-applied after every Tk menu mutation (Tk rebuilds the native
+        # menu and drops out-of-band patches).
+        self._native_patches: dict[str, dict] = {}
+        self._image_refs: list = []          # keep PhotoImages alive (Tk GC)
+        self._native_refresh_pending = False
+        parent.bind("<Map>", self._on_map, add="+")
+        parent.bind("<Destroy>", self._on_destroy, add="+")
 
     @property
     def window(self) -> Tk | Toplevel:
@@ -75,6 +90,7 @@ class HostMenu:
         """Configure the parent window to show this menu bar."""
         self._parent.config(menu=self.menubar)
         self._build_base()
+        self._schedule_native_refresh()
 
     def detach(self):
         """Remove this menu bar from the parent window without destroying it.
@@ -108,11 +124,19 @@ class HostMenu:
             return
         cascade = Menu(self.menubar, tearoff=0)
         self._populate(cascade, items)
-        self.menubar.add_cascade(label=label, menu=cascade)
+        first_right = self._first_right_index()
+        if first_right is None:
+            self.menubar.add_cascade(label=label, menu=cascade)
+        else:
+            # A right-aligned native entry exists — MFT_RIGHTJUSTIFY drags
+            # every subsequent item right with it, so insert before it.
+            self.menubar.insert_cascade(first_right, label=label,
+                                        menu=cascade)
         self._project_labels.append(label)
+        self._schedule_native_refresh()
 
     def add_project_command(self, label: str, command, image=None,
-                            compound=None) -> None:
+                            compound=None, align=None) -> None:
         """Add one leaf command directly to the menubar (project layer).
 
         Unlike :meth:`set_project_items` which adds a cascade (a dropdown),
@@ -126,24 +150,75 @@ class HostMenu:
         Args:
             label:    Top-level label shown on the menubar.
             command:  Zero-arg callable invoked when the user clicks.
-            image:    Optional ``PhotoImage`` shown with the label.  NOTE: the
-                      menubar is a native OS menu — Tk accepts the option but
-                      whether the image renders on the top-level menubar strip
-                      is platform-dependent (Windows often shows text only).
-                      Keep the caller's reference alive to avoid GC.
+            image:    Optional image shown with the label — either a Tk
+                      ``PhotoImage`` or a ``PIL.Image.Image``.  NOTE: the
+                      menubar is a native OS menu — Tk ignores the option on
+                      the Windows top-level strip, but a **PIL** image is
+                      rendered there natively (patched onto the real menu as
+                      a premultiplied-alpha bitmap; see
+                      ``Widgets/_MenuNative.py``).  Off-Windows a PIL image
+                      falls back to ``ImageTk.PhotoImage`` (the reference is
+                      kept alive on this object) — on X11 the Tk-drawn
+                      menubar renders it.  For a caller-supplied
+                      ``PhotoImage``, keep your own reference alive to avoid
+                      GC.
             compound: Icon/text arrangement when *image* is set (default
-                      ``"left"``).
+                      ``"left"``).  Ignored on the native (Windows) bitmap
+                      path.
+            align:    ``"right"`` right-justifies the entry on the native
+                      Windows menubar (the entry — and any entry after it —
+                      hugs the right edge of the bar).  Works with or
+                      without an image; ignored off-Windows.
 
         The entry can be relabelled later with
         ``host_menu.menubar.entryconfigure(<current label>, label=...,
-        image=...)``.
+        image=...)``; to swap a native bitmap without touching the Tk entry
+        use :meth:`set_native_image`.
         """
+        from VIStk.Widgets import _MenuNative
+
         kw = {"label": label, "command": command}
+        native = None    # pending {right, image, hbitmap} patch, if any
         if image is not None:
-            kw["image"] = image
-            kw["compound"] = compound or "left"
-        self.menubar.add_command(**kw)
+            pil_image = None
+            try:
+                from PIL import Image
+                if isinstance(image, Image.Image):
+                    pil_image = image
+            except ImportError:
+                pass
+            if pil_image is not None:
+                if _MenuNative.available():
+                    # Don't hand the image to Tk — patch the native menu.
+                    native = {"right": align == "right",
+                              "image": pil_image, "hbitmap": None}
+                else:
+                    # Legacy path: Tk-drawn menubars (X11) render the image.
+                    from PIL import ImageTk
+                    photo = ImageTk.PhotoImage(pil_image)
+                    self._image_refs.append(photo)
+                    kw["image"] = photo
+                    kw["compound"] = compound or "left"
+            else:
+                kw["image"] = image
+                kw["compound"] = compound or "left"
+        if align == "right" and native is None and _MenuNative.available():
+            native = {"right": True, "image": None, "hbitmap": None}
+
+        if native is not None and native["right"]:
+            # Right-aligned entries append at the end (rightmost).
+            self.menubar.add_command(**kw)
+        else:
+            first_right = self._first_right_index()
+            if first_right is None:
+                self.menubar.add_command(**kw)
+            else:
+                # Keep left-side entries left of the right-aligned block.
+                self.menubar.insert_command(first_right, **kw)
         self._project_labels.append(label)
+        if native is not None:
+            self._native_patches[label] = native
+        self._schedule_native_refresh()
 
     def clear_project_items(self):
         """Remove all project-layer cascades.
@@ -156,6 +231,7 @@ class HostMenu:
             except TclError:
                 pass
         self._project_labels.clear()
+        self._schedule_native_refresh()
 
     def set_screen_items(self, items: list[dict], label: str = "Screen"):
         """Add one cascade to the screen layer (accumulates).
@@ -183,12 +259,21 @@ class HostMenu:
                 self.menubar.entryconfigure(idx, menu=cascade)
                 self._replaced_shared.add(label)
                 self._screen_labels.append(label)
+                self._schedule_native_refresh()
                 return
             except TclError:
                 pass
 
-        self.menubar.add_cascade(label=label, menu=cascade)
+        first_right = self._first_right_index()
+        if first_right is None:
+            self.menubar.add_cascade(label=label, menu=cascade)
+        else:
+            # Keep screen cascades left of the right-aligned native block
+            # (MFT_RIGHTJUSTIFY drags everything after it to the right).
+            self.menubar.insert_cascade(first_right, label=label,
+                                        menu=cascade)
         self._screen_labels.append(label)
+        self._schedule_native_refresh()
 
     def clear_screen_items(self):
         """Remove all accumulated screen cascades and restore shared ones."""
@@ -208,6 +293,7 @@ class HostMenu:
             except TclError:
                 pass
         self._hidden_shared.clear()
+        self._schedule_native_refresh()
 
     def build_shared_menu(self, structure: dict):
         """Build the persistent shared menu from a structure dict.
@@ -262,10 +348,16 @@ class HostMenu:
                         "command": kw["command"],
                         "state":   kw["state"],
                     }
-            self.menubar.add_cascade(label=label, menu=cascade)
+            first_right = self._first_right_index()
+            if first_right is None:
+                self.menubar.add_cascade(label=label, menu=cascade)
+            else:
+                self.menubar.insert_cascade(first_right, label=label,
+                                            menu=cascade)
             self._project_labels.append(label)
             self._shared_menus[label] = cascade
             self._shared_defaults[label] = defaults
+        self._schedule_native_refresh()
 
     def apply_overrides(self, overrides: dict):
         """Patch shared menu items with screen-specific commands/states.
@@ -294,6 +386,7 @@ class HostMenu:
                     cascade.entryconfig(item_label, **opts)
                 except TclError:
                     pass
+        self._schedule_native_refresh()
 
     def reset_overrides(self):
         """Restore all shared menu items to their build-time defaults.
@@ -309,6 +402,7 @@ class HostMenu:
                     cascade.entryconfig(item_label, **opts)
                 except TclError:
                     pass
+        self._schedule_native_refresh()
 
     # ── Default snapshot ──────────────────────────────────────────────────────
 
@@ -316,21 +410,221 @@ class HostMenu:
         """Snapshot the current menubar state (called once after setup)."""
         idx = self.menubar.index("end")
         self._default_end = idx if idx is not None else 0
+        # Snapshot the entry labels too: later additions may be INSERTED
+        # before a right-aligned native entry rather than appended (see
+        # _first_right_index), so restore_defaults must identify extras by
+        # label, not by trailing index.
+        labels: list[str] = []
+        if idx is not None:
+            for i in range(idx + 1):
+                try:
+                    labels.append(self.menubar.entrycget(i, "label"))
+                except TclError:
+                    pass
+        self._default_labels = labels
 
     def restore_defaults(self):
         """Reset the menubar to the snapshot taken by save_defaults().
 
-        Removes any cascades added after the snapshot.
+        Removes any entries added after the snapshot.  Extras are matched by
+        label rather than position: with a right-aligned native entry on the
+        bar, post-snapshot cascades are inserted *before* it, so a
+        trailing-by-index trim would delete the wrong entries (e.g. the
+        right-aligned badge instead of a screen cascade).
         """
         if not hasattr(self, "_default_end") or self._default_end is None:
             return
         current = self.menubar.index("end")
-        if current is not None and self._default_end is not None:
-            for i in range(current, self._default_end, -1):
-                try:
-                    self.menubar.delete(i)
-                except TclError:
-                    pass
+        if current is None:
+            self._schedule_native_refresh()
+            return
+        # Multiset of snapshot labels; walk from the end so deletions don't
+        # shift indices we haven't visited yet.  The rightmost occurrence of
+        # a duplicated label is kept, which preserves a right-aligned entry.
+        remaining: dict[str, int] = {}
+        for lbl in getattr(self, "_default_labels", []):
+            remaining[lbl] = remaining.get(lbl, 0) + 1
+        for i in range(current, -1, -1):
+            try:
+                label = self.menubar.entrycget(i, "label")
+            except TclError:
+                continue
+            if remaining.get(label, 0) > 0:
+                remaining[label] -= 1
+                continue
+            try:
+                self.menubar.delete(i)
+            except TclError:
+                pass
+        self._schedule_native_refresh()
+
+    # ── Native menubar (Windows) ──────────────────────────────────────────────
+
+    @staticmethod
+    def native_menubar_supported() -> bool:
+        """Whether native menubar patching (bitmaps / right-align) works here.
+
+        ``True`` only on Windows — see ``Widgets/_MenuNative.py``.
+        """
+        from VIStk.Widgets import _MenuNative
+        return _MenuNative.available()
+
+    @staticmethod
+    def native_menu_height() -> int:
+        """Height of the native menu bar strip in pixels.
+
+        ``SM_CYMENU`` on Windows; falls back to ``20`` elsewhere.  Useful
+        for sizing a bitmap to the bar (see :meth:`add_project_command`).
+        """
+        from VIStk.Widgets import _MenuNative
+        return _MenuNative.menu_height()
+
+    def set_native_image(self, label: str, pil_image) -> bool:
+        """Swap the native bitmap on an existing entry, in place.
+
+        Renders *pil_image* to a new ``HBITMAP`` and sets it with
+        ``SetMenuItemInfo`` directly — the Tk entry is **not** touched, so Tk
+        does not rebuild the native menu (an ``entryconfigure`` would drop
+        every native patch and cause a visible rebuild).  The replaced
+        ``HBITMAP`` is freed after the swap.
+
+        Args:
+            label:     Label of an entry previously added through
+                       :meth:`add_project_command` with a PIL image (or
+                       ``align="right"``) — i.e. one with a registered
+                       native patch.
+            pil_image: The new ``PIL.Image.Image`` to show.
+
+        Returns:
+            ``True`` on success; ``False`` off-Windows, for an unknown /
+            unresolvable *label*, or on any native failure.
+        """
+        from VIStk.Widgets import _MenuNative
+        if not _MenuNative.available():
+            return False
+        patch = self._native_patches.get(label)
+        if patch is None:
+            return False
+        try:
+            idx = self.menubar.index(label)
+        except TclError:
+            return False
+        if idx is None:
+            return False
+        hbitmap = _MenuNative.pil_to_hbitmap(pil_image)
+        if hbitmap is None:
+            return False
+        if not _MenuNative.patch(self._parent, idx, hbitmap=hbitmap,
+                                 right=patch.get("right", False)):
+            _MenuNative.delete_hbitmap(hbitmap)
+            return False
+        old = patch.get("hbitmap")
+        patch["image"] = pil_image
+        patch["hbitmap"] = hbitmap
+        if old:
+            _MenuNative.delete_hbitmap(old)
+        return True
+
+    def refresh_native(self):
+        """Re-apply every registered native patch to the menubar, now.
+
+        Tk rebuilds the native menu whenever the Tk menu is mutated,
+        resetting ``hbmpItem`` and ``fType`` — this walks
+        ``self._native_patches`` and re-applies each by the entry's *current*
+        index.  Entries whose label no longer resolves (e.g. deleted by
+        :meth:`clear_project_items` / :meth:`restore_defaults`) are skipped.
+
+        Called automatically (coalesced via ``after_idle``) after every
+        menubar-mutating method; public as an escape hatch for callers that
+        mutate ``self.menubar`` directly.
+        """
+        from VIStk.Widgets import _MenuNative
+        if not _MenuNative.available() or not self._native_patches:
+            return
+        for label, patch in self._native_patches.items():
+            try:
+                idx = self.menubar.index(label)
+            except TclError:
+                continue
+            if idx is None:
+                continue
+            if patch.get("hbitmap") is None and patch.get("image") is not None:
+                patch["hbitmap"] = _MenuNative.pil_to_hbitmap(patch["image"])
+            hbitmap = patch.get("hbitmap")
+            if hbitmap and _MenuNative.current_hbitmap(
+                    self._parent, idx) == hbitmap:
+                # Patch intact — Tk resets hbmpItem and fType together, so
+                # a surviving bitmap means the justify flag survived too.
+                continue
+            _MenuNative.patch(self._parent, idx, hbitmap=hbitmap,
+                              right=patch.get("right", False))
+
+    def _schedule_native_refresh(self):
+        """Queue one coalesced :meth:`refresh_native` on the Tk idle loop.
+
+        Every menubar-mutating method ends here; the pending flag collapses
+        a burst of mutations (e.g. a full ``configure_menu`` pass) into a
+        single re-patch after Tk has rebuilt the native menu.
+        """
+        if not self._native_patches or self._native_refresh_pending:
+            return
+        self._native_refresh_pending = True
+        try:
+            self._parent.after_idle(self._do_native_refresh)
+        except TclError:
+            self._native_refresh_pending = False
+
+    def _do_native_refresh(self):
+        """after_idle target: clear the pending flag and re-patch."""
+        self._native_refresh_pending = False
+        try:
+            if not self._parent.winfo_exists():
+                return
+            self.refresh_native()
+        except TclError:
+            pass
+
+    def _first_right_index(self):
+        """Menubar index of the leftmost right-aligned entry, or ``None``.
+
+        ``MFT_RIGHTJUSTIFY`` right-aligns its item *and every item after
+        it*, so new left-side entries must be inserted before this index
+        rather than appended.
+        """
+        indices = []
+        for label, patch in self._native_patches.items():
+            if not patch.get("right"):
+                continue
+            try:
+                idx = self.menubar.index(label)
+            except TclError:
+                continue
+            if idx is not None:
+                indices.append(idx)
+        return min(indices) if indices else None
+
+    def _on_map(self, event):
+        """Re-apply native patches when the window (re)maps.
+
+        Deferred through :meth:`_schedule_native_refresh` rather than run
+        inline: mapping recreates the Tk wrapper window (the HWND changes)
+        and the menu isn't attached to the new wrapper yet when ``<Map>``
+        fires — ``GetMenu`` still returns 0 at that instant.
+        """
+        if event.widget is not self._parent:
+            return
+        self._schedule_native_refresh()
+
+    def _on_destroy(self, event):
+        """Free every native ``HBITMAP`` when the window is destroyed."""
+        if event.widget is not self._parent:
+            return
+        from VIStk.Widgets import _MenuNative
+        for patch in self._native_patches.values():
+            hbitmap = patch.get("hbitmap")
+            patch["hbitmap"] = None
+            if hbitmap:
+                _MenuNative.delete_hbitmap(hbitmap)
 
     # ── Internal ───────────────────────────────────────────────────────────────
 

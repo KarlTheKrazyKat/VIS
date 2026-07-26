@@ -39,8 +39,8 @@ The CLI prompts for:
 - **Initial version** --- e.g. ``0.1.0``
 - **Default screen name** --- the first screen the app opens
 
-This generates the ``.VIS/`` folder (project registry, templates, Host entry point) and
-scaffolds your first screen.
+This generates the ``.VIS/`` folder (project registry, application settings, templates,
+Host entry point) and scaffolds your first screen.
 
 Your project now looks like this:
 
@@ -49,12 +49,14 @@ Your project now looks like this:
    MyApp/
    ├── .VIS/
    │   ├── project.json
+   │   ├── settings.json        <- application settings, every key at its default
    │   ├── Host.py
    │   └── Templates/
    ├── Screens/
+   │   ├── defaults.py          <- shared imports for all screens
+   │   ├── root.py              <- standalone Tk root
    │   └── Home/
    ├── modules/
-   │   ├── defaults.py          <- shared imports for all screens
    │   └── Home/
    ├── Icons/
    ├── Images/
@@ -89,7 +91,7 @@ Open the generated screen script (e.g. ``Home.py``). The important parts:
                break
 
 - ``from Screens.defaults import *`` brings in tkinter, ``sys``, ``Project``, and
-  ``LayoutFrame`` — the standard set every screen needs.
+  ``LayoutFrame`` --- the standard set every screen needs.
 - ``setup(parent)`` is where all widget creation goes. The Host calls this function
   when loading the screen as a tab.
 - The ``if __name__ == "__main__":`` block lets you run the screen standalone for
@@ -98,15 +100,17 @@ Open the generated screen script (e.g. ``Home.py``). The important parts:
 4. Launch the app
 ------------------
 
-Start the Host (the persistent tabbed shell):
+Start the Host (the tabbed shell that owns your windows):
 
 .. code-block:: bash
 
    VIS MyApp
 
-This opens the Host window and loads your default screen as a tab. The Host lives in
-the system tray --- closing the window hides it rather than quitting. Use **App > Quit**
-from the menu bar or ``VIS stop`` from the terminal to fully shut down.
+This opens a window and loads your default screen as a tab. The Host itself is invisible
+--- it owns a hidden Tk root and manages the windows you see. It is not a background
+service: it lives exactly as long as its windows, so closing the last one shuts the whole
+app down. Running ``VIS MyApp`` again while it is up hands the launch to the Host already
+running rather than starting a second one.
 
 You can also open a specific screen directly:
 
@@ -174,27 +178,28 @@ Build your UI inside each element's ``build()`` function:
    def build(parent):
        global f_header
        f_header = ttk.Frame(parent)
-       f_header.place(parent.Layout.cell(0, 0))
+       f_header.place(parent.Layout.cell(1, 1))
        ttk.Label(f_header, text="Header").pack()
 
 7. Use layouts
 --------------
 
-VIStk's ``Layout`` system divides frames into proportional rows and columns:
+VIStk's ``Layout`` system divides frames into proportional rows and columns. Row and
+column sizes must each sum to ``1.0``, and cells are **1-indexed**:
 
 .. code-block:: python
 
    def setup(parent):
        pane = LayoutFrame(parent)
        pane.place(relx=0, rely=0, relwidth=1, relheight=1)
-       pane.Layout.rowSize([0.1, 0.8, 0.1])    # header, body, footer
-       pane.Layout.colSize([0.25, 0.75])         # sidebar, content
+       pane.Layout.rowSize([0.1, 0.8, 0.1])    # 1 header, 2 body, 3 footer
+       pane.Layout.colSize([0.25, 0.75])       # 1 sidebar, 2 content
 
        sidebar = ttk.Frame(pane)
-       sidebar.place(**pane.Layout.cell(1, 0))
+       sidebar.place(**pane.Layout.cell(2, 1))
 
        content = ttk.Frame(pane)
-       content.place(**pane.Layout.cell(1, 1))
+       content.place(**pane.Layout.cell(2, 2))
 
 8. Add menus
 ------------
@@ -219,8 +224,32 @@ You can also scaffold a dedicated menu module:
 
    VIS add screen Home menu FileMenu
 
-9. Release the app
--------------------
+9. Use application settings
+----------------------------
+
+``VIS new`` wrote a ``.VIS/settings.json`` containing every application setting at its
+default --- window size and alignment, geometry and open-tab restore, launch font,
+notification defaults. Read and write them from anywhere via ``project.Settings``:
+
+.. code-block:: python
+
+   from VIStk.Structures._Project import Project
+
+   settings = Project().Settings
+   settings.get("notifications.duration_ms")    # 5000
+   settings.set("appearance.font_family", "Consolas")
+   settings.save()
+
+To let users edit them, set ``host.settings_menu`` to ``true`` in ``project.json``. Every
+window's menu bar then gets a **Settings** entry that opens a tabbed settings surface. Add
+your own tab from ``.VIS/Host.py``:
+
+.. code-block:: python
+
+   host.register_settings_panel("My Plugin", my_panel_setup_fn)
+
+10. Release the app
+--------------------
 
 Build a distributable installer:
 
@@ -246,10 +275,13 @@ Release a single screen instead of the full project:
 Next steps
 ----------
 
-- :doc:`overview` --- project structure, app lifecycle, and the screen module pattern in
-  detail
+- :doc:`overview` --- project structure, app lifecycle, application settings, and the
+  screen module pattern in detail
 - :doc:`cli` --- full CLI reference for all ``VIS`` commands
-- :doc:`objects` --- ``Root``, ``Host``, ``Layout``, and other core objects
-- :doc:`widgets` --- ``TabBar``, ``HostMenu``, ``ScrollableFrame``, and more
-- :doc:`structures` --- ``Project``, ``Screen``, ``Version``, ``Release``
+- :doc:`objects` --- ``Root``, ``Host``, ``Layout``, ``register_settings_panel``, and
+  other core objects
+- :doc:`widgets` --- ``TabBar``, ``HostMenu``, ``SettingsWindow``, ``ScrollableFrame``,
+  and more
+- :doc:`structures` --- ``Project``, ``Screen``, ``ProjectSettings``, ``Version``,
+  ``Release``
 - :doc:`changelog/index` --- release history and roadmap

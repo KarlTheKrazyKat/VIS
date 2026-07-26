@@ -772,7 +772,7 @@ Lets a project ship non-VIStk installable media (e.g. a COM-registered SolidWork
 
 ---
 
-### 0.6.0 Application Settings
+### 0.6.0 Application Settings, v-Prefixed Widgets & Autocomplete Fixes
 
 Per-project application settings stored in `.VIS/settings.json`, accessed via `Project.Settings`, surfaced through a built-in tabbed Settings window.
 
@@ -799,7 +799,7 @@ Per-project application settings stored in `.VIS/settings.json`, accessed via `P
 
 - `appearance.font_family` / `appearance.font_size` applied at launch to Tk's named fonts (`TkDefaultFont`, `TkTextFont`, `TkMenuFont`, `TkHeadingFont`, `TkFixedFont`), which default and ttk widgets inherit.
 - `appearance.color_scheme` — stored placeholder for the future styles system (no effect yet).
-- Live re-styling of already-open windows is deferred to **0.6.1**.
+- Live re-styling of already-open windows is deferred to **0.6.2**.
 
 **Notifications**
 
@@ -818,7 +818,7 @@ Per-project application settings stored in `.VIS/settings.json`, accessed via `P
 
 ---
 
-### 0.6.2 v-Prefixed Widgets
+**v-Prefixed Widgets** *(drafted as 0.6.2; folded into the 0.6.0 release)*
 
 A family of `v`-prefixed widgets in `VIStk.Widgets` that subclass the **classic** tk widgets (so per-instance `bg`/`fg`/`font` work — ttk can't) and (1) inherit visual properties from their parent by default and (2) optionally render rounded corners. They consolidate the rounded "pill / chip / card" pattern that callers otherwise hand-roll per screen with Canvas polygons. (Issue #187.)
 
@@ -880,13 +880,53 @@ A family of `v`-prefixed widgets in `VIStk.Widgets` that subclass the **classic*
 
 **Packaging** — `pillow` added to `pyproject.toml` dependencies (already used by `Objects/_VIMG.py`, previously undeclared).
 
-### 0.6.3 AutocompleteEntry Popup Scoping & Tracking
+**AutocompleteEntry Popup Scoping & Tracking** *(drafted as 0.6.3; folded into the 0.6.0 release)*
 
 Two fixes to `AutocompleteEntry`'s suggestion popup (`VIStk/Widgets/_AutocompleteEntry.py`).
 
 - **Popup scoped to its own window (#189)** — the suggestion popup was a borderless `Toplevel` pinned with `attributes("-topmost", True)`, which is *global to the desktop*: while suggestions showed it floated above **every** application, so any Alt-Tab / notification / focus race left an orphan-looking box over whatever app was now active. It is now `transient(top)` + `lift(top)` to its own toplevel — above its own window (and out of the taskbar) only, never over other applications. `overrideredirect` stays (borderless is right for a dropdown).
 - **Popup tracks window move/resize** — the popup's geometry was computed once in `_show_popup`, so moving or resizing the parent window while suggestions were open left the popup stranded at stale screen coordinates. A `<Configure>` handler on the toplevel now re-runs positioning (extracted into `_position_popup`), keeping the popup glued below the entry and matching its width. Positioning is deferred to `after_idle` because a toplevel `<Configure>` fires *before* the geometry manager re-lays-out the entry — reading the entry width synchronously would use the pre-resize value.
-- **Clobber-proof cleanup** — the `<Configure>` handler is routed through a per-instance private bindtag (`_AutocompletePopup<id>`) rather than a direct `top.bind(...)`, so hiding the popup removes only our own binding and can never clobber another `<Configure>` handler on the window (and sidesteps the Tk `unbind`-by-funcid behaviour that differs across versions). Mirrors the 0.6.2 "clobber-proof resize repaint" approach.
+- **Clobber-proof cleanup** — the `<Configure>` handler is routed through a per-instance private bindtag (`_AutocompletePopup<id>`) rather than a direct `top.bind(...)`, so hiding the popup removes only our own binding and can never clobber another `<Configure>` handler on the window (and sidesteps the Tk `unbind`-by-funcid behaviour that differs across versions). Mirrors the v-widget "clobber-proof resize repaint" approach above.
+
+---
+
+### 0.6.1 Native Menubar Images, Right-Aligned Entries & Separate Window Title-Bar Icon
+
+Top-level `HostMenu` entries can now carry an **image on the real Windows menubar strip** and be **right-aligned** on it — Tk accepts `image=` on a menubar entry but the native Windows menu never rendered it, and Tk exposes no right-justify at all. The new private module `VIStk/Widgets/_MenuNative.py` patches the actual `HMENU` Tk built (ctypes/user32, `SetMenuItemInfoW`), after Tk builds it. Everything degrades gracefully off-Windows.
+
+**`_MenuNative`** — `VIStk/Widgets/_MenuNative.py`
+
+- `available()` / `menu_height()` — platform gate (Windows only) and the native bar height (`SM_CYMENU`, fallback 20).
+- `pil_to_hbitmap(img)` / `delete_hbitmap(h)` — PIL image → 32bpp **premultiplied-alpha** top-down DIB section (PARGB), so the themed menu alpha-blends it cleanly (plain RGBA draws black halos).
+- `patch(window, position, hbitmap=…, right=…)` — resolves the wrapper-window HWND via `wm_frame()` (not `winfo_id()`), read-modify-writes `fType` (`MFT_RIGHTJUSTIFY`) and/or sets `hbmpItem` (`MIIM_BITMAP`) by position, then `DrawMenuBar`. All VIStk menus are `tearoff=0`, so Tk entry index == native position. `current_hbitmap(window, position)` reads the patch back for cheap verification.
+- Right-justify is a Win32 quirk worth knowing: it right-aligns the patched item **and every item after it**.
+
+**`HostMenu`** — `VIStk/Widgets/_HostMenu.py`
+
+- `add_project_command(label, command, image=None, compound=None, align=None)` — `image` may now also be a `PIL.Image.Image`: on Windows it is rendered natively on the bar (never handed to Tk); elsewhere it falls back to `ImageTk.PhotoImage` (reference kept alive on the menu), which the Tk-drawn X11 menubar renders. New `align="right"` right-justifies the entry natively (with or without an image; ignored off-Windows).
+- `set_native_image(label, pil_image)` — swap an entry's bitmap in place via `SetMenuItemInfo` **without touching the Tk entry** (an `entryconfigure` would make Tk rebuild the native menu and drop every patch); frees the replaced `HBITMAP`. For live badges that re-render on state change.
+- `refresh_native()` — re-apply every registered patch by each label's *current* index (labels that no longer resolve are skipped). Needed because **Tk rebuilds the native menu on every Tk-side mutation** and silently drops out-of-band patches — so every menubar-mutating method (`attach`, `set_project_items`, `add_project_command`, `clear_project_items`, `set_screen_items`, `clear_screen_items`, `build_shared_menu`, `apply_overrides`, `reset_overrides`, `restore_defaults`) now ends by scheduling one coalesced re-patch on `after_idle`; `<Map>` re-applies too, and `<Destroy>` frees all `HBITMAP`s. Public as an escape hatch for callers that mutate `menubar` directly.
+- `native_menubar_supported()` / `native_menu_height()` — staticmethod delegates to `_MenuNative` so callers (e.g. PYWOM's user badge) can pick the native path and size their bitmap without importing the private module.
+- **Ordering with a right-aligned entry** — since `MFT_RIGHTJUSTIFY` drags all subsequent items right, once any right-aligned entry exists the add paths (`set_project_items`, `set_screen_items`, `add_project_command`, `build_shared_menu`) insert new left-side entries *before* the leftmost right-aligned entry instead of appending; right-aligned entries themselves still append at the end.
+- `Host.register_menubar_accessory` remains the path for **live widgets** at the menubar's right edge; its docstring now points static text/bitmap badges at the native path.
+
+#### Separate Window Title-Bar Icon
+
+A window's **title-bar (chrome) icon** and its **taskbar icon** can now differ. Windows keeps two icon slots per window — `ICON_SMALL` (title bar / alt-tab small) and `ICON_BIG` (taskbar) — but Tk's `iconphoto` fills both with one image, so previously they were always identical. VIStk now drives them independently; degrades to shared-image behavior off-Windows and when unconfigured.
+
+**`Project`** — `VIStk/Structures/_Project.py`
+
+- `d_window_icon` — new attribute read from `defaults.window_icon` in `project.json` (optional; `None` preserves prior behavior). The **only** project-level way to set the window title-bar icon. The taskbar icon remains `d_icon` (`defaults.icon`).
+
+**`Screen`** — `VIStk/Structures/_Screen.py`
+
+- `window_icon` — new attribute read from a screen's `window_icon` in `project.json` (optional). Overrides `d_window_icon` for the title bar **only when the screen owns a standalone (chromeless) window**. Tabbed screens share a chromed window that may host other screens, so their `window_icon` is ignored by design.
+
+**`DetachedWindow`** — `VIStk/Objects/_DetachedWindow.py`
+
+- `_load_icon` now fills the two slots separately: taskbar (`ICON_BIG`) via `iconphoto` exactly as before (screen `icon` for chromeless, else `d_icon`); title bar (`ICON_SMALL`) from `d_window_icon`, overridable by a chromeless screen's `window_icon`. Because `_load_icon` only receives a `screen_name` for chromeless windows, a tabbed screen can never repaint its shared window's icon — the constraint is structural, not a runtime check.
+- `_apply_titlebar_icon(icon_name)` — Windows-only; resolves the wrapper HWND via `GetParent(winfo_id())` and sets `ICON_SMALL` with `WM_SETICON`. No-op elsewhere.
+- `_titlebar_hicon(icons_dir, icon_name)` (module-level) + `_HICON_CACHE` — builds an HICON from any PIL-readable icon (`<icons_dir>/<icon_name>.*`, rendered to a small temp ICO and `LoadImageW`'d), cached process-wide so handles are built once and outlive the `WM_SETICON` call (Windows does not copy the icon).
 
 ---
 
@@ -975,7 +1015,7 @@ A reusable right-click popup menu so screens stop hand-coding the `tkinter.Menu`
 
 ---
 
-### 0.6.1 Live Appearance Apply
+### 0.6.2 Live Appearance Apply
 
 Deferred from 0.6.0. Apply appearance settings to **already-open** windows immediately when changed in the Settings window, instead of only on next launch:
 

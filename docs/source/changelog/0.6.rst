@@ -1,13 +1,20 @@
-0.6.0 --- Application Settings
-==============================
+0.6 --- Application Settings, v-Prefixed Widgets & Native Menubar
+=================================================================
+
+The 0.6 series adds per-project application settings, a family of
+inheritance-aware rounded widgets, and native Windows menubar control.
+
+0.6.0 --- Application Settings, v-Prefixed Widgets & Autocomplete Fixes
+-----------------------------------------------------------------------
 
 *Released.*
 
 Per-project application settings stored in ``.VIS/settings.json``, accessed via
-``Project.Settings``, surfaced through a built-in tabbed Settings window.
+``Project.Settings`` and surfaced through a built-in tabbed Settings window,
+plus the ``v``-prefixed widget family and two ``AutocompleteEntry`` popup fixes.
 
 Storage & API
--------------
+~~~~~~~~~~~~~
 
 - ``ProjectSettings`` (``VIStk/Structures/_Settings.py``) ---
   ``project.Settings.get(key, default)`` / ``.set(key, value)`` / ``.save()``,
@@ -26,7 +33,7 @@ Storage & API
   window has closed without veto, so a vetoed quit leaves settings untouched.
 
 Window & display
-----------------
+~~~~~~~~~~~~~~~~
 
 - ``window.default_width`` / ``default_height`` / ``default_align`` (center +
   8 compass points) / ``min_width`` / ``min_height`` applied to the session's
@@ -36,7 +43,7 @@ Window & display
 - ``window.fullscreen_on_launch`` --- open the first window maximized.
 
 Host & startup
---------------
+~~~~~~~~~~~~~~
 
 - ``host.start_with_os`` --- toggles the Windows startup-registry entry
   (``_register_startup`` / ``unregister_startup``), reconciled on Save; disabled
@@ -46,34 +53,36 @@ Host & startup
   truncated; screens no longer in the project are dropped silently.
 
 Appearance
-----------
+~~~~~~~~~~
 
 - ``appearance.font_family`` / ``font_size`` applied at launch to Tk's named
   fonts (``TkDefaultFont`` etc.), which default and ttk widgets inherit.
 - ``appearance.color_scheme`` --- stored placeholder for the styles system (no
   effect yet).
-- Live re-styling of already-open windows is deferred to 0.6.1.
+- Live re-styling of already-open windows is deferred to 0.6.2.
 
 Notifications
--------------
+~~~~~~~~~~~~~
 
 - ``notifications.enabled`` (stored; consumed by the 0.9 Toast widget) and
   ``notifications.duration_ms`` --- now the default ``InfoRow.show_banner``
   duration when a caller omits it.
 
 Settings UI
------------
+~~~~~~~~~~~
 
-- Modal, tabbed (``ttk.Notebook``) window opened from a framework-provided
-  **HostMenu > Settings** entry present on every window. Save / Cancel / Restore
-  Defaults; controls seeded from ``effective()``; Save writes overrides-only and
-  rejects negative / non-numeric numeric input.
+- Tabbed (``ttk.Notebook``) settings UI opened from a framework-provided
+  **HostMenu > Settings** entry. The entry is opt-in per project via
+  ``host.settings_menu`` in ``project.json`` (default ``false``). It opens as a
+  single-instance tab, falling back to a modal window when no chromed window
+  exists. Save / Cancel / Restore Defaults; controls seeded from ``effective()``;
+  Save writes overrides-only and rejects negative / non-numeric numeric input.
 - ``host.register_settings_panel(name, setup_fn)`` --- apps contribute their own
   tabs; ``setup_fn(parent_frame)`` builds into the tab body (mirrors a screen's
   ``setup``). A panel that raises shows an inline error rather than a blank tab.
 
-Scope notes
------------
+Settings scope notes
+~~~~~~~~~~~~~~~~~~~~
 
 - The spec's **tray** items (start-minimized-to-tray, a tray Settings entry)
   were dropped: the 0.5.3 always-Host refactor removed the system tray, so the
@@ -83,3 +92,263 @@ Scope notes
   reconstructed.
 - Window-size settings apply to the session's primary window; drag-detached /
   popped-out windows keep the default size.
+
+v-Prefixed Widgets
+~~~~~~~~~~~~~~~~~~
+
+*Drafted as 0.6.2; shipped in 0.6.0.*
+
+A family of ``v``-prefixed widgets in ``VIStk.Widgets`` that subclass the
+**classic** tk widgets --- ttk cannot take per-instance ``bg``/``fg``/``font``,
+so a themed widget can't be recoloured on its own. They (1) inherit visual
+properties from their parent by default and (2) optionally render rounded
+corners, consolidating the "pill / chip / card" pattern screens otherwise
+hand-roll with Canvas polygons.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 20 80
+
+   * - Widget
+     - Base and behaviour
+   * - ``vLabel``
+     - ``(RoundedLeaf, vWidget, Label)`` --- inherits ``bg``/``fg``/``font``.
+       Drop-in ``tkinter.Label`` at ``radius=0``.
+   * - ``vButton``
+     - ``(RoundedLeaf, vWidget, Button)`` --- ``command``/``invoke()`` and all
+       native options pass through. Rounded mode flattens the relief and shows
+       a hand cursor; ``active_fill`` recolours on hover, ``disabled_fill``
+       greys and gates the click.
+   * - ``vFrame``
+     - ``(RoundedContainer, vWidget, LayoutFrame)`` --- keeps ``.Layout``;
+       inherits ``background`` only. Drop-in ``LayoutFrame`` at ``radius=0``.
+   * - ``vLabelFrame``
+     - ``(RoundedContainer, vWidget, LabelFrame)`` --- inherits ``background``,
+       ``foreground`` **and** ``font`` (it has a title); carries a ``.Layout``.
+   * - ``vImage``
+     - ``(vWidget, Label)`` --- image-only widget loading through ``VIMG``, so
+       ``Project().p_images`` resolution and ``absolute_path`` behave as
+       everywhere else. Exposes ``.VIMG`` and ``set_path(...)``.
+
+``vWidget`` base --- ``VIStk/Widgets/_vWidget.py``
+
+- A pure mixin (subclasses ``object``, never ``tk.Widget``), combined with a
+  native widget by multiple inheritance: ``class vLabel(vWidget, Label)``.
+  ``vWidget.__init__`` runs first in the MRO --- computes inheritance, pops the
+  rounded kwargs --- then cooperative ``super().__init__()`` creates the Tcl
+  widget exactly once, so a ``vLabel`` genuinely *is* both.
+- **Parent inheritance** --- each subclass sets ``_INHERIT``; any of those
+  options the caller omits are filled from the parent at construction (explicit
+  options always win). Classic parents are read via ``cget``, ttk parents via
+  ``Style().lookup(...)`` with a ``SystemButtonFace`` fallback. The snapshot is
+  taken at construction; ``refresh()`` re-pulls on demand.
+- **Rounded corners** --- opt in with ``radius`` (``0`` means a plain native
+  widget, no extra machinery). Classic widgets are always rectangular, so the
+  look is built from an anti-aliased PIL rounded rectangle (4x supersampled,
+  Lanczos-downscaled) regenerated on ``<Configure>``; corners are painted with
+  the parent background so they blend on a solid-colour parent. Colours resolve
+  through ``winfo_rgb``, so every Tk colour name works. Optional ``outline`` /
+  ``outline_width`` / ``corner_bg``.
+- **``radius_style``** --- ``"pixels"`` (default) or ``"percent"``, where
+  ``radius`` is a percentage of the maximum round (half the short side), so
+  ``radius=100, radius_style="percent"`` is a full pill or circle. Resolved by
+  ``effective_radius(radius, style, w, h)`` from the **live** size inside every
+  render path, so a percentage radius survives resizes; the result is always
+  clamped to half the short side.
+- **Runtime recolour** --- ``configure()``/``config()`` repaints the corners
+  live when a paint-affecting option changes (``_REPAINT_OPTS``; ``vButton``
+  adds ``state``), so hover and disabled states reach the corners.
+- **Clobber-proof resize repaint** --- the ``<Configure>`` repaint is installed
+  on a dedicated bindtag (``_RENDER_TAG``) routed through one class-level
+  dispatcher, so a caller's own ``widget.bind("<Configure>", fn)`` *without*
+  ``add="+"`` can no longer silently replace it and leave the widget square.
+- ``make_rounded_image(...)``, ``rounded_pil_image(...)``,
+  ``effective_radius(...)`` and ``vWidget`` itself are exported so callers can
+  build further v-widgets.
+
+Two rounding strategies, because leaves and containers have different problems:
+
+- **``RoundedLeaf``** (``VIStk/Widgets/_vLeaf.py``) --- a classic Label/Button
+  has **one** image slot, which both the rounded fill and a caller's ``image=``
+  want. In *fill mode* (no caller image) the fill is painted into the slot with
+  ``compound="center"`` and the widget's own text draws over it, which works at
+  any radius including a true circle. In *tile mode* (the caller passed
+  ``image=``) the slot is left alone so ``image``/``compound``/``anchor`` behave
+  exactly like native tkinter, and the corners are instead four ``r``x``r``
+  crops of the same rounded image plus thin edge strips carrying the outline.
+  Strip thickness is *measured* from the rendered image (``_border_band``)
+  rather than assumed to equal ``outline_width`` --- the supersampled outline
+  bleeds wider, and fixed-width strips clipped it. Tiles are opaque, so large
+  radii need fill mode.
+- **``RoundedContainer``** (``VIStk/Widgets/_vContainer.py``) --- shared
+  machinery for ``vFrame`` and ``vLabelFrame``, which differ only by native
+  base. Draws the fill onto a *lowered* background ``Label``, then insets
+  **every** child by ``ceil(radius*(1 - 1/sqrt2))`` across all geometry managers
+  (``.Layout.cell``, ``place``, ``pack``, ``grid``), because a Tk child is an
+  opaque rectangle that would square off any corner it reaches. The inset is
+  invisible when the child shares the frame's ``bg``. Whole-pixel insetting can
+  still leave a sub-pixel notch on an outlined frame, so a ~1px corner patch ---
+  an exact crop of the border image --- is drawn *on the child*, above its
+  content, at only the corners a child actually occupies. ``_skip_child()``
+  excludes children the machinery must not touch (the background label,
+  ``vLabelFrame``'s title).
+- ``Layout.margin`` (``VIStk/Objects/_Layout.py``) --- a uniform pixel inset on
+  a ``Layout``: every ``cell()`` shrinks away from the frame edges while
+  inter-cell boundaries stay shared. Layered on as a fixed pixel offset, so it
+  stays correct on resize.
+
+``vLabelFrame`` needs one extra trick: a ``LabelFrame`` lays children out in a
+content area *below* the title band, so a background image placed there misses
+the top and bottom border. Rounded ``vLabelFrame`` instead floats the fill image
+across the **whole** frame (content-origin offset negated, ``relwidth``/
+``relheight`` cleared) and keeps the title on top by routing it through a
+``labelwidget`` --- an internal ``Label`` mirroring ``text``/``fg``/``font``, or
+the caller's own, lifted above the fill. Tk still positions it per
+``labelanchor``, so the title breaks the rounded border exactly like a native
+one; ``configure``/``cget``/``widget["text"]`` proxy to it transparently. The
+native rectangular border is flattened so the rounded outline is the only
+chrome.
+
+Native-option discoverability
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+tkinter hides each widget's options behind ``**kw`` and only lists them in the
+``__init__`` docstring, so ``vButton(...)`` gave callers no hint that
+``command``/``relief``/``anchor``/... are accepted. Both surfaces now expose
+them:
+
+- ``help()`` / REPL / Sphinx --- ``vWidget.__init_subclass__`` lifts the native
+  option block from the tk base's ``__init__.__doc__`` and appends it to each
+  v-widget's ``__init__`` doc at class-creation time, so it is always in sync
+  with the installed Tk.
+- Editor hover / autocomplete --- each ``__init__`` types
+  ``**kwargs: Unpack[_XKw]`` (``VIStk/Widgets/_vtypes.py`` ``TypedDict``\ s
+  mirroring ``<widget>.keys()``). The ``Unpack`` / ``_vtypes`` imports are
+  ``TYPE_CHECKING``-only, so there is zero runtime cost and no new runtime
+  dependency.
+- ``pillow`` added to ``pyproject.toml`` dependencies --- already used by
+  ``Objects/_VIMG.py``, previously undeclared.
+
+AutocompleteEntry popup scoping & tracking
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+*Drafted as 0.6.3; shipped in 0.6.0.* Two fixes to the suggestion popup in
+``VIStk/Widgets/_AutocompleteEntry.py``.
+
+- **Popup scoped to its own window** --- the popup was a borderless
+  ``Toplevel`` pinned with ``attributes("-topmost", True)``, which is *global to
+  the desktop*: while suggestions showed it floated above **every** application,
+  so any Alt-Tab, notification or focus race left an orphan-looking box over
+  whatever app was now active. It is now ``transient(top)`` + ``lift(top)`` to
+  its own toplevel --- above its own window (and out of the taskbar) only.
+  ``overrideredirect`` stays, since borderless is right for a dropdown.
+- **Popup tracks window move/resize** --- geometry was computed once in
+  ``_show_popup``, so moving or resizing the parent while suggestions were open
+  stranded the popup at stale screen coordinates. A ``<Configure>`` handler on
+  the toplevel now re-runs positioning (extracted into ``_position_popup``),
+  keeping the popup glued below the entry and matching its width. Positioning is
+  deferred to ``after_idle`` because a toplevel ``<Configure>`` fires *before*
+  the geometry manager re-lays-out the entry.
+- **Clobber-proof cleanup** --- that handler is routed through a per-instance
+  private bindtag (``_AutocompletePopup<id>``) rather than a direct
+  ``top.bind(...)``, so hiding the popup removes only our own binding and can
+  never clobber another ``<Configure>`` handler on the window. Mirrors the
+  v-widget bindtag approach above.
+
+0.6.1 --- Native Menubar Images, Right-Aligned Entries & Separate Window Title-Bar Icon
+---------------------------------------------------------------------------------------
+
+*Released.*
+
+Top-level ``HostMenu`` entries can now carry an **image on the real Windows
+menubar strip** and be **right-aligned** on it. Tk accepts ``image=`` on a
+menubar entry but the native Windows menu never rendered it, and Tk exposes no
+right-justify at all --- so VIStk patches the actual ``HMENU`` Tk built, after
+Tk builds it. Everything degrades gracefully off Windows.
+
+``_MenuNative``
+~~~~~~~~~~~~~~~
+
+New private module ``VIStk/Widgets/_MenuNative.py`` (ctypes / user32,
+``SetMenuItemInfoW``).
+
+- ``available()`` / ``menu_height()`` --- platform gate (Windows only) and the
+  native bar height (``SM_CYMENU``, fallback 20).
+- ``pil_to_hbitmap(img)`` / ``delete_hbitmap(h)`` --- PIL image to a 32bpp
+  **premultiplied-alpha** top-down DIB section (PARGB), so the themed menu
+  alpha-blends it cleanly; plain RGBA draws black halos.
+- ``patch(window, position, hbitmap=..., right=...)`` --- resolves the wrapper
+  window's HWND via ``wm_frame()`` (not ``winfo_id()``), then read-modify-writes
+  ``fType`` (``MFT_RIGHTJUSTIFY``) and/or sets ``hbmpItem`` (``MIIM_BITMAP``) by
+  position, and calls ``DrawMenuBar``. All VIStk menus are ``tearoff=0``, so the
+  Tk entry index equals the native position.
+- ``current_hbitmap(window, position)`` reads a patch back, for cheap
+  verification.
+- Win32 quirk worth knowing: ``MFT_RIGHTJUSTIFY`` right-aligns the patched item
+  **and every item after it**.
+
+``HostMenu``
+~~~~~~~~~~~~
+
+- ``add_project_command(label, command, image=None, compound=None, align=None)``
+  --- ``image`` may now also be a ``PIL.Image.Image``: on Windows it is rendered
+  natively on the bar and never handed to Tk; elsewhere it falls back to
+  ``ImageTk.PhotoImage`` (reference kept alive on the menu), which the Tk-drawn
+  X11 menubar renders. ``align="right"`` right-justifies the entry natively,
+  with or without an image; ignored off Windows.
+- ``set_native_image(label, pil_image)`` --- swap an entry's bitmap in place via
+  ``SetMenuItemInfo`` **without touching the Tk entry**; an ``entryconfigure``
+  would make Tk rebuild the native menu and drop every patch. Frees the replaced
+  ``HBITMAP``. For live badges that re-render on state change.
+- ``refresh_native()`` --- re-apply every registered patch by each label's
+  *current* index (labels that no longer resolve are skipped). Needed because Tk
+  rebuilds the native menu on every Tk-side mutation and silently drops
+  out-of-band patches, so every menubar-mutating method (``attach``,
+  ``set_project_items``, ``add_project_command``, ``clear_project_items``,
+  ``set_screen_items``, ``clear_screen_items``, ``build_shared_menu``,
+  ``apply_overrides``, ``reset_overrides``, ``restore_defaults``) now ends by
+  scheduling one coalesced re-patch on ``after_idle``. ``<Map>`` re-applies too,
+  and ``<Destroy>`` frees all ``HBITMAP``\ s. Public as an escape hatch for
+  callers that mutate ``menubar`` directly.
+- ``native_menubar_supported()`` / ``native_menu_height()`` --- static
+  delegates to ``_MenuNative`` so callers can pick the native path and size
+  their bitmap without importing the private module.
+- **Ordering with a right-aligned entry** --- since ``MFT_RIGHTJUSTIFY`` drags
+  all subsequent items right, once any right-aligned entry exists the add paths
+  insert new left-side entries *before* the leftmost right-aligned entry instead
+  of appending; right-aligned entries themselves still append at the end.
+- ``Host.register_menubar_accessory`` remains the path for **live widgets** at
+  the menubar's right edge; its docstring now points static text/bitmap badges
+  at the native path.
+
+Separate window title-bar icon
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A window's **title-bar (chrome) icon** and its **taskbar icon** can now differ.
+Windows keeps two icon slots per window --- ``ICON_SMALL`` (title bar, alt-tab)
+and ``ICON_BIG`` (taskbar) --- but Tk's ``iconphoto`` fills both with one image,
+so previously they were always identical. VIStk now drives them independently,
+degrading to shared-image behaviour off Windows and when unconfigured.
+
+- ``Project.d_window_icon`` (``VIStk/Structures/_Project.py``) --- read from
+  ``defaults.window_icon`` in ``project.json`` (optional; ``None`` preserves the
+  prior behaviour). The **only** project-level way to set the window title-bar
+  icon. The taskbar icon remains ``d_icon`` (``defaults.icon``).
+- ``Screen.window_icon`` (``VIStk/Structures/_Screen.py``) --- read from a
+  screen's ``window_icon`` in ``project.json``. Overrides ``d_window_icon`` for
+  the title bar **only when the screen owns a standalone (chromeless) window**.
+  Tabbed screens share a chromed window that may host other screens, so their
+  ``window_icon`` is ignored by design.
+- ``DetachedWindow._load_icon`` (``VIStk/Objects/_DetachedWindow.py``) now fills
+  the two slots separately: taskbar (``ICON_BIG``) via ``iconphoto`` exactly as
+  before, title bar (``ICON_SMALL``) from ``d_window_icon``, overridable by a
+  chromeless screen's ``window_icon``. Because ``_load_icon`` only receives a
+  ``screen_name`` for chromeless windows, a tabbed screen can never repaint its
+  shared window's icon --- the constraint is structural, not a runtime check.
+- ``_apply_titlebar_icon(icon_name)`` --- Windows-only; resolves the wrapper
+  HWND via ``GetParent(winfo_id())`` and sets ``ICON_SMALL`` with
+  ``WM_SETICON``. No-op elsewhere.
+- ``_titlebar_hicon(icons_dir, icon_name)`` plus ``_HICON_CACHE`` --- builds an
+  HICON from any PIL-readable icon (rendered to a small temp ICO and
+  ``LoadImageW``'d), cached process-wide so handles are built once and outlive
+  the ``WM_SETICON`` call --- Windows does not copy the icon.

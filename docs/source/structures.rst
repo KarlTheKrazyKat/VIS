@@ -31,6 +31,9 @@ creates the project structure and prompts for project name, company, and version
      - Path to ``.VIS/``
    * - ``p_sinfo``
      - Path to ``.VIS/project.json``
+   * - ``p_settings``
+     - Path to ``.VIS/settings.json`` — the application settings file owned by
+       :ref:`project-settings`
    * - ``p_screens``
      - Path to ``Screens/``
    * - ``p_modules``
@@ -41,6 +44,11 @@ creates the project structure and prompts for project name, company, and version
      - Path to ``Icons/``
    * - ``p_images``
      - Path to ``Images/``
+   * - ``p_oim``
+     - Path to ``OIM/`` — Outside Installable Media. Each ``OIM/<name>/`` holds
+       ``media/``, ``icon/``, an optional ``manifest.json``, and
+       ``script/install.py`` / ``script/uninstall.py`` run by the installer and
+       uninstaller. Bundled into ``binaries.zip`` by ``Release.clean()``.
    * - ``p_vis``
      - Path to the installed VIStk package
    * - ``title``
@@ -93,9 +101,21 @@ management. Automatically attached to ``Root`` as ``root.Project``.
    * - ``project.Screen``
      - ``Screen``
      - The currently active screen (set by ``screenTitle``)
+   * - ``project.Settings``
+     - ``ProjectSettings``
+     - Application settings backed by ``.VIS/settings.json`` — see
+       :ref:`project-settings`
    * - ``project.d_icon``
      - ``str``
      - Default icon name
+   * - ``project.d_window_icon``
+     - ``str / None``
+     - Optional project-level window *title-bar* icon (Windows ``ICON_SMALL``),
+       read from ``defaults.window_icon`` in ``project.json``. When set, every
+       window's title-bar chrome shows this icon while the taskbar button keeps
+       using ``d_icon`` (``ICON_BIG``). ``None`` (the default) means the title
+       bar shares the taskbar image, preserving prior behaviour. This is the
+       only project-level way to set the window-chrome icon.
    * - ``project.dist_location``
      - ``str``
      - Output folder for releases
@@ -133,12 +153,13 @@ management. Automatically attached to ``Root`` as ``root.Project``.
    * - ``setScreen(name)``
      - ``None``
      - Sets ``self.Screen`` to the named screen
-   * - ``load(name, *args)``
+   * - ``load(screen, *args)``
      - ``None``
-     - Calls ``Screen.load(*args)`` for the named screen (always ``os.execl``)
-   * - ``open(name, stay_open=False)``
+     - Calls ``Screen.load(*args)`` for the named screen
+   * - ``open(screen, target=None, args=None)``
      - ``None``
-     - Unified navigation — routes through Host if running, else ``os.execl``
+     - Unified navigation — routes through the Host if one is running (deferred via the
+       active TabManager's action queue), else falls back to ``Screen.load()``
    * - ``reload()``
      - ``None``
      - Reloads the currently active screen
@@ -158,24 +179,192 @@ management. Automatically attached to ``Root`` as ``root.Project``.
      - ``int``
      - Sets any attribute in a screen's entry with type coercion; returns ``1`` on success
 
-``open(name, stay_open=False)``
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+``open(screen, target=None, args=None)``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Preferred navigation method when a Host may be running. Routing rules:
 
-- **Host running + target is tabbed** — opens or focuses the tab in the Host window.
-- **Host running + target is standalone, ``stay_open=False``** — Host spawns a subprocess;
-  the caller should close.
-- **Host running + target is standalone, ``stay_open=True``** — Host spawns a subprocess;
-  caller keeps running.
-- **No Host** — falls back to ``Screen.load()`` (``os.execl``), preserving standalone
-  behaviour.
+- **Host running + target is tabbed** — opens a new tab in the active TabManager's window.
+  A single-instance tab is focused instead of duplicated.
+- **Host running + target is standalone** — opens a new chromeless ``DetachedWindow`` in
+  the same Host process.
+- **No Host** — falls back to ``Screen.load()``, which spawns a Host subprocess (a no-op
+  in a compiled build, where the exe *is* the Host).
+
+When a Host is active the call is deferred through the active TabManager's action queue so
+it runs safely from the main loop; pass ``target`` to use a specific TabManager's queue. To
+*replace* the current pane instead of opening a new tab, call ``tab_manager.navigate(screen)``
+directly.
 
 .. code-block:: python
 
     # Prefer open() over load() for portable navigation
     root.Project.open("WorkOrders")
-    root.Project.open("Settings", stay_open=True)
+    root.Project.open("WorkOrders", args=["--won", "21930"])
+
+.. _project-settings:
+
+ProjectSettings
+---------------
+
+``ProjectSettings`` holds per-project application settings (0.6.0), persisted to
+``.VIS/settings.json`` — the path exposed as ``VINFO.p_settings``. You never construct it;
+it is attached to every ``Project`` as ``project.Settings``.
+
+Settings are flat ``key -> value`` pairs. The dotted keys (``"window.min_width"``,
+``"appearance.font_family"``) are a grouping convention only — they are treated as opaque
+strings, so an app can store its own keys in any namespace it likes.
+
+Unlike ``project.json``, which is shared with screens and groups, ``settings.json`` is wholly
+owned by this object.
+
+.. code-block:: python
+
+    from VIStk.Structures import Project
+
+    settings = Project().Settings
+
+    settings.get("notifications.duration_ms")     # 5000 — framework default
+    settings.get("my.custom.key", "fallback")     # explicit per-call default
+    settings.set("appearance.font_family", "Consolas")
+    settings.save()                               # persist to .VIS/settings.json
+
+**Methods:**
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 15 55
+
+   * - Member
+     - Returns
+     - Description
+   * - ``get(key, default)``
+     - value
+     - Resolution order: stored override → explicit ``default`` argument (when given) →
+       framework ``DEFAULTS`` → ``None``.
+   * - ``set(key, value)``
+     - ``None``
+     - Sets the override in memory. Call ``save()`` to persist.
+   * - ``save()``
+     - ``bool``
+     - Writes the full resolved set (``effective()``) to ``.VIS/settings.json`` and clears
+       ``dirty``. Returns ``False`` and warns to stderr if the file cannot be written — a
+       failed save never crashes shutdown.
+   * - ``effective()``
+     - ``dict``
+     - The full resolved map (``DEFAULTS`` merged with overrides). Used by the Settings UI,
+       which needs a current value for every known key.
+   * - ``reset(key)``
+     - ``None``
+     - Drops the override for ``key`` so it resolves back to its default.
+   * - ``ensure_file()``
+     - ``bool``
+     - Materialises a default ``settings.json`` if none exists. Idempotent — an existing
+       file (including hand edits) is never overwritten — and does not mark the store dirty.
+       Returns ``True`` when a file was created. Never raises.
+   * - ``key in settings``
+     - ``bool``
+     - ``True`` only when the key is an explicit override, not when it merely has a default.
+   * - ``dirty``
+     - ``bool``
+     - ``True`` once an override has actually changed since the last ``save()``.
+   * - ``DEFAULTS``
+     - ``dict``
+     - Class-level table of framework defaults for every known key (see below).
+
+File lifecycle
+~~~~~~~~~~~~~~
+
+A full default ``settings.json`` — every key at its default value — is generated at
+``VIS new`` scaffolding and on the first Host launch via ``ensure_file()``, so every
+available option is visible and hand-editable rather than hidden behind an empty file.
+
+In memory only genuine *overrides* are tracked: values that differ from ``DEFAULTS``, plus
+any unknown custom keys. That is what makes ``reset()`` and ``in`` mean "explicitly
+customised" even though the file on disk is complete. ``save()`` then writes the complete
+resolved set back, keeping the file whole.
+
+A missing file is normal (no overrides yet). A corrupt or unreadable file is non-fatal: the
+failure is warned to stderr and the store falls back to defaults so the app still launches.
+
+All ``DEFAULTS`` values are immutable (``None`` / ``bool`` / ``int`` / ``str``) because
+``get()`` and ``effective()`` hand the default object back by reference — a mutable default
+could be mutated in place by one caller and corrupt every later read. Represent an "empty
+list" default as ``None`` and let callers coalesce with ``or []``.
+
+The Host saves settings automatically on shutdown, on both the ``quit_host`` and
+last-window-close paths, and only when ``dirty`` — so an app that touched no settings never
+bumps the file's mtime. The session capture (``host.last_tabs``, ``window.last_geometry``)
+is taken while the windows are still open but commits **only after** every window has closed
+without veto, so a vetoed quit leaves settings untouched. Any other caller must invoke
+``save()`` itself.
+
+Built-in settings
+~~~~~~~~~~~~~~~~~
+
+.. list-table::
+   :header-rows: 1
+   :widths: 35 15 50
+
+   * - Key
+     - Default
+     - Meaning
+   * - ``window.default_width`` / ``window.default_height``
+     - ``None``
+     - First-window size. ``None`` falls back to 1200×800.
+   * - ``window.default_align``
+     - ``None``
+     - Placement of the first window: ``"center"`` or a compass direction. ``None`` is
+       treated as ``"center"``.
+   * - ``window.min_width`` / ``window.min_height``
+     - ``None``
+     - Minimum window size; ``None`` imposes no minimum.
+   * - ``window.remember_geometry``
+     - ``False``
+     - Restore the primary window's last size and position.
+   * - ``window.fullscreen_on_launch``
+     - ``False``
+     - Open the first window maximized.
+   * - ``window.last_geometry``
+     - ``None``
+     - Framework-written. Last primary-window geometry as ``"WxH+X+Y"``.
+   * - ``host.start_with_os``
+     - ``False``
+     - Launch the Host at login (Windows).
+   * - ``host.remember_tabs``
+     - ``False``
+     - Reopen the previous session's screens as tabs.
+   * - ``host.last_tabs``
+     - ``None``
+     - Framework-written. List of tab base names from the last session.
+   * - ``appearance.font_family``
+     - ``None``
+     - Default font family, applied to Tk's named fonts at launch. ``None`` keeps the
+       platform default.
+   * - ``appearance.font_size``
+     - ``None``
+     - Default font size, applied at launch. ``None`` keeps the widget default.
+   * - ``appearance.color_scheme``
+     - ``"system"``
+     - Stored placeholder for the styles system; no effect yet.
+   * - ``notifications.enabled``
+     - ``True``
+     - Global notification toggle.
+   * - ``notifications.duration_ms``
+     - ``5000``
+     - Default banner/notification duration in milliseconds.
+
+Appearance settings are applied once at launch — live re-styling of already-open windows is
+deferred.
+
+Keys absent from ``DEFAULTS`` are unknown to the framework and resolve to ``None`` (or the
+caller's explicit default), which is what lets an app store its own settings here without
+registering them.
+
+The framework surfaces these keys in a built-in Settings window reached from the
+**Settings** entry on every window's ``HostMenu``; apps contribute their own tabs with
+``host.register_settings_panel(name, setup_fn)``. Both are documented alongside the widget
+and the ``Host`` object.
 
 Screen
 ------
@@ -204,6 +393,13 @@ Screen
    * - ``screen.icon``
      - ``str / None``
      - Icon name for this screen
+   * - ``screen.window_icon``
+     - ``str / None``
+     - Optional window *title-bar* icon for this screen. Only honored when the
+       screen owns a *standalone* (chromeless) window — a tabbed screen shares a
+       chromed window that may host other screens, so its ``window_icon`` is
+       ignored by design and that window uses the project-level
+       ``d_window_icon``.
    * - ``screen.desc``
      - ``str``
      - Screen description
@@ -232,8 +428,8 @@ Screen
    * - Method
      - Description
    * - ``screen.load(*args)``
-     - Switches to this screen. Routes via IPC if a Host is running; falls back to
-       ``os.execl``.
+     - Loads this screen. Routes through the Host if one is running in-process; otherwise
+       spawns a Host subprocess (skipped in a compiled build).
    * - ``screen.close()``
      - Asks the Host to close this screen via IPC. Returns ``True`` if delivered.
    * - ``screen.addElement(name)``

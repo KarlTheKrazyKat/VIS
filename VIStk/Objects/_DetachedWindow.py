@@ -8,6 +8,43 @@ from VIStk.Widgets._HostMenu import HostMenu
 from VIStk.Widgets._InfoRow import InfoRow
 
 
+# Process-wide cache of title-bar HICON handles, keyed by icon name.  The
+# handles must outlive the WM_SETICON call (Windows does not copy the icon),
+# so they are built at most once per name and never released for the life of
+# the process.
+_HICON_CACHE: dict[str, int] = {}
+
+
+def _titlebar_hicon(icons_dir: str, icon_name: str) -> int:
+    """Build (and cache) a 16×16 HICON for ``icon_name`` from ``icons_dir``.
+
+    The source may be any PIL-readable image (PNG, ICO, …) matched by
+    ``<icons_dir>/<icon_name>.*``.  It is rendered to a small ICO in the temp
+    directory and loaded with ``LoadImageW``; the handle is cached.  Returns
+    the HICON, or ``0`` on failure.  Windows-only — callers guard on platform.
+    """
+    if icon_name in _HICON_CACHE:
+        return _HICON_CACHE[icon_name]
+    import glob as _glob, os, tempfile, ctypes
+    import PIL.Image
+
+    handle = 0
+    matches = _glob.glob(icons_dir + "/" + icon_name + ".*")
+    if matches:
+        ico_path = os.path.join(tempfile.gettempdir(),
+                                f"_vistk_titlebar_{icon_name}.ico")
+        try:
+            PIL.Image.open(matches[0]).convert("RGBA").save(
+                ico_path, format="ICO", sizes=[(16, 16), (24, 24), (32, 32)])
+            IMAGE_ICON, LR_LOADFROMFILE = 1, 0x00000010
+            handle = ctypes.windll.user32.LoadImageW(
+                None, ico_path, IMAGE_ICON, 16, 16, LR_LOADFROMFILE)
+        except Exception:
+            handle = 0
+    _HICON_CACHE[icon_name] = handle
+    return handle
+
+
 class DetachedWindow:
     """A visible application window (Toplevel) containing its own TabManager,
     HostMenu, and InfoRow.
@@ -215,32 +252,79 @@ class DetachedWindow:
             pass
 
     def _load_icon(self, screen_name: str | None = None):
-        """Set the window's taskbar icon.
+        """Set the window's taskbar and title-bar icons independently.
 
-        When ``screen_name`` is provided and the screen has its own icon,
-        use it; otherwise fall back to the project default icon.  Used by
-        chromeless standalone windows to advertise the screen identity in
-        the taskbar instead of the project identity.
+        Windows exposes two icon slots that this method fills separately:
+
+        * **Taskbar** (``ICON_BIG``) — the screen's own ``icon`` when
+          ``screen_name`` is given (a chromeless standalone window), else
+          the project :attr:`~VIStk.Structures._Project.Project.d_icon`.
+          Applied with ``iconphoto`` (also the cross-platform icon).
+        * **Title bar** (``ICON_SMALL``) — the project-level
+          :attr:`~VIStk.Structures._Project.Project.d_window_icon`.  For a
+          chromeless standalone window a screen may override it with its own
+          ``window_icon``; tabbed screens share a chromed window (their
+          ``screen_name`` is never passed here) and therefore cannot repaint
+          it.  Applied via ``WM_SETICON`` on Windows only — on other
+          platforms the title bar shares the taskbar image.
+
+        ``d_window_icon`` unset (the default) leaves the title bar sharing
+        the taskbar image, preserving prior behavior.
         """
         try:
             import glob as _glob
             import PIL.Image
             import PIL.ImageTk
 
-            icon_name: str | None = None
-            if screen_name:
-                scr = self.host.Project.getScreen(screen_name)
-                if scr is not None and scr.icon:
-                    icon_name = scr.icon
-            if icon_name is None:
-                icon_name = self.host.Project.d_icon
+            proj = self.host.Project
+            scr = proj.getScreen(screen_name) if screen_name else None
 
-            matches = _glob.glob(self.host.Project.p_icons + "/" + icon_name + ".*")
+            # ── Taskbar icon (ICON_BIG) ────────────────────────────────
+            icon_name = scr.icon if (scr is not None and scr.icon) else None
+            if icon_name is None:
+                icon_name = proj.d_icon
+            matches = _glob.glob(proj.p_icons + "/" + icon_name + ".*")
             if matches:
                 img = PIL.Image.open(matches[0]).convert("RGBA").resize((32, 32))
                 # Hold a reference so Tk doesn't garbage-collect the image.
                 self._icon_ref = PIL.ImageTk.PhotoImage(img)
                 self.win.iconphoto(True, self._icon_ref)
+
+            # ── Title-bar icon (ICON_SMALL) ────────────────────────────
+            # d_window_icon is the only project-level title-bar setter; a
+            # per-screen window_icon overrides it *only* for a chromeless
+            # standalone window (scr is non-None only then).
+            win_icon_name = getattr(proj, "d_window_icon", None)
+            if scr is not None and getattr(scr, "window_icon", None):
+                win_icon_name = scr.window_icon
+            if win_icon_name:
+                self._apply_titlebar_icon(win_icon_name)
+        except Exception:
+            pass
+
+    def _apply_titlebar_icon(self, icon_name: str):
+        """Override this window's title-bar icon (``ICON_SMALL``) on Windows.
+
+        No-op on non-Windows platforms, where the title bar shares the
+        taskbar image set by ``iconphoto``.  The HICON is cached process-wide
+        and referenced on the window so it is neither rebuilt per call nor
+        garbage-collected (``WM_SETICON`` does not copy the icon).
+        """
+        import sys
+        if sys.platform != "win32":
+            return
+        try:
+            import ctypes
+            hicon = _titlebar_hicon(self.host.Project.p_icons, icon_name)
+            if not hicon:
+                return
+            self.win.update_idletasks()
+            # A Tk Toplevel's winfo_id() is the content HWND; its parent is
+            # the decorated frame that owns the title-bar icon.
+            hwnd = ctypes.windll.user32.GetParent(self.win.winfo_id())
+            WM_SETICON, ICON_SMALL = 0x0080, 0
+            ctypes.windll.user32.SendMessageW(hwnd, WM_SETICON, ICON_SMALL, hicon)
+            self._titlebar_hicon_ref = hicon
         except Exception:
             pass
 

@@ -37,6 +37,7 @@ Quick example --- create a project and launch it:
 
    overview
    cli
+   oim
 
 .. toctree::
    :maxdepth: 2

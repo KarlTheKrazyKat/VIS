@@ -26,11 +26,11 @@ def configure_menu(menubar):
     """Register menu items with the containing TabManager."""
     menubar.set_screen_items([], label="<title>")
 
-def on_activate():
+def on_focused():
     """Called when this tab gains focus."""
     pass
 
-def on_deactivate():
+def on_unfocused():
     """Called when this tab loses focus."""
     pass
 

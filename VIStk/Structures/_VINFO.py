@@ -213,8 +213,12 @@ class VINFO():
 
         Holds application settings (window/appearance/host/notification
         preferences) managed via :attr:`Project.Settings`
-        (:class:`~VIStk.Structures._Settings.ProjectSettings`).  Optional —
-        absent until the first setting is saved."""
+        (:class:`~VIStk.Structures._Settings.ProjectSettings`).  Written with
+        the full default set at ``VIS new`` and re-materialised on every Host
+        launch by
+        :meth:`~VIStk.Structures._Settings.ProjectSettings.ensure_file`, so it
+        is normally always present; a missing or corrupt file falls back to
+        the framework defaults without crashing."""
         with open(self.p_sinfo,"r") as f: 
             info = json.load(f)
             self.title = list(info.keys())[0]

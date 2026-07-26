@@ -54,6 +54,17 @@ class Project(VINFO):
                 self.Groups[gname] = g
 
             self.d_icon = info[self.title]["defaults"]["icon"]
+            self.d_window_icon = info[self.title]["defaults"].get("window_icon")
+            """Optional project-level window *title-bar* icon (Windows
+            ``ICON_SMALL``).
+
+            When set, every window's title-bar chrome shows this icon while
+            the taskbar button keeps using :attr:`d_icon` (``ICON_BIG``).
+            ``None`` (default) means the title bar shares the taskbar image,
+            preserving prior behavior.  This is the only project-level
+            way to set the window-chrome icon; see
+            :meth:`VIStk.Objects._DetachedWindow.DetachedWindow._load_icon`.
+            """
 
             self.dist_location:str = info[self.title]["release_info"]["location"]
             self.hidden_imports:list[str] = info[self.title]["release_info"]["hidden_imports"]
