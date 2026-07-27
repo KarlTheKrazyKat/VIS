@@ -18,6 +18,10 @@ from VIStk.Objects import Host
 
 host = Host()
 
+# Load application styling (tab-style registration + Settings menu curation).
+# Runs before the first window opens; safe to delete if you don't customise styles.
+import Screens.styles  # noqa: F401
+
 while host.Active:
     host.tick_fps()
     host.update()

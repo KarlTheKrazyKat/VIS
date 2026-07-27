@@ -1573,6 +1573,7 @@ class Host:
         """
         if not self._opened_default:
             self._opened_default = True
+            self._apply_tab_style()
             self._open_startup()
         self._drain_ipc_queue()
         self._tick_screens()
@@ -1781,6 +1782,27 @@ class Host:
                         f.configure(size=int(size))
                     except (TypeError, ValueError):
                         pass
+        except Exception:
+            import traceback
+            traceback.print_exc()
+
+    def _apply_tab_style(self) -> None:
+        """Resolve the saved tab style against the scheme and make it active.
+
+        Runs on the Host's first update — after ``host.py`` has imported
+        ``Screens/styles.py`` (which registers any custom looks and curates the
+        offered list) and before the first window is built.  A saved
+        ``appearance.tab_style`` that isn't in the app's offered list falls back
+        to the app default.  Never raises — styling must not block launch.
+        """
+        try:
+            from VIStk.Widgets import TabBar
+            settings = self.Project.Settings
+            scheme = settings.get("appearance.color_scheme") or "light"
+            name = settings.get("appearance.tab_style")
+            if name not in TabBar.offered_styles():
+                name = TabBar.default_style()
+            TabBar.set_tab_style(name, scheme=scheme)
         except Exception:
             import traceback
             traceback.print_exc()
