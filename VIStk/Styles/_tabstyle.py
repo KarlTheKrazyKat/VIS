@@ -7,8 +7,8 @@ scheme.  :func:`resolve` turns ``(scheme, style_name)`` into a
 :class:`ResolvedStyle` — a concrete :class:`~VIStk.Styles._palette.Palette`
 plus the flags — which is what a :class:`~VIStk.Widgets.TabBar` actually paints.
 
-Five presets ship: ``classic`` (the pre-styles look), ``underline``,
-``topline``, ``pill``, and ``minimal``.  Apps author more with
+Four presets ship: ``classic`` (the pre-styles look), ``underline``,
+``topline``, and ``pill``.  Apps author more with
 :meth:`TabStyle.from_preset` and register them via
 :meth:`VIStk.Widgets.TabBar.register_tab_style` (typically from
 ``Screens/styles.py``).
@@ -168,15 +168,6 @@ register("pill", TabStyle(
     overrides={"tab_active": "$accent", "tab_active_fg": "white",
                "tab_inactive": "grey72", "tab_hover": "grey78",
                "active_unfocused": "grey78"}))
-
-# Quietest: strip blends toward content, active is near-white with a thin
-# accent underline, no dividers.
-register("minimal", TabStyle(
-    indicator="underline", separators=False,
-    overrides={"bar_bg": "grey93", "focused": "grey93", "unfocused": "grey88",
-               "tab_inactive": "grey93", "tab_active": "white",
-               "tab_hover": "grey88", "separator": "grey80",
-               "empty": "grey90", "empty_hover": "grey85"}))
 
 #: The launch fallback before the Host resolves settings — classic on light.
 DEFAULT = resolve("light", "classic")

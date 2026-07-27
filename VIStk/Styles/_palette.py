@@ -74,7 +74,7 @@ LIGHT = Palette(
 )
 
 #: A dark neutral scheme.  Styled presets that bring their own accent layer on
-#: top of this; ``classic``/``minimal`` mostly just swap the greys.
+#: top of this; ``classic`` mostly just swaps the greys.
 DARK = Palette(
     bar_bg="grey25",
     tab_active="grey38",

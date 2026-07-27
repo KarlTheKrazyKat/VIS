@@ -10,6 +10,32 @@ _DRAG_THRESHOLD  = 8           # pixels of motion (any direction) to activate dr
 _EMPTY_BAR_H     = 28          # height of the bar when no tabs are open (horizontal)
 _EMPTY_BAR_W     = 28          # width of the bar when no tabs are open (vertical)
 
+# Tab geometry — the label/close sit in a content-sized tab that fills the bar
+# height and butts flush against its neighbours (dividers come from separators
+# or the inter-tab gap, per style).  ``_TAB_PADX``/``_TAB_PADY`` are the label's
+# internal padding; the close carries its own small pad and a larger ✕ glyph.
+_TAB_PADX        = 7           # internal L/R padding of the tab label
+_TAB_PADY        = 4           # internal T/B padding — gives the bar its height
+_CLOSE_PADX      = 2           # internal L/R padding of the close button
+_CLOSE_FONT      = ("Segoe UI", 11)   # slightly larger ✕ than the label font
+
+# Pill style: a tab floats in the bar as a single rounded capsule.  The label
+# and close are separate widgets, so the capsule is formed by rounding only the
+# label's left end and only the close's right end (same fill, abutting).  A pill
+# tab is inset vertically (float) and gapped horizontally (from the bar edge and
+# between pills); a flush, full-height tab has neither.
+_PILL_PADY       = 3           # T/B inset so the capsule floats in the bar
+_PILL_GAP        = 6           # gap at the bar's left edge and between pills
+# The capsule ends are full semicircles (radius = half the height), so the label
+# text and the ✕ must be padded clear of them, and the close must be wide enough
+# to actually show a full-height semicircle (else its cap is a smaller radius
+# than the label's).  These pill paddings are larger than the flat-tab ones.
+_PILL_LABEL_PADX = 6           # a little space left of the label text
+_PILL_CLOSE_PADX = 9           # keeps the ✕ off the right cap and widens the cap
+# Per-corner rounding order is (top_left, top_right, bottom_right, bottom_left).
+_PILL_LEFT       = (True, False, False, True)    # label: round the left end
+_PILL_RIGHT      = (False, True, True, False)    # close: round the right end
+
 # ── Global registry ───────────────────────────────────────────────────────────
 # All live TabBar instances register here so cross-bar detection works — and so
 # a live tab-style change can be broadcast to every open bar (set_tab_style).
@@ -65,6 +91,13 @@ class TabBar(Frame):
     #: resolves settings.
     _active_style = _DEFAULT_STYLE
     _active_scheme: str = "light"
+    #: Name of the base style currently resolved (so palette overrides can be
+    #: re-applied after a re-resolve).  ``None`` when set from a raw ResolvedStyle.
+    _active_style_name: "str | None" = "classic"
+    #: Sticky ``role -> colour`` overrides from :meth:`setPalette`, re-applied on
+    #: top of every resolved style so an app's custom colours survive a style
+    #: switch and the Host applying the user's saved pick at launch.
+    _palette_overrides: dict = {}
     #: App-curated subset of style names offered in the Settings menu; ``None``
     #: means "every registered style".  Set via :meth:`offer_styles`.
     _offered: "list[str] | None" = None
@@ -124,6 +157,9 @@ class TabBar(Frame):
 
         _TABBAR_REGISTRY.append(self)
         self._update_empty_state()
+        # Re-place the active indicator once the bar is actually laid out; the
+        # first placement is scheduled before launch geometry settles (below).
+        self.bind("<Configure>", self._on_configure)
 
     # ── Style: class-level API (app-facing) ─────────────────────────────────────
 
@@ -181,13 +217,81 @@ class TabBar(Frame):
         if isinstance(style, ResolvedStyle):
             resolved = style
         else:
+            cls._active_style_name = style
             resolved = _resolve_style(cls._active_scheme, style)
+        # Re-apply any sticky setPalette() overrides on top of the resolved
+        # style, so app colours survive a style switch / the Host's launch pick.
+        if cls._palette_overrides:
+            from dataclasses import replace
+            resolved = ResolvedStyle(
+                palette=replace(resolved.palette, **cls._palette_overrides),
+                indicator=resolved.indicator, separators=resolved.separators,
+                radius=resolved.radius)
         cls._active_style = resolved
         for bar in list(_TABBAR_REGISTRY):
             try:
                 bar.apply_style(resolved)
             except TclError:
                 pass
+
+    @classmethod
+    def setStyle(cls, name: str) -> None:
+        """Switch every tab bar to one of the built-in styles by name.
+
+        *name* is one of the shipped presets — ``"classic"``, ``"underline"``,
+        ``"topline"`` or ``"pill"`` (or any style registered via
+        :meth:`register_tab_style`).  Applies live to every open bar and becomes
+        the style for new ones.  Raises ``ValueError`` for an unknown name.
+        """
+        from VIStk.Styles import get
+        if get(name) is None:
+            raise ValueError(
+                f"Unknown tab style {name!r}; choose from {_style_names()}")
+        cls.set_tab_style(name)
+
+    @classmethod
+    def setPalette(cls, *, bar: "str | None" = None, tab: "str | None" = None,
+                   selected: "str | None" = None, text: "str | None" = None,
+                   close: "str | None" = None,
+                   selected_text: "str | None" = None) -> None:
+        """Recolour the active tab style, live, on every bar.
+
+        Each argument is a Tk colour (a name like ``"grey62"`` or a hex
+        ``"#1e90ff"``); omitted arguments keep their current colour.  The
+        overrides are **sticky**: they are stored and re-applied on top of every
+        resolved style, so they survive a later :meth:`setStyle` and the Host
+        applying the user's saved pick at launch.  Call with no arguments and
+        nothing changes.
+
+        Args:
+            bar:            The tab-strip background.
+            tab:            An unselected tab.
+            selected:       The selected tab.
+            text:           Label + ✕ colour, on every tab (also the selected
+                            tab unless *selected_text* is given).
+            close:          The ✕ close-button highlight (hover / press).
+            selected_text:  Label + ✕ colour on the selected tab only.
+        """
+        changes: dict = {}
+        if bar is not None:
+            changes["bar_bg"] = bar
+            changes["focused"] = bar
+        if tab is not None:
+            changes["tab_inactive"] = tab
+        if selected is not None:
+            changes["tab_active"] = selected
+        if text is not None:
+            changes["tab_fg"] = text
+            changes.setdefault("tab_active_fg", text)
+        if selected_text is not None:
+            changes["tab_active_fg"] = selected_text
+        if close is not None:
+            changes["close_hover"] = close
+        if not changes:
+            return
+        cls._palette_overrides = {**cls._palette_overrides, **changes}
+        # Re-resolve the current base style; set_tab_style layers the overrides.
+        cls.set_tab_style(cls._active_style_name or cls._active_style)
 
     @property
     def _pal(self):
@@ -248,36 +352,17 @@ class TabBar(Frame):
         if tab_id in self._tabs:
             return False
 
+        first = not self._tabs
         sep = self._make_separator() if self._tabs else None
 
         btn = self._make_tab_button(tab_id, label, icon)
-        if self._is_vertical():
-            btn.pack(side="top", fill="x", padx=2, pady=(4, 0))
-        else:
-            btn.pack(side="left", padx=(4, 0), pady=2)
+        close_btn = self._make_close_button(tab_id)
+        self._pack_tab(btn, close_btn, first=first)
 
         btn.bind("<ButtonPress-1>",   lambda e, i=tab_id: self._on_drag_start(e, i))
         btn.bind("<B1-Motion>",       lambda e, i=tab_id: self._on_drag_motion(e, i))
         btn.bind("<ButtonRelease-1>", lambda e: self._on_drag_release(e))
         btn.bind("<Button-3>",        lambda e, i=tab_id: self._on_right_click(e, i))
-
-        close_btn = Button(
-            self,
-            text="✕",
-            relief="flat",
-            bd=0,
-            highlightthickness=0,
-            takefocus=0,
-            width=2,
-            bg=self._pal.tab_inactive,
-            fg=self._pal.tab_fg,
-            activebackground=self._pal.close_hover,
-            command=lambda i=tab_id: self._close(i),
-        )
-        if self._is_vertical():
-            close_btn.pack(side="top", fill="x", padx=2, pady=(0, 4))
-        else:
-            close_btn.pack(side="left", padx=(0, 4), pady=2)
 
         btn.bind("<Enter>",       lambda e, i=tab_id: self._on_tab_enter(i))
         btn.bind("<Leave>",       lambda e, i=tab_id: self._on_tab_leave(i))
@@ -381,7 +466,7 @@ class TabBar(Frame):
         for tab_id, entry in self._tabs.items():
             bg = self._tab_bg(tab_id)
             entry["button"].configure(bg=bg, fg=self._tab_fg(tab_id))
-            entry["close"].configure(bg=bg)
+            entry["close"].configure(bg=bg, fg=self._tab_fg(tab_id))
         self._position_indicator()
 
     def set_insert_indicator(self, idx: int, drag_id: int | None = None):
@@ -447,7 +532,7 @@ class TabBar(Frame):
             bg = self._tab_bg(tab_id)
             entry["button"].configure(bg=bg, fg=self._tab_fg(tab_id),
                                        activebackground=self._pal.tab_hover)
-            entry["close"].configure(bg=bg, fg=self._pal.tab_fg,
+            entry["close"].configure(bg=bg, fg=self._tab_fg(tab_id),
                                       activebackground=self._pal.close_hover)
 
     def _rebuild_all_tabs(self) -> None:
@@ -500,6 +585,7 @@ class TabBar(Frame):
     def _make_tab_button(self, tab_id: int, label: str, icon):
         """Build the tab's label button — a rounded ``vButton`` when the style
         has a radius, else a plain ``Button``."""
+        pill = self.style.radius > 0
         common = dict(
             text=label,
             image=icon,
@@ -508,18 +594,94 @@ class TabBar(Frame):
             bd=0,
             highlightthickness=0,
             takefocus=0,
+            padx=_TAB_PADX,
+            pady=_TAB_PADY,
             bg=self._pal.tab_inactive,
             fg=self._pal.tab_fg,
             activebackground=self._pal.tab_hover,
             command=lambda i=tab_id: self._btn_click(i),
         )
-        if self.style.radius > 0:
+        if pill:
             # No active_fill: TabBar's own <Enter>/<Leave> handlers drive hover
             # uniformly for both button kinds (config(bg=...) repaints the tiles),
             # so vButton must not also bind its internal hover and fight them.
+            # A full-percent radius makes a capsule at any size; only the left
+            # end is rounded so the label + close read as one pill.
             from VIStk.Widgets._vButton import vButton
-            return vButton(self, radius=self.style.radius, **common)
+            btn = vButton(self, radius=100, radius_style="percent",
+                          corners=_PILL_LEFT, **common)
+            # Fill-mode rounding zeroes internal padding (padx would runaway-grow
+            # the image), so widen the button by a fixed pixel amount instead —
+            # the centred text then gains _PILL_LABEL_PADX of space each side.
+            self._widen_pill_label(btn)
+            return btn
         return Button(self, **common)
+
+    def _widen_pill_label(self, btn) -> None:
+        """Widen a fill-mode pill label to its text width + a little side space.
+
+        ``padx`` can't be used (it feeds back into the image-fill sizing), and a
+        pixel ``width`` is only known once the text has measured, so set it once
+        the button has its natural size."""
+        def _apply():
+            try:
+                if not btn.winfo_exists():
+                    return
+                natural = btn.winfo_reqwidth()
+                if natural <= 1:                       # not measured yet — retry
+                    btn.after(16, _apply)
+                    return
+                btn.configure(width=natural + 2 * _PILL_LABEL_PADX)
+            except TclError:
+                pass
+        btn.after_idle(_apply)
+
+    def _make_close_button(self, tab_id: int):
+        """Build the ✕ close button — a right-rounded ``vButton`` under the pill
+        style (so it caps the capsule the label opens), else a plain ``Button``.
+
+        The pill close carries a rounded fill *image*, so Tk would read a
+        ``width`` as pixels (clipping the ✕ to a sliver); it sizes to content
+        instead, while the plain Button keeps a 2-character width.
+        """
+        pill = self.style.radius > 0
+        common = dict(
+            text="✕",
+            relief="flat",
+            bd=0,
+            highlightthickness=0,
+            takefocus=0,
+            padx=_PILL_CLOSE_PADX if pill else _CLOSE_PADX,
+            font=_CLOSE_FONT,
+            bg=self._pal.tab_inactive,
+            fg=self._pal.tab_fg,
+            activebackground=self._pal.close_hover,
+            command=lambda i=tab_id: self._close(i),
+        )
+        if pill:
+            from VIStk.Widgets._vButton import vButton
+            return vButton(self, radius=100, radius_style="percent",
+                           corners=_PILL_RIGHT, **common)
+        return Button(self, width=2, **common)
+
+    def _pack_tab(self, btn, close, *, first: bool) -> None:
+        """Pack a tab's label + close under the active style's geometry.
+
+        Non-pill tabs fill the full bar height and butt flush (dividers come
+        from separators or the internal label padding).  Pill tabs are inset
+        vertically so the capsule floats, and gapped on the left (from the bar
+        edge and from the previous pill); the label and close stay flush to each
+        other so their two rounded ends form one capsule.
+        """
+        if self._is_vertical():
+            btn.pack(side="top", fill="x", padx=2, pady=(4, 0))
+            close.pack(side="top", fill="x", padx=2, pady=(0, 4))
+            return
+        pill = self.style.radius > 0
+        pady = _PILL_PADY if pill else 0
+        lead = _PILL_GAP if pill else 0
+        btn.pack(side="left", fill="y", pady=pady, padx=(lead, 0))
+        close.pack(side="left", fill="y", pady=pady)
 
     # ── Active-tab indicator (underline / topline) ─────────────────────────────
 
@@ -541,7 +703,15 @@ class TabBar(Frame):
             self._active_indicator.configure(bg=self._pal.accent)
         self.after_idle(self._place_indicator)
 
-    def _place_indicator(self):
+    def _place_indicator(self, _tries: int = 0):
+        """Position the accent bar over the active tab.
+
+        A freshly-packed tab (on launch or when a new tab is opened) has no
+        real geometry yet when this first runs — ``winfo_*`` report ~0 and the
+        bar would be placed with zero span, staying invisible until the user
+        interacts.  When the measured span/bar size isn't ready we reschedule a
+        few frames later instead of placing a degenerate bar.
+        """
         try:
             if self._active_indicator is None or self.style.indicator == "none":
                 return
@@ -552,20 +722,42 @@ class TabBar(Frame):
             if self._is_vertical():
                 y0 = btn.winfo_y()
                 y1 = close.winfo_y() + close.winfo_height()
+                span = y1 - y0
+                bar_dim = self.winfo_width()
+                if (span <= 1 or bar_dim <= 1) and _tries < 12:
+                    self.after(16, lambda: self._place_indicator(_tries + 1))
+                    return
                 edge = 0 if (self._position == "left") ^ (self.style.indicator == "topline") \
-                    else max(0, self.winfo_width() - 3)
+                    else max(0, bar_dim - 3)
                 self._active_indicator.place(x=edge, y=y0, width=3,
-                                             height=max(0, y1 - y0))
+                                             height=max(0, span))
             else:
                 x0 = btn.winfo_x()
                 x1 = close.winfo_x() + close.winfo_width()
-                h = self.winfo_height() or 24
+                span = x1 - x0
+                h = self.winfo_height()
+                if (span <= 1 or h <= 1) and _tries < 12:
+                    self.after(16, lambda: self._place_indicator(_tries + 1))
+                    return
                 y = (h - 3) if self.style.indicator == "underline" else 0
-                self._active_indicator.place(x=x0, y=y, width=max(0, x1 - x0),
+                self._active_indicator.place(x=x0, y=y, width=max(0, span),
                                              height=3)
             self._active_indicator.lift()
         except TclError:
             pass
+
+    def _on_configure(self, _event=None):
+        """Re-place the active indicator when the bar is (re)sized or mapped.
+
+        The initial ``_position_indicator`` on tab open schedules placement via
+        ``after_idle``, which on launch fires before the bar has its real
+        geometry — leaving an underline/topline marker invisible until the user
+        first clicks a tab.  ``<Configure>`` fires once the bar is mapped and
+        sized, so repositioning here makes the marker appear as soon as the
+        layout settles.  A no-op for the ``none`` indicator (classic/pill).
+        """
+        if self.style.indicator != "none":
+            self._position_indicator()
 
     # ── Empty-state management ─────────────────────────────────────────────────
 
@@ -902,12 +1094,7 @@ class TabBar(Frame):
                     w["sep"].pack(side="top", fill="x", padx=3)
                 else:
                     w["sep"].pack(side="left", fill="y", pady=3)
-            if self._is_vertical():
-                w["button"].pack(side="top", fill="x", padx=2, pady=(4, 0))
-                w["close"].pack(side="top", fill="x", padx=2, pady=(0, 4))
-            else:
-                w["button"].pack(side="left", padx=(4, 0), pady=2)
-                w["close"].pack(side="left", padx=(0, 4), pady=2)
+            self._pack_tab(w["button"], w["close"], first=(i == 0))
             new_tabs[tab_id] = w
         self._tabs = new_tabs
         self._position_indicator()
@@ -963,5 +1150,5 @@ class TabBar(Frame):
         for tab_id, widgets in self._tabs.items():
             bg = self._tab_bg(tab_id)
             widgets["button"].config(relief="flat", bg=bg, fg=self._tab_fg(tab_id))
-            widgets["close"].config(relief="flat", bg=bg)
+            widgets["close"].config(relief="flat", bg=bg, fg=self._tab_fg(tab_id))
         self._position_indicator()

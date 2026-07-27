@@ -5,7 +5,7 @@ Use it to curate which tab looks the user can pick in
 **Settings → Appearance → Tab style**, and, optionally, to author your own.
 
 Built-in styles: ``classic`` (the default grey look), ``underline``,
-``topline``, ``pill``, and ``minimal``.  The user's choice is stored in
+``topline``, and ``pill``.  The user's choice is stored in
 ``.VIS/settings.json`` (``appearance.tab_style``); this file only defines the
 menu and the default.
 """
@@ -30,6 +30,6 @@ from VIStk.Styles import TabStyle  # noqa: F401  (used when authoring a style)
 # Remove this call entirely to offer every registered style with the "classic"
 # default.
 TabBar.offer_styles(
-    ["classic", "underline", "topline", "pill", "minimal"],
+    ["classic", "underline", "topline", "pill"],
     default="classic",
 )
