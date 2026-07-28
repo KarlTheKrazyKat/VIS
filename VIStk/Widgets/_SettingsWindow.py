@@ -167,14 +167,39 @@ class _SettingsUI:
                       "pt (blank = default)")
         self._row_combo(app, 2, "Color scheme", "appearance.color_scheme",
                         _SCHEME_CHOICES)
-        ttk.Label(app, text="Appearance changes apply on next launch.",
-                  foreground="grey").grid(row=3, column=0, columnspan=3,
-                                          sticky="w", pady=(4, 0))
+        self._build_tab_style_row(app, 3)
+        ttk.Label(app, text="Font changes apply on next launch; tab style "
+                  "applies immediately.", foreground="grey").grid(
+                      row=4, column=0, columnspan=3, sticky="w", pady=(4, 0))
 
         note = ttk.LabelFrame(parent, text="Notifications", padding=10)
         note.grid(row=3, column=0, sticky="ew")
         self._row_check(note, 0, "Enable notifications", "notifications.enabled")
         self._row_int(note, 1, "Notification duration", "notifications.duration_ms", "ms")
+
+    def _build_tab_style_row(self, parent, row: int) -> None:
+        """The Tab-style dropdown — offered names come from the app's curated
+        list (``TabBar.offer_styles``); selecting one applies live so the user
+        sees it on every open window before saving."""
+        from VIStk.Widgets import TabBar
+        offered = TabBar.offered_styles()
+        cb = self._row_combo(parent, row, "Tab style", "appearance.tab_style",
+                             offered)
+        var = self._vars["appearance.tab_style"][0]
+        if not var.get():
+            # No stored override yet — show the app's default as the selection.
+            var.set(TabBar.default_style())
+        cb.bind("<<ComboboxSelected>>",
+                lambda e: self._preview_tab_style(var.get()))
+
+    def _preview_tab_style(self, name: str) -> None:
+        """Apply *name* live to every open tab bar (persisted on Save)."""
+        try:
+            from VIStk.Widgets import TabBar
+            scheme = self.Settings.get("appearance.color_scheme") or "light"
+            TabBar.set_tab_style(name, scheme=scheme)
+        except Exception:
+            pass
 
     # ── Row helpers ───────────────────────────────────────────────────────────
 

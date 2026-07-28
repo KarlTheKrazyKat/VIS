@@ -55,7 +55,8 @@ class ProjectSettings:
         # ── Appearance ────────────────────────────────────────────────────
         "appearance.font_family": None,      # None → platform default
         "appearance.font_size": None,        # None → widget default
-        "appearance.color_scheme": "system",  # placeholder for styles system
+        "appearance.color_scheme": "system",  # light | dark base palette (system → light)
+        "appearance.tab_style": None,        # None → app's default_style (TabBar.offer_styles)
         # ── Notifications ─────────────────────────────────────────────────
         "notifications.enabled": True,
         "notifications.duration_ms": 5000,

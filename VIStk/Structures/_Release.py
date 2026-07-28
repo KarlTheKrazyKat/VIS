@@ -465,8 +465,7 @@ class Release(Project):
         ``(ok, err)`` — err is always empty on this path because
         ``_run_nuitka`` prints failure details itself before returning.
         """
-        ixt = ".ico" if sys.platform == "win32" else ".xbm"
-        icon_file = f"{self.p_project}/Icons/{self.d_icon}{ixt}"
+        icon_file = self._resolve_icon(self.d_icon)
 
         mode = "--onefile" if self.onefile else "--standalone"
 
@@ -1785,6 +1784,48 @@ class Release(Project):
         print(f"Updated Version {old} => {self.Version}", flush=True)
         return True
 
+    def _resolve_icon(self, name: str) -> str:
+        """Resolve the platform icon file for ``name`` under ``Icons/``.
+
+        Windows needs a ``.ico`` and other platforms an ``.xbm``.  If the
+        native icon file is missing but a source raster image
+        (``.png`` / ``.jpg`` / ``.jpeg`` / ``.bmp`` / ``.gif``) with the
+        same base name exists, it is converted once and cached alongside
+        it so both the compiled Host exe and the installer can embed it.
+
+        Returns the native icon path.  The path may still not exist if no
+        source image was found — every caller guards with ``exists()``.
+        """
+        ixt = ".ico" if sys.platform == "win32" else ".xbm"
+        icon_dir = f"{self.p_project}/Icons"
+        icon_file = f"{icon_dir}/{name}{ixt}"
+        if exists(icon_file):
+            return icon_file
+
+        for ext in (".png", ".jpg", ".jpeg", ".bmp", ".gif"):
+            src_img = f"{icon_dir}/{name}{ext}"
+            if not exists(src_img):
+                continue
+            try:
+                from PIL import Image
+                img = Image.open(src_img).convert("RGBA")
+                if sys.platform == "win32":
+                    # Only include sizes the source can supply without
+                    # upscaling; PIL drops sizes larger than the source.
+                    largest = min(img.width, img.height)
+                    sizes = [(s, s) for s in (16, 24, 32, 48, 64, 128, 256)
+                             if s <= largest] or [(largest, largest)]
+                    img.save(icon_file, format="ICO", sizes=sizes)
+                else:
+                    # XBM is 1-bit monochrome.
+                    img.convert("1").save(icon_file, format="XBM")
+                print(f"Converted {name}{ext} -> {name}{ixt}", flush=True)
+            except Exception as e:
+                print(f"Icon conversion failed for {name}{ext}: {e}", flush=True)
+            return icon_file
+
+        return icon_file
+
     def _pyinstaller_cached(self, *, src: str, pyi_name: str, cache_name: str,
                             cache_dir: str, icon_file: str, version_info_path: str,
                             extra_hidden_imports: tuple[str, ...] = (),
@@ -1800,8 +1841,10 @@ class Release(Project):
         cache_exe = f"{cache_dir}/{cache_name}" + (".exe" if sys.platform == "win32" else "")
         hash_file = f"{cache_dir}/{cache_name}.hash"
 
+        has_icon = bool(icon_file) and os.path.exists(icon_file)
         hasher = hashlib.sha256()
-        for path in (src, icon_file, version_info_path):
+        hash_paths = (src, icon_file, version_info_path) if has_icon else (src, version_info_path)
+        for path in hash_paths:
             with open(path, "rb") as f:
                 hasher.update(f.read())
         for imp in extra_hidden_imports:
@@ -1826,7 +1869,7 @@ class Release(Project):
             f"pyinstaller --noconfirm --onefile "
             f"{'--uac-admin ' if sys.platform == 'win32' else ''}"
             f"--windowed --name {pyi_name} --log-level FATAL "
-            f"--icon {icon_file} {hidden_args} "
+            f"{f'--icon {icon_file} ' if has_icon else ''}{hidden_args} "
             f"--version-file {version_info_path} "
             f"{src}",
             shell=True, cwd=self.location,
@@ -2114,11 +2157,10 @@ class Release(Project):
         with open(self.p_sinfo, "r") as f:
             _inst_info = json.load(f)
         installer_icon_name = _inst_info[self.title].get("metadata", {}).get("installer_icon", self.d_icon)
-        ixt = ".ico" if sys.platform == "win32" else ".xbm"
-        icon_file = self.p_project + "/Icons/" + installer_icon_name + ixt
+        icon_file = self._resolve_icon(installer_icon_name)
         if not exists(icon_file):
             # Fall back to default app icon
-            icon_file = self.p_project + "/Icons/" + self.d_icon + ixt
+            icon_file = self._resolve_icon(self.d_icon)
 
         cache_dir = self.p_vinfo + "/cache"
         os.makedirs(cache_dir, exist_ok=True)

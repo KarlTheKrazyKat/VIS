@@ -618,8 +618,7 @@ class SplitView(Frame):
     # ── Internal ──────────────────────────────────────────────────────────────
 
     def _on_window_focus_out(self, event):
-        """Dim all pane focus indicators when the window loses OS focus."""
-        # Only act if focus left this specific toplevel
+        """Dim all pane focus indicators when the window is deactivated."""
         if event.widget is not self.winfo_toplevel():
             return
         for pane in self.all_tab_managers():
@@ -657,8 +656,12 @@ class SplitView(Frame):
             self._toplevel_click_bound = True
             tl = self.winfo_toplevel()
             tl.bind("<Button-1>", self._focus_from_click, add="+")
-            tl.bind("<FocusOut>", self._on_window_focus_out, add="+")
-            tl.bind("<FocusIn>", self._on_window_focus_in, add="+")
+            # <Activate>/<Deactivate> are window-level (the whole toplevel gains
+            # or loses activation); unlike <FocusIn>/<FocusOut> they do NOT fire
+            # when focus merely moves between child widgets, so the active tab
+            # stays highlighted while the user works inside the window.
+            tl.bind("<Deactivate>", self._on_window_focus_out, add="+")
+            tl.bind("<Activate>", self._on_window_focus_in, add="+")
         pane._content.bind("<Button-1>", lambda e, p=pane: self._set_focused(p), add="+")
         pane.tab_bar.bind("<Button-1>", lambda e, p=pane: self._set_focused(p), add="+")
 

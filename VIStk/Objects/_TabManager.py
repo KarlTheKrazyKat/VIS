@@ -13,7 +13,7 @@ from tkinter import Frame
 from types import ModuleType
 
 from VIStk.Objects._Identity import new_id
-from VIStk.Widgets._TabBar import TabBar, _BG_BAR
+from VIStk.Widgets._TabBar import TabBar
 
 
 def set_tab_info(frame, info):
@@ -117,7 +117,7 @@ class TabManager(Frame):
     """
 
     def __init__(self, parent, position: str = "top", menubar=None, **kwargs):
-        kwargs.setdefault("bg", _BG_BAR)
+        kwargs.setdefault("bg", TabBar._active_style.palette.bar_bg)
         super().__init__(parent, **kwargs)
 
         self.id: int = new_id()

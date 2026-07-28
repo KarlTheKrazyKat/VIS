@@ -930,6 +930,42 @@ A window's **title-bar (chrome) icon** and its **taskbar icon** can now differ. 
 
 ---
 
+### 0.6.2 Tab Styles
+
+Developer-authored, user-selectable window chrome. The tab bar's colours and shape now come from a named **style** resolved against two orthogonal axes — colour **scheme** (light/dark) and a **`TabStyle`** preset — instead of hardcoded greys. Developers curate the looks; the end user picks from that menu in **Settings → Appearance → Tab style**. `classic` on the light scheme is byte-identical to the pre-styles bar.
+
+**`VIStk.Styles`** — new package (`_palette.py`, `_tabstyle.py`)
+
+- `Palette` — every chrome colour as a named role (`bar_bg`, `tab_active`, `tab_inactive`, `tab_hover`, `close_hover`, `separator`, `accent`, `tab_fg`, `tab_active_fg`, focused/unfocused/drag variants, …). `LIGHT` reproduces the historical greys exactly; `DARK` is a neutral dark scheme; `base_palette(scheme)` picks one.
+- `TabStyle` — a look recipe: `indicator` (`none`/`underline`/`topline`), `separators`, `radius`, partial palette `overrides` (a `"$role"` value copies another resolved role so overrides stay scheme-aware), and an `accent` shortcut. `TabStyle.from_preset(base, …)` derives a new look from a built-in.
+- `resolve(scheme, name) -> ResolvedStyle` — concrete `Palette` + render flags; never raises on bad input (unknown style → `classic`, unknown scheme → light).
+- **Four built-in presets:** `classic` (grey fill cue + separators), `underline` (flat, accent bar under the active tab), `topline` (fill cue + accent bar on top), `pill` (fully-rounded accent capsule).
+
+**`TabBar` — styling API** (process-wide class state; applies live to every open bar)
+
+- `TabBar.setStyle(name)` — switch to one of the built-ins by name (`"classic"`/`"underline"`/`"topline"`/`"pill"`); raises `ValueError` for an unknown name.
+- `TabBar.setPalette(*, bar=, tab=, selected=, text=, close=, selected_text=)` — recolour the active style live. Each argument is a Tk colour (name or hex); omitted ones keep their value. `bar` → strip bg, `tab` → unselected tab, `selected` → selected tab, `text` → label + ✕ colour, `close` → the ✕ close-button highlight, `selected_text` → the selected tab's text only. Overrides are **sticky**: stored in `_palette_overrides` and re-applied on top of every resolved style, so they survive a `setStyle` switch and the Host applying the user's saved pick at launch.
+- `register_tab_style(name, style)` / `offer_styles(names, default=)` — author custom looks and curate the Settings menu (typically from `Screens/styles.py`).
+- `set_tab_style(style, scheme=)` — the low-level apply used by the Host; accepts a registered name or a `ResolvedStyle`, layers the sticky `setPalette` overrides, and broadcasts to every bar in `_TABBAR_REGISTRY`.
+- `apply_style(resolved)` — per-bar live recolour; rebuilds the tab widgets only when the corner radius crosses 0 (plain `Button` ↔ rounded pill), suppressing navigation callbacks so it fires no screen focus.
+
+**Rendering**
+
+- **Per-corner rounding** — `vWidget`/`vButton`/`rounded_pil_image` take a `corners=(tl, tr, br, bl)` tuple (PIL's `rounded_rectangle`). A pill tab is one capsule from two widgets: the label rounds its left end, the ✕ its right end (same fill, abutting). New `max_radius(w, h, corners)` clamps a one-sided capsule end to `height/2` (its two arcs stack vertically) instead of `min(w, h)/2`, so a narrow ✕ cap matches the wide label; `effective_radius` takes the corners too.
+- **Active-tab geometry** — tabs fill the full bar height and butt flush to the left edge; the ✕ glyph is enlarged and its foreground tracks the label (white on the active pill, black otherwise).
+- **Indicator timing** — the underline/topline accent bar re-places itself on `<Configure>` and retries until a freshly-packed tab has real geometry, so it shows on the launch tab and on newly-opened tabs without needing a click.
+
+**Wiring**
+
+- `Host` resolves `appearance.tab_style` × `appearance.color_scheme` on its first update (after `Screens/styles.py` is imported, before the first window); an unoffered pick falls back to the app default. `appearance.tab_style` added to `ProjectSettings.DEFAULTS`; **Settings → Appearance** gains a live "Tab style" dropdown.
+- `Screens/styles.py` scaffold (and `Form.zip`) curates the menu and shows a commented custom-style example; `host.txt` imports it.
+
+**Focus fix** — pane focus dimming now keys off window-level `<Activate>`/`<Deactivate>` instead of `<FocusIn>`/`<FocusOut>`, which fired on the toplevel whenever focus moved to a child widget — so the active tab stays highlighted while you work inside the window and only dims when another window takes focus.
+
+**`DateEntry` popup flip** — the calendar popup now flips to open *above* the entry when opening below would spill past the bottom of the containing window (or screen) — e.g. a date field near the bottom of a form — so it opens up into the window instead of off the bottom edge. Falls back to below when there is no room above either.
+
+---
+
 ## Planned
 
 ### 0.5.2 Screen Isolation (per-tab namespaces, wrapper `.pyd`s, always-Host)
@@ -1015,7 +1051,7 @@ A reusable right-click popup menu so screens stop hand-coding the `tkinter.Menu`
 
 ---
 
-### 0.6.2 Live Appearance Apply
+### 0.6.3 Live Appearance Apply
 
 Deferred from 0.6.0. Apply appearance settings to **already-open** windows immediately when changed in the Settings window, instead of only on next launch:
 

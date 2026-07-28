@@ -841,6 +841,37 @@ Widgets extend Tkinter with compound components. Import from `VIStk.Widgets`.
 | `clear_insert_indicator()` | — | Hide the insertion indicator. |
 | `destroy()` | — | Deregisters from `_TABBAR_REGISTRY` then destroys the widget. |
 
+**Styling (0.6.2):**
+
+The tab bar's colours and shape come from a named **style** (see `VIStk.Styles`), which the end user picks in **Settings → Appearance → Tab style**. Four looks ship: `classic` (the historical grey bar), `underline` (flat tabs, accent bar under the active one), `topline` (fill cue + accent bar on top), and `pill` (a rounded accent capsule). Styling is process-wide class state — the methods below are classmethods that apply live to every open bar and become the style for new ones. Configure them once at startup from `Screens/styles.py` (imported by the Host before the first window opens), or call them at runtime.
+
+| Method | Description |
+|--------|-------------|
+| `TabBar.setStyle(name)` | Switch to a built-in style by name (`"classic"`, `"underline"`, `"topline"`, `"pill"`). Raises `ValueError` for an unknown name. |
+| `TabBar.setPalette(*, bar=, tab=, selected=, text=, close=, selected_text=)` | Recolour the active style. Each argument is a Tk colour (`"grey62"` or `"#1e90ff"`); omitted ones are unchanged. Overrides are **sticky** — re-applied on top of every style, so they survive a `setStyle` switch and the user's saved pick at launch. |
+| `TabBar.offer_styles(names, default=None)` | Curate which style names the Settings dropdown offers, and set the fallback default. |
+| `TabBar.register_tab_style(name, style)` | Register a custom `TabStyle` (usually built with `TabStyle.from_preset(...)`) so it can be offered. |
+
+`setPalette` colour roles:
+
+| Argument | Colours |
+|----------|---------|
+| `bar` | the tab-strip background |
+| `tab` | an unselected tab |
+| `selected` | the selected tab |
+| `text` | label + ✕ colour on every tab |
+| `close` | the ✕ close-button highlight (hover / press) |
+| `selected_text` | label + ✕ on the selected tab only |
+
+```python
+# Screens/styles.py — runs once at startup, before the first window opens
+from VIStk.Widgets import TabBar
+
+TabBar.setStyle("pill")
+TabBar.setPalette(bar="#dddddd", tab="#f6f6f6", selected="#5d9edc",
+                  text="#0000cd", close="#cd0000")
+```
+
 **Global registry:**
 
 All live `TabBar` instances are tracked in `VIStk.Widgets._TabBar._TABBAR_REGISTRY`. This list is used during drag motion to detect when the cursor enters a different bar (triggering merge). Bars register on `__init__` and deregister on `destroy()`.

@@ -79,7 +79,8 @@ class RoundedLeaf:
         ow = self._v_outline_width if (self._v_outline and outline) else 0
 
         full = rounded_pil_image(w, h, r, fill, corner,
-                                 outline=outline, outline_width=ow)
+                                 outline=outline, outline_width=ow,
+                                 corners=getattr(self, "_v_corners", None))
         self._place_corner_tiles(full, w, h, r)
         self._place_edge_strips(full, w, h, r, self._border_band(full, w, h, fill, ow))
 
@@ -105,10 +106,20 @@ class RoundedLeaf:
         return band
 
     def _place_corner_tiles(self, full, w: int, h: int, r: int) -> None:
-        """Lay the four r×r rounded-corner crops over the widget's corners."""
-        for name, (x, y) in (("tl", (0, 0)), ("tr", (w - r, 0)),
-                             ("bl", (0, h - r)), ("br", (w - r, h - r))):
+        """Lay the four r×r rounded-corner crops over the widget's corners.
+
+        A per-corner ``_v_corners`` (top_left, top_right, bottom_right,
+        bottom_left) skips the square corners so a left-rounded label and a
+        right-rounded close read as one capsule."""
+        corners = getattr(self, "_v_corners", None)
+        for name, (x, y), idx in (("tl", (0, 0), 0), ("tr", (w - r, 0), 1),
+                                  ("bl", (0, h - r), 3), ("br", (w - r, h - r), 2)):
             if r <= 0:
+                continue
+            if corners is not None and not corners[idx]:
+                old = self._v_tiles.pop(name, None)
+                if old is not None:
+                    old.destroy()
                 continue
             self._set_overlay(self._v_tiles, name,
                               full.crop((x, y, x + r, y + r)), x, y, r, r)

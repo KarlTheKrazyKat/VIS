@@ -56,6 +56,7 @@ class vButton(RoundedLeaf, vWidget, Button):
                  radius: int = 0, radius_style: str = "pixels",
                  outline: str | None = None,
                  outline_width: int = 1, corner_bg: str | None = None,
+                 corners: tuple[bool, bool, bool, bool] | None = None,
                  active_fill: str | None = None,
                  disabled_fill: str = "#e9ecef", **kwargs: Unpack[_ButtonKw]):
         """
@@ -88,7 +89,7 @@ class vButton(RoundedLeaf, vWidget, Button):
         super().__init__(master, radius=radius, radius_style=radius_style,
                          outline=outline,
                          outline_width=outline_width, corner_bg=corner_bg,
-                         **kwargs)
+                         corners=corners, **kwargs)
         if self._v_radius > 0:
             self._v_rest_bg = self.cget("background")
             if active_fill:

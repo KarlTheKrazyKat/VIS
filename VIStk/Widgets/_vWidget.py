@@ -56,7 +56,8 @@ def rounded_pil_image(width: int, height: int, radius: int,
                       corner_bg: tuple[int, int, int],
                       outline: tuple[int, int, int] | None = None,
                       outline_width: int = 0,
-                      supersample: int = 4) -> "Image.Image":
+                      supersample: int = 4,
+                      corners: tuple[bool, bool, bool, bool] | None = None) -> "Image.Image":
     """Render an anti-aliased rounded-rectangle as a **PIL ``Image``**.
 
     Same shape as :func:`make_rounded_image`, but returns the raw RGB image so
@@ -76,23 +77,35 @@ def rounded_pil_image(width: int, height: int, radius: int,
         outline:        Optional stroke colour, ``(r, g, b)`` or ``None``.
         outline_width:  Stroke width in px (ignored without *outline*).
         supersample:    Oversampling factor for anti-aliasing (default 4).
+        corners:        Optional ``(top_left, top_right, bottom_right,
+                        bottom_left)`` booleans — round only the ``True`` ones,
+                        leaving the rest square.  ``None`` rounds all four.  Lets
+                        two adjacent widgets (label rounded left, close rounded
+                        right) read as one capsule.
     """
     width = max(1, int(width))
     height = max(1, int(height))
     ss = max(1, int(supersample))
     big_w, big_h = width * ss, height * ss
     r = max(0, int(radius)) * ss
-    r = min(r, big_w // 2, big_h // 2)
+    r = min(r, max_radius(big_w, big_h, corners))
+    if corners is not None:
+        # PIL's rounded_rectangle builds a degenerate edge rect when a corner is
+        # squared and the radius is exactly the limit; back off a hair (sub-pixel
+        # after downscale) so a left-/right-only capsule still renders.
+        r = max(0, r - ss)
 
     img = Image.new("RGB", (big_w, big_h), corner_bg)
     draw = ImageDraw.Draw(img)
     has_outline = outline is not None and outline_width > 0
+    extra = {"corners": corners} if corners is not None else {}
     draw.rounded_rectangle(
         (0, 0, big_w - 1, big_h - 1),
         radius=r,
         fill=fill,
         outline=outline if has_outline else None,
         width=(outline_width * ss) if has_outline else 1,
+        **extra,
     )
     return img.resize((width, height), resample=Resampling.LANCZOS)
 
@@ -102,7 +115,8 @@ def make_rounded_image(width: int, height: int, radius: int,
                        corner_bg: tuple[int, int, int],
                        outline: tuple[int, int, int] | None = None,
                        outline_width: int = 0,
-                       supersample: int = 4) -> "PIL.ImageTk.PhotoImage":
+                       supersample: int = 4,
+                       corners: tuple[bool, bool, bool, bool] | None = None) -> "PIL.ImageTk.PhotoImage":
     """Render an anti-aliased rounded-rectangle as a ``PhotoImage``.
 
     Thin wrapper over :func:`rounded_pil_image` that wraps the result in a
@@ -113,7 +127,7 @@ def make_rounded_image(width: int, height: int, radius: int,
     return PIL.ImageTk.PhotoImage(
         rounded_pil_image(width, height, radius, fill, corner_bg,
                           outline=outline, outline_width=outline_width,
-                          supersample=supersample))
+                          supersample=supersample, corners=corners))
 
 
 #: Accepted ``radius_style`` spellings → canonical form.
@@ -133,17 +147,40 @@ def _norm_radius_style(style) -> str:
     return _RADIUS_STYLES.get(str(style or "").strip().lower(), "pixels")
 
 
-def effective_radius(radius: int, style: str, w: int, h: int) -> int:
+def max_radius(w: int, h: int,
+               corners: tuple[bool, bool, bool, bool] | None = None) -> int:
+    """Largest corner radius a *w*×*h* box can show for the rounded *corners*.
+
+    With all four corners rounded (``corners=None``) the limit is half the short
+    side.  When only one vertical pair is rounded (a left- or right-only capsule
+    end) the two arcs stack **vertically**, so the height alone caps them at
+    ``h/2`` while the width only needs to be ``≥`` the radius — the short-side
+    rule would wrongly clamp a tall, narrow end (e.g. a close button) to a
+    smaller radius than the wide label it abuts.  Likewise for a top-/bottom-only
+    pair along the width.
+    """
+    if corners is None:
+        return max(0, min(w, h) // 2)
+    left  = corners[0] or corners[3]      # tl or bl
+    right = corners[1] or corners[2]      # tr or br
+    top   = corners[0] or corners[1]      # tl or tr
+    bot   = corners[2] or corners[3]      # br or bl
+    h_limit = w if (left != right) else w // 2      # one column of arcs vs two
+    v_limit = h if (top != bot) else h // 2         # one row of arcs vs two
+    return max(0, min(h_limit, v_limit))
+
+
+def effective_radius(radius: int, style: str, w: int, h: int,
+                     corners: tuple[bool, bool, bool, bool] | None = None) -> int:
     """Resolve *radius* to a pixel radius for a *w*×*h* box.
 
     ``style="pixels"`` returns *radius* as-is; ``"percent"`` reads it as a
-    percentage of the maximum round — half the short side — so ``100`` is fully
-    rounded (a circle on a square box) and ``50`` is half that.  The result is
-    always clamped to half the short side, so a radius can never exceed what the
-    box can show.  Callers pass the *live* size, so a percentage radius tracks
-    resizes.
+    percentage of the maximum round — so ``100`` is fully rounded.  The result is
+    clamped to :func:`max_radius` for the given *corners*, so a one-sided capsule
+    end rounds to the same radius as a wide neighbour.  Callers pass the *live*
+    size, so a percentage radius tracks resizes.
     """
-    limit = max(0, min(w, h) // 2)
+    limit = max_radius(w, h, corners)
     r = radius * limit / 100.0 if _norm_radius_style(style) == "percent" else radius
     return max(0, min(int(round(r)), limit))
 
@@ -231,6 +268,7 @@ class vWidget:
                  radius: int = 0, radius_style: str = "pixels",
                  outline: str | None = None,
                  outline_width: int = 1, corner_bg: str | None = None,
+                 corners: tuple[bool, bool, bool, bool] | None = None,
                  **kwargs):
         """Build the native widget with inheritance + optional rounded corners.
 
@@ -250,6 +288,7 @@ class vWidget:
         self._v_outline = outline
         self._v_outline_width = int(outline_width or 0)
         self._v_corner_bg = corner_bg
+        self._v_corners = corners            # per-corner rounding (None = all four)
         self._v_bg_image = None              # keep a ref so Tk won't GC it
         self._v_last_size = (0, 0)           # debounce identical-size redraws
 
@@ -393,7 +432,8 @@ class vWidget:
         *live* size, so a percentage radius is recomputed on each
         ``<Configure>`` and stays correct through resizes.
         """
-        return effective_radius(self._v_radius, self._v_radius_style, w, h)
+        return effective_radius(self._v_radius, self._v_radius_style, w, h,
+                                getattr(self, "_v_corners", None))
 
     def _render_rounded(self, event=None) -> None:
         """`<Configure>` handler: regenerate the rounded image on size change.
@@ -415,7 +455,8 @@ class vWidget:
         outline = self._resolve_color(self._v_outline)
         img = make_rounded_image(w, h, self._effective_radius(w, h), fill, corner,
                                  outline=outline,
-                                 outline_width=self._v_outline_width)
+                                 outline_width=self._v_outline_width,
+                                 corners=self._v_corners)
         self._paint(img)
 
     def _prepare_rounded(self) -> None:
