@@ -145,10 +145,21 @@ class DateEntry(ttk.Frame):
 
         self._build_calendar()
 
-        # Position just below the entry; nudge up if it would clip.
+        # Prefer opening below the entry, but flip above when opening down would
+        # spill past the bottom of the containing window (or screen) — e.g. the
+        # field sits low in the window — so the calendar opens up INTO the window
+        # rather than off the bottom edge.
         self._popup.update_idletasks()
+        ph = self._popup.winfo_reqheight()
         x = self._entry.winfo_rootx()
-        y = self._entry.winfo_rooty() + self._entry.winfo_height() + 2
+        ey = self._entry.winfo_rooty()
+        eh = self._entry.winfo_height()
+        win = self.winfo_toplevel()
+        limit = min(win.winfo_rooty() + win.winfo_height(),
+                    self._popup.winfo_screenheight())
+        below = ey + eh + 2
+        above = ey - ph - 2
+        y = above if (below + ph > limit and above >= 0) else below
         self._popup.geometry(f"+{x}+{y}")
         self._popup.deiconify()
 
