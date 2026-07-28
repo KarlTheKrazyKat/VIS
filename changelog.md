@@ -962,6 +962,8 @@ Developer-authored, user-selectable window chrome. The tab bar's colours and sha
 
 **Focus fix** — pane focus dimming now keys off window-level `<Activate>`/`<Deactivate>` instead of `<FocusIn>`/`<FocusOut>`, which fired on the toplevel whenever focus moved to a child widget — so the active tab stays highlighted while you work inside the window and only dims when another window takes focus.
 
+**`DateEntry` popup flip** — the calendar popup now flips to open *above* the entry when opening below would spill past the bottom of the containing window (or screen) — e.g. a date field near the bottom of a form — so it opens up into the window instead of off the bottom edge. Falls back to below when there is no room above either.
+
 ---
 
 ## Planned
