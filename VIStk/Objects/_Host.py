@@ -1495,7 +1495,25 @@ class Host:
         window adopts the screen's own icon and name, so a screen with
         ``tabbed=False`` looks like a plain application window rather than
         a single-tab Host shell.
+
+        Honours ``single_instance`` the same way :meth:`_open_tab` does: a
+        chromeless window still registers its screen as a tab, so an already
+        open instance is found and raised instead of duplicated.
         """
+        if scr.single_instance:
+            tm, tab_id = self._find_tab_by_base(scr.name)
+            if tm is not None and tab_id is not None:
+                tm.focus_tab(tab_id)
+                dw = self._window_for_tab_manager(tm)
+                if dw is not None:
+                    try:
+                        dw.win.deiconify()
+                        dw.win.lift()
+                        dw.win.focus_force()
+                    except Exception:
+                        pass
+                return
+
         from VIStk.Objects._DetachedWindow import DetachedWindow
         dw = DetachedWindow(self, scr, chromeless=True, args=args)
 

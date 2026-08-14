@@ -152,6 +152,52 @@ def run_vbutton(root, tk):
           chip.cget("background") == "#dbe6f6")
     check("hover repaints the rounded fill", str(chip.cget("image")) != img0)
 
+    # Tk drives its own "active" state from Tcl (tk::ButtonDown on press, and
+    # tk::ButtonEnter on hover under X11/Aqua), so Python's configure() never
+    # sees it and never repaints — the native SQUARE face would paint over the
+    # rounded one, and a drag that swallows <ButtonRelease-1> leaves the widget
+    # stuck -state active, making it permanent.  Rounded mode defuses that by
+    # mirroring the resting colours onto the active ones.
+    check("rounded mirrors activebackground from bg",
+          chip.cget("activebackground") == chip.cget("background"))
+    check("rounded mirrors activeforeground from fg",
+          chip.cget("activeforeground") == chip.cget("foreground"))
+
+    mirror = vButton(pane, text="M", bg="#eef1f6", fg="#2f78d3", radius=8)
+    mirror.place(x=120, y=80, width=60, height=30)
+    root.update()
+    mirror.configure(bg="#123456", fg="#654321")
+    root.update()
+    check("recolour keeps the active mirror in sync",
+          mirror.cget("activebackground") == "#123456"
+          and mirror.cget("activeforeground") == "#654321")
+
+    keep = vButton(pane, text="K", bg="#eef1f6", radius=8,
+                   activebackground="#ff00ff")
+    check("explicit activebackground still wins",
+          keep.cget("activebackground") == "#ff00ff")
+
+    # <Leave> onto a *sibling*: a child's path is ours + "." + its name, so a bare
+    # prefix test also matched siblings (".!x" is a prefix of ".!x2") and left the
+    # button stuck in hover for good.
+    hov = vButton(pane, name="x", text="A", bg="#eef1f6", radius=8,
+                  active_fill="#dbe6f6")
+    sib = vButton(pane, name="x2", text="B", bg="#eef1f6", radius=8)
+    hov.place(x=10, y=180, width=60, height=30)
+    sib.place(x=80, y=180, width=60, height=30)
+    root.update()
+    check("sibling path extends the hovered button's path",
+          str(sib).startswith(str(hov)))
+    hov._on_enter()
+    root.update()
+    check("hover applies active_fill", hov.cget("background") == "#dbe6f6")
+    hov.winfo_containing = lambda *a, **k: sib      # pointer is over the sibling
+    hov._maybe_unhover()
+    root.update()
+    check("leaving onto a sibling clears hover", hov._v_hover is False)
+    check("leaving onto a sibling restores the resting bg",
+          hov.cget("background") == "#eef1f6")
+
     # disabled state: greys the button and gates the command
     dcalls = []
     dbtn = vButton(pane, text="X", bg="#2f78d3", fg="white", radius=8,
@@ -176,6 +222,11 @@ def run_vbutton(root, tk):
     check("radius=0 passes image= through to native", str(flat.cget("image")) != "")
     check("radius=0 builds no corner tiles", not getattr(flat, "_v_tiles", None))
 
+    probe = tk.Button(pane)
+    check("radius=0 leaves the native active colours alone",
+          str(flat.cget("activebackground")) == str(probe.cget("activebackground")))
+    probe.destroy()
+
     # caller image= → tile mode: NATIVE image + compound (icon beside text).
     ib = vButton(pane, text="Save", image=icon, compound="left", bg="#eef1f6",
                  radius=8, outline="#888", command=lambda: None)
@@ -189,7 +240,7 @@ def run_vbutton(root, tk):
     check("corner tiles forward clicks to the button",
           ib._v_tiles["tl"].bind("<ButtonRelease-1>") != "")
 
-    for w in (btn, cbtn, chip, dbtn, flat, ib, pane):
+    for w in (btn, cbtn, chip, mirror, keep, hov, sib, dbtn, flat, ib, pane):
         w.destroy()
 
 

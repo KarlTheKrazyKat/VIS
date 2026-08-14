@@ -527,13 +527,19 @@ class TabBar(Frame):
         self._position_indicator()
 
     def _restyle_tabs(self) -> None:
-        """Recolour every live tab widget to the current palette (no rebuild)."""
+        """Recolour every live tab widget to the current palette (no rebuild).
+
+        Pill tabs are ``vButton``s that mirror ``activebackground`` from their own
+        resting ``bg``, so only the plain-``Button`` style carries a native hover
+        colour (see :meth:`_make_tab_button`)."""
+        pill = self.style.radius > 0
         for tab_id, entry in self._tabs.items():
             bg = self._tab_bg(tab_id)
-            entry["button"].configure(bg=bg, fg=self._tab_fg(tab_id),
-                                       activebackground=self._pal.tab_hover)
-            entry["close"].configure(bg=bg, fg=self._tab_fg(tab_id),
-                                      activebackground=self._pal.close_hover)
+            entry["button"].configure(bg=bg, fg=self._tab_fg(tab_id))
+            entry["close"].configure(bg=bg, fg=self._tab_fg(tab_id))
+            if not pill:
+                entry["button"].configure(activebackground=self._pal.tab_hover)
+                entry["close"].configure(activebackground=self._pal.close_hover)
 
     def _rebuild_all_tabs(self) -> None:
         """Destroy and recreate every tab button under the current style.
@@ -598,13 +604,17 @@ class TabBar(Frame):
             pady=_TAB_PADY,
             bg=self._pal.tab_inactive,
             fg=self._pal.tab_fg,
-            activebackground=self._pal.tab_hover,
             command=lambda i=tab_id: self._btn_click(i),
         )
         if pill:
             # No active_fill: TabBar's own <Enter>/<Leave> handlers drive hover
             # uniformly for both button kinds (config(bg=...) repaints the tiles),
             # so vButton must not also bind its internal hover and fight them.
+            # No activebackground either — Tk sets -state active from Tcl on
+            # press, which never reaches Python to repaint, so a hover colour
+            # there would paint the native square face over the pill (and a drag
+            # that eats the release makes it permanent).  vButton mirrors the
+            # resting bg onto activebackground for us instead.
             # A full-percent radius makes a capsule at any size; only the left
             # end is rounded so the label + close read as one pill.
             from VIStk.Widgets._vButton import vButton
@@ -615,7 +625,7 @@ class TabBar(Frame):
             # the centred text then gains _PILL_LABEL_PADX of space each side.
             self._widen_pill_label(btn)
             return btn
-        return Button(self, **common)
+        return Button(self, activebackground=self._pal.tab_hover, **common)
 
     def _widen_pill_label(self, btn) -> None:
         """Widen a fill-mode pill label to its text width + a little side space.
@@ -655,14 +665,16 @@ class TabBar(Frame):
             font=_CLOSE_FONT,
             bg=self._pal.tab_inactive,
             fg=self._pal.tab_fg,
-            activebackground=self._pal.close_hover,
             command=lambda i=tab_id: self._close(i),
         )
         if pill:
+            # activebackground is left off for the same reason as the label pill
+            # — see _make_tab_button.
             from VIStk.Widgets._vButton import vButton
             return vButton(self, radius=100, radius_style="percent",
                            corners=_PILL_RIGHT, **common)
-        return Button(self, width=2, **common)
+        return Button(self, width=2, activebackground=self._pal.close_hover,
+                      **common)
 
     def _pack_tab(self, btn, close, *, first: bool) -> None:
         """Pack a tab's label + close under the active style's geometry.

@@ -16,13 +16,23 @@ from VIStk.Objects._Identity import new_id
 from VIStk.Widgets._TabBar import TabBar
 
 
-def set_tab_info(frame, info):
+def set_tab_info(frame, info, replace: bool = False):
     """Set the characteristic info string for the tab that owns *frame*.
 
     Call this from within a screen's ``setup(parent)`` function.  ``info``
     may be a plain ``str`` (set once) or a ``tkinter.StringVar`` (traced; the
     tab label and window title update automatically whenever the variable
     changes).
+
+    By default the tab reads ``"<screen name> — <info>"``.  Pass
+    ``replace=True`` when the screen supplies a complete label of its own
+    (``"WO 21930"``) and the screen name would be redundant; the info string
+    is then used verbatim.  An empty info string always falls back to the
+    screen name, so a tab is never blank.
+
+    ``replace`` only affects the visible label — ``display_name`` and
+    ``base_name`` are untouched, so tab lookup, duplicate-label
+    uniquification and per-tab namespace resolution are unaffected.
 
     Example::
 
@@ -36,7 +46,7 @@ def set_tab_info(frame, info):
     mgr    = getattr(frame, "_vis_tab_manager", None)
     tab_id = getattr(frame, "_vis_tab_id",      None)
     if mgr is not None and tab_id is not None:
-        mgr.set_tab_info(tab_id, info)
+        mgr.set_tab_info(tab_id, info, replace=replace)
 
 
 class _PerTabProxy:
@@ -943,6 +953,7 @@ class TabManager(Frame):
             "base_name":     base_name if base_name is not None else name,
             "info":          "",
             "_info_trace":   None,
+            "replace_label": False,
         }
 
         if module and hasattr(module, "setup"):
@@ -982,6 +993,14 @@ class TabManager(Frame):
                     pass
 
         self.tab_bar.open_tab(tab_id, name, icon=icon, insert_idx=insert_idx)
+
+        # setup() above may have called set_tab_info before the tab-bar entry
+        # existed, so open_tab has just labelled the tab with the bare screen
+        # name.  Re-apply whatever info was registered, now that there is a
+        # label to update — screens shouldn't need an after_idle of their own.
+        if self._tabs.get(tab_id, {}).get("info"):
+            self._update_tab_info(tab_id, self._tabs[tab_id]["info"])
+
         return tab_id
 
     def move_tab(self, source_mgr: "TabManager", tab_id: int,
@@ -1013,6 +1032,7 @@ class TabManager(Frame):
         module    = entry.get("module")
         trace     = entry.get("_info_trace")
         info_str  = entry.get("info", "")
+        replace   = entry.get("replace_label", False)
 
         # Tear down source pane's view of this tab without touching
         # sys.modules — the per-tab namespace lives on.
@@ -1043,9 +1063,9 @@ class TabManager(Frame):
         # the caller wired one originally)
         if trace is not None:
             var, _ = trace
-            self.set_tab_info(tab_id, var)
+            self.set_tab_info(tab_id, var, replace=replace)
         elif info_str:
-            self.set_tab_info(tab_id, info_str)
+            self.set_tab_info(tab_id, info_str, replace=replace)
 
         return tab_id
 
@@ -1146,15 +1166,18 @@ class TabManager(Frame):
                                        insert_idx=idx, tab_id=tab_id)
         return new_tab_id is not None
 
-    def set_tab_info(self, key, info) -> None:
+    def set_tab_info(self, key, info, replace: bool = False) -> None:
         """Set or trace the characteristic info for the identified tab.
 
         ``info`` may be a plain ``str`` or a ``tkinter.StringVar``.
-        Replaces any previously registered trace.
+        Replaces any previously registered trace.  ``replace=True`` makes
+        the info string the whole tab label instead of a suffix — see the
+        module-level :func:`set_tab_info`.
         """
         tab_id = self._resolve_id(key)
         if tab_id is None:
             return
+        self._tabs[tab_id]["replace_label"] = bool(replace)
         # Remove existing trace if any
         old = self._tabs[tab_id].get("_info_trace")
         if old is not None:
@@ -1197,7 +1220,12 @@ class TabManager(Frame):
             return
         self._tabs[tab_id]["info"] = info
         name = self._tabs[tab_id]["display_name"]
-        display = f"{name} — {info}" if info else name
+        if not info:
+            display = name
+        elif self._tabs[tab_id].get("replace_label"):
+            display = info
+        else:
+            display = f"{name} — {info}"
         self.tab_bar.update_tab_label(tab_id, display)
         if self.on_tab_info_change:
             self.on_tab_info_change(tab_id, info)

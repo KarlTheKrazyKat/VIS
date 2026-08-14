@@ -338,7 +338,7 @@ class DetachedWindow:
         entry = self.tab_manager._tabs.get(tab_id, {})
         display = entry.get("display_name", "")
         info = entry.get("info", "")
-        self._set_title(display, info)
+        self._set_title(display, info, replace=entry.get("replace_label", False))
         base_name = entry.get("base_name", display)
         scr = self.host.Project.getScreen(base_name)
         self.InfoRow.set_screen(display, str(scr.s_version) if scr else "")
@@ -364,20 +364,27 @@ class DetachedWindow:
     def _on_tab_info_change(self, tab_id: int, info: str):
         if self.tab_manager.active == tab_id:
             entry = self.tab_manager._tabs.get(tab_id, {})
-            self._set_title(entry.get("display_name", ""), info)
+            self._set_title(entry.get("display_name", ""), info,
+                            replace=entry.get("replace_label", False))
 
-    def _set_title(self, screen: str, info: str = ""):
+    def _set_title(self, screen: str, info: str = "", replace: bool = False):
+        # A tab opted into replace already supplies a complete label ("WO
+        # 21930") that carries the screen's identity, so prefixing the screen
+        # name would only repeat it — mirror the tab bar and use info alone.
+        if replace and info:
+            label = info
+        elif info:
+            label = f"{screen} — {info}"
+        else:
+            label = screen
+
         if self.chromeless:
             # Standalone windows advertise the screen identity directly
             # rather than the project: screen prefix used for the tabbed
             # Host shell.
-            self.win.title(f"{screen} — {info}" if info else screen)
+            self.win.title(label)
             return
-        base = self.host.Project.title
-        if info:
-            self.win.title(f"{base}: {screen} — {info}")
-        else:
-            self.win.title(f"{base}: {screen}")
+        self.win.title(f"{self.host.Project.title}: {label}")
 
     # ── Pop-out, detach, refresh, split ───────────────────────────────────────
 

@@ -966,6 +966,29 @@ Developer-authored, user-selectable window chrome. The tab bar's colours and sha
 
 ---
 
+### 0.6.3 Tab Labels, Single-Instance Windows & Rounded-Button Fixes
+
+**Tab label replacement** — `set_tab_info(frame, info, replace=True)` makes the info string the *whole* tab label instead of a `"<screen name> — <info>"` suffix, for screens that already supply a self-identifying label (`"WO 21930"`) where the screen name would only repeat it.
+
+- Threaded through `TabManager.set_tab_info(key, info, replace=False)` and stored per tab as `replace_label`; an empty info string always falls back to the screen name, so a tab is never blank.
+- Affects the **visible label only** — `display_name` and `base_name` are untouched, so tab lookup, duplicate-label uniquification and per-tab namespace resolution are unaffected.
+- `DetachedWindow` mirrors it in the window title: a `replace` tab titles as `"<project>: WO 21930"` rather than repeating the screen name.
+
+**Chromeless windows honour `single_instance`** — `Host._open_chromeless()` now performs the same lookup `_open_tab()` does: a screen marked `single_instance` that is already open is focused, deiconified and raised instead of opening a second window. Chromeless windows still register their screen as a tab, so the existing instance is found.
+
+**`VIS release` keeps package data files** — packages listed in `collect_packages` are now always directory-shipped rather than compiled to a single `.pyd`. Compiling them preserved the Python but dropped every non-`.py` file alongside it (Tcl scripts, `.dll`s, `cacert.pem`), which broke `tkinterweb` and `certifi` in released binaries.
+
+#### Fixes
+
+**Rounded `vButton` losing its shape on hover/press** — a rounded `vButton` could flip to a plain rectangle (no radius, no outline) and *stay* that way. Tk drives its own `active` state from Tcl — `tk::ButtonDown` runs `$w configure -relief sunken -state active` on press, and under X11/Aqua `tk::ButtonEnter` does it on plain hover — so Python's `configure()` never runs, the rounded fill / corner tiles are never repainted, and Tk paints the native **square** face using `activebackground`/`activeforeground`. Because the state only clears via `tk::ButtonUp`/`tk::ButtonLeave`, a drag that swallows the `<ButtonRelease-1>` (dragging a tab out of its bar) left the button stuck `active` — the rectangle was permanent, not a flash.
+
+- `vButton._sync_active_colors()` mirrors the resting `bg`/`fg` onto `activebackground`/`activeforeground` in rounded mode, making Tk's active state visually inert; it is re-applied whenever the resting colours, the hover fill, or `state` change. A caller who passes either option explicitly keeps it (same "explicit wins" rule as `bg`/`fg`/`font` inheritance), `active_fill` is still the supported way to colour hover, and `radius=0` buttons are untouched.
+- `TabBar` no longer passes `activebackground` to its **pill** tabs (it drives hover itself via `config(bg=…)`); the plain-`Button` styles still get the native hover colour.
+
+**Rounded `vButton` stuck in hover between siblings** — `_maybe_unhover()` kept hover whenever the widget under the pointer had the hovered button's path as a string prefix, to cover the corner/edge tiles (which are children). Sibling paths collide under that test — `.!vbutton` is a prefix of `.!vbutton2` — so moving the pointer from one `vButton` straight onto another in the same parent left the first permanently in its `active_fill`, and `configure()` stops tracking `_v_rest_bg` while `_v_hover` is set, so it never recovered. Now matched on the `"."` child separator, and a widget destroyed between `<Leave>` and the idle callback no longer raises `TclError`.
+
+---
+
 ## Planned
 
 ### 0.5.2 Screen Isolation (per-tab namespaces, wrapper `.pyd`s, always-Host)
@@ -1051,7 +1074,7 @@ A reusable right-click popup menu so screens stop hand-coding the `tkinter.Menu`
 
 ---
 
-### 0.6.3 Live Appearance Apply
+### 0.6.4 Live Appearance Apply
 
 Deferred from 0.6.0. Apply appearance settings to **already-open** windows immediately when changed in the Settings window, instead of only on next launch:
 

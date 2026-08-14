@@ -460,3 +460,75 @@ Fixes
   containing window (or screen) --- e.g. a date field near the bottom of a
   form --- so it opens up into the window instead of off the bottom edge.
   Falls back to below when there is no room above either.
+
+0.6.3 --- Tab Labels, Single-Instance Windows & Rounded-Button Fixes
+--------------------------------------------------------------------
+
+*Released.*
+
+Tab labels a screen can own outright, single-instance behaviour for chromeless
+windows, a released-binary packaging fix, and two rounded-``vButton`` rendering
+bugs.
+
+Tab label replacement
+~~~~~~~~~~~~~~~~~~~~~
+
+``set_tab_info(frame, info, replace=True)`` makes the info string the *whole*
+tab label instead of a ``"<screen name> --- <info>"`` suffix --- for screens that
+already supply a self-identifying label (``"WO 21930"``) where the screen name
+would only repeat it.
+
+- Threaded through ``TabManager.set_tab_info(key, info, replace=False)`` and
+  stored per tab as ``replace_label``. An empty info string always falls back to
+  the screen name, so a tab is never blank.
+- Affects the **visible label only** --- ``display_name`` and ``base_name`` are
+  untouched, so tab lookup, duplicate-label uniquification and per-tab namespace
+  resolution are unaffected.
+- ``DetachedWindow`` mirrors it in the window title: a ``replace`` tab titles as
+  ``"<project>: WO 21930"`` rather than repeating the screen name.
+
+Chromeless single-instance windows
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``Host._open_chromeless()`` now performs the same lookup ``_open_tab()`` does: a
+screen marked ``single_instance`` that is already open is focused, deiconified
+and raised instead of opening a second window. Chromeless windows still register
+their screen as a tab, so the existing instance is found.
+
+VIS release package data
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+Packages listed in ``collect_packages`` are now always directory-shipped rather
+than compiled to a single ``.pyd``. Compiling them preserved the Python but
+dropped every non-``.py`` file alongside it (Tcl scripts, ``.dll``\ s,
+``cacert.pem``), which broke ``tkinterweb`` and ``certifi`` in released binaries.
+
+Fixes
+~~~~~
+
+- **Rounded ``vButton`` losing its shape on hover/press** --- a rounded
+  ``vButton`` could flip to a plain rectangle (no radius, no outline) and *stay*
+  that way. Tk drives its own ``active`` state from Tcl --- ``tk::ButtonDown``
+  runs ``$w configure -relief sunken -state active`` on press, and under X11/Aqua
+  ``tk::ButtonEnter`` does it on plain hover --- so Python's ``configure()`` never
+  runs, the rounded fill / corner tiles are never repainted, and Tk paints the
+  native **square** face using ``activebackground``/``activeforeground``. Because
+  the state only clears via ``tk::ButtonUp``/``tk::ButtonLeave``, a drag that
+  swallows the ``<ButtonRelease-1>`` (dragging a tab out of its bar) left the
+  button stuck ``active`` --- the rectangle was permanent, not a flash.
+  ``vButton._sync_active_colors()`` now mirrors the resting ``bg``/``fg`` onto
+  the active options in rounded mode, re-applied whenever the resting colours,
+  the hover fill or ``state`` change; explicitly-passed values still win, and
+  ``radius=0`` is untouched. ``TabBar`` no longer passes ``activebackground`` to
+  its **pill** tabs (it drives hover itself via ``config(bg=...)``); the
+  plain-``Button`` styles still get the native hover colour.
+- **Rounded ``vButton`` stuck in hover between siblings** --- ``_maybe_unhover()``
+  kept hover whenever the widget under the pointer had the hovered button's path
+  as a string prefix, to cover the corner/edge tiles (which are children).
+  Sibling paths collide under that test --- ``.!vbutton`` is a prefix of
+  ``.!vbutton2`` --- so moving the pointer from one ``vButton`` straight onto
+  another in the same parent left the first permanently in its ``active_fill``,
+  and ``configure()`` stops tracking ``_v_rest_bg`` while ``_v_hover`` is set, so
+  it never recovered. Now matched on the ``"."`` child separator, and a widget
+  destroyed between ``<Leave>`` and the idle callback no longer raises
+  ``TclError``.

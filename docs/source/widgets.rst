@@ -1164,6 +1164,27 @@ hand cursor. Disabling the button greys it, swaps the cursor back to an arrow, a
 the click. In tile mode the corner tiles forward clicks and hover events to the button,
 so the rounded corners stay live rather than swallowing them.
 
+Tk's own active state
+~~~~~~~~~~~~~~~~~~~~~
+
+Rounded mode also mirrors the resting ``bg`` / ``fg`` onto ``activebackground`` /
+``activeforeground``, so Tk's built-in *active* rendering is visually inert.
+
+This is not cosmetic. Tk sets that state **itself, from Tcl** — ``tk::ButtonDown``
+runs ``$w configure -relief sunken -state active`` on press, and under X11/Aqua
+``tk::ButtonEnter`` does the same on plain hover. Those are Tcl-level widget
+commands, so Python's ``configure()`` never runs and the rounded fill / corner
+tiles are never repainted; Tk paints the native **square** face over the rounded
+one. Worse, the state only clears via ``tk::ButtonUp`` / ``tk::ButtonLeave``, so a
+drag that swallows the ``<ButtonRelease-1>`` leaves the button stuck ``active`` and
+the rectangle never goes away.
+
+Pass ``activebackground`` or ``activeforeground`` explicitly to keep your own value
+(the same "explicit wins" rule as ``bg`` / ``fg`` / ``font`` inheritance) — but note
+that in tile mode a differing active colour is exactly what repaints the square
+face. ``active_fill`` is the supported way to colour hover. ``radius=0`` buttons are
+left entirely alone.
+
 ----
 
 vFrame (0.6.0)

@@ -1520,10 +1520,14 @@ class Release(Project):
                     print(f"{prefix} copied (single-file)", flush=True)
 
         # Split: directory-shipped (binary extensions) vs compile-to-pyd.
+        # ``collect_packages`` are always dir-shipped whole so their non-.py
+        # data files ship alongside the code (Tcl scripts, .dll, cacert.pem,
+        # ...).  Compiling those to a single .pyd keeps the Python but drops
+        # every data file, which breaks packages like tkinterweb / certifi.
         dir_shipped: list[tuple[str, str]] = []
         to_compile: list[tuple[str, str]] = []
         for pkg, pkg_dir in resolved:
-            if self._has_binary_extensions(pkg_dir):
+            if self._has_binary_extensions(pkg_dir) or pkg in self.collect_packages:
                 dir_shipped.append((pkg, pkg_dir))
             else:
                 to_compile.append((pkg, pkg_dir))

@@ -27,12 +27,16 @@ two conveniences as :class:`~VIStk.Widgets.vLabel`::
   ``active_fill`` recolours the button on hover (``<Enter>``/``<Leave>``) and
   ``disabled_fill`` greys it when ``state="disabled"`` (gating the click).  At
   ``radius=0`` it is an ordinary ``Button``.
+* **Tk's own active state** — in rounded mode ``activebackground`` /
+  ``activeforeground`` are mirrored from the resting ``bg`` / ``fg`` so Tk's
+  built-in active rendering can't paint a square face over the rounded one; see
+  :meth:`vButton._sync_active_colors`.  Pass either option explicitly to keep it.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from tkinter import Button, Label
+from tkinter import Button, Label, TclError
 from VIStk.Widgets._vWidget import vWidget
 from VIStk.Widgets._vLeaf import RoundedLeaf
 
@@ -92,6 +96,7 @@ class vButton(RoundedLeaf, vWidget, Button):
                          corners=corners, **kwargs)
         if self._v_radius > 0:
             self._v_rest_bg = self.cget("background")
+            self._sync_active_colors()
             if active_fill:
                 self.bind("<Enter>", self._on_enter, add="+")
                 self.bind("<Leave>", self._on_leave, add="+")
@@ -114,6 +119,44 @@ class vButton(RoundedLeaf, vWidget, Button):
             overlay.bind("<Enter>", self._on_enter, add="+")
             overlay.bind("<Leave>", self._on_leave, add="+")
 
+    # ── Tk's own active state: keep it from painting over the rounded look ─────
+
+    #: ``(native active option, resting option)`` pairs mirrored in rounded mode.
+    _ACTIVE_MIRROR = (("activebackground", "background"),
+                      ("activeforeground", "foreground"))
+
+    def _sync_active_colors(self) -> None:
+        """Mirror the resting ``bg``/``fg`` onto ``activebackground`` /
+        ``activeforeground``, so Tk's *active* state renders identically to rest.
+
+        Tk paints those two options whenever the button's state is ``active`` —
+        and it sets that state **itself, from Tcl**: ``tk::ButtonDown`` runs
+        ``$w configure -relief sunken -state active`` on press, and on X11/Aqua
+        ``tk::ButtonEnter`` does the same on plain hover.  Those are Tcl-level
+        widget commands, so Python's :meth:`configure` never runs, the rounded
+        fill / corner tiles are never repainted to match, and the native
+        *square* face paints straight over the rounded one.
+
+        It is not even transient: the state only returns to ``normal`` via
+        ``tk::ButtonUp`` / ``tk::ButtonLeave``.  A drag that swallows the
+        ``<ButtonRelease-1>`` — dragging a tab out of its bar — leaves the button
+        stuck ``active``, so the rectangle stays for the widget's lifetime.
+
+        Making the active colours equal to the resting ones removes the failure
+        mode instead of trying to observe an event we never see.  A caller who
+        passed either option explicitly keeps it (the same "explicit wins" rule
+        as ``bg``/``fg`` inheritance); ``active_fill`` remains the supported way
+        to colour hover, and this is a no-op at ``radius=0``.
+        """
+        explicit = getattr(self, "_v_explicit", ())
+        for active_opt, rest_opt in self._ACTIVE_MIRROR:
+            if active_opt in explicit:
+                continue
+            try:
+                super().configure(**{active_opt: self.cget(rest_opt)})
+            except TclError:
+                pass
+
     # ── Hover / disabled: recolour the real bg; the tiles follow on repaint ─────
 
     def _on_enter(self, event=None) -> None:
@@ -122,6 +165,7 @@ class vButton(RoundedLeaf, vWidget, Button):
         self._v_hover = True
         # configure(bg=) recolours the interior natively and forces a tile repaint.
         super().configure(background=self._v_active_fill)
+        self._sync_active_colors()
         self._repaint_now()
 
     def _on_leave(self, event=None) -> None:
@@ -134,12 +178,21 @@ class vButton(RoundedLeaf, vWidget, Button):
             under = self.winfo_containing(*self.winfo_pointerxy())
         except Exception:
             under = None
+        # A child's path is ours + "." + its name, so the separator has to be part
+        # of the test: a bare prefix match also caught *siblings* (".!vbutton" is
+        # a prefix of ".!vbutton2"), and moving between two vButtons in the same
+        # parent left the first one stuck in hover — and, because configure()
+        # stops tracking _v_rest_bg while _v_hover is set, stuck for good.
         me = str(self)
-        if under is not None and (under is self or str(under).startswith(me)):
+        if under is not None and (under is self or str(under).startswith(me + ".")):
             return                                  # still over the button / a tile
         if self._v_hover:
             self._v_hover = False
-            super().configure(background=self._v_rest_bg)
+            try:
+                super().configure(background=self._v_rest_bg)
+                self._sync_active_colors()
+            except TclError:
+                return                    # destroyed between <Leave> and the idle
             self._repaint_now()
 
     def _on_overlay_click(self, event=None) -> None:
@@ -170,6 +223,14 @@ class vButton(RoundedLeaf, vWidget, Button):
             if target is not None:
                 super().configure(background=target)
             self._repaint_now()
+
+        # Anything that moved the resting colours (or the state) has to move the
+        # mirrored active colours with them, or the mirror goes stale and Tk's
+        # active rendering brings the square face back on the next press.
+        if (getattr(self, "_v_radius", 0) > 0
+                and keys.intersection(("background", "bg",
+                                       "foreground", "fg", "state"))):
+            self._sync_active_colors()
         return result
 
     config = configure
