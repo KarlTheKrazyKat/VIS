@@ -310,13 +310,18 @@ project.json
            },
            "release_info": {
                "location": "./dist/",
-               "hidden_imports": []
+               "hidden_imports": [],
+               "compiler": "msvc"
            },
            "host": {
                "script": ".VIS/Host.py"
            }
        }
    }
+
+``release_info.compiler`` selects the C compiler Nuitka hands its generated code to
+--- ``msvc`` or ``clang`` on Windows, ``gcc`` or ``clang`` on Linux. It is optional;
+omitting it uses the platform default. See :ref:`release-compiler`.
 
 Per-screen fields:
 

@@ -989,6 +989,39 @@ Developer-authored, user-selectable window chrome. The tab bar's colours and sha
 
 ---
 
+### 0.6.4 Selectable C Compiler
+
+`release_info.compiler` in `project.json` picks the C compiler Nuitka hands its generated code to. Previously the choice was hardcoded per platform — `--msvc=latest` on Windows, auto-detect elsewhere.
+
+```json
+"release_info": {
+    "location": "./dist/",
+    "hidden_imports": [],
+    "compiler": "clang"
+}
+```
+
+- **Windows** — `msvc` (default) or `clang`. `clang` adds `--clang` *on top of* `--msvc=latest` rather than replacing it: Nuitka's Windows clang support is clang-cl piggy-backing on the Visual Studio installation, so MSVC stays a hard requirement. MinGW64 gcc is deliberately not offered — it is a different C runtime, not just a different compiler, and a non-MSVC Windows toolchain is what produced the corrupt frozen-bytecode binaries in #35.
+- **Linux** — `gcc` (default, no flag) or `clang` (`--clang`). **macOS** — `clang` (default, native, no flag).
+- Omitting the key selects the platform default and emits exactly the flags the pipeline emitted before it existed, so existing `project.json` files build byte-for-byte identically.
+
+**Pre-flight validation** — `Release._check_compiler()` now rejects an unsupported value (typo, or a platform mismatch like `msvc` on Linux) before any compilation starts, printing the accepted set for the current platform. On Windows, selecting `clang` additionally requires `clang-cl.exe` under the VS install's `VC/Tools/Llvm`. That second check earns its keep because the pipeline passes `--assume-yes-for-downloads`: without it, a selected compiler Nuitka cannot find becomes a silent toolchain download — the #35 failure mode again. The probe keys on `clang-cl.exe` by name, since a VS install can carry a `VC/Tools/Llvm` directory holding only `clang-format.exe` / `clang-tidy.exe` from unrelated components.
+
+- MSVC discovery is factored out of `_check_compiler` into `_list_msvc()` / `_find_msvc()` (via `vswhere.exe`, still not `$PATH`), joined by `_find_clang_cl()` and `_print_clang_missing()`, which names the exact VS Installer component to add.
+
+**Multi-install VS selection** — `_list_msvc()` ranks installations the way SCons (and therefore Nuitka's `--msvc=latest`) does: highest version first, then by product, where the richer product wins a version tie — Enterprise > Professional > Community > BuildTools. A machine carrying both a Community and a BuildTools 2022 install at the same version is the case that matters: vswhere lists BuildTools first, but Nuitka compiles with Community. Checking "is clang-cl installed *somewhere*" instead of "in the install Nuitka will pick" passes pre-flight and then dies in the Scons backend with `Visual Studio has no Clang component found at ...`.
+
+- For the same reason `_find_clang_cl()` no longer falls back to `clang-cl` on `$PATH`. Nuitka derives the clang directory from wherever `cl.exe` resolved (`SconsUtils.addClangClPathFromMSVC`) and never consults `PATH`, so a standalone LLVM there is a false pass.
+- When the selected install lacks clang-cl but another one has it, the error names both, states that Nuitka will not select the other, and prints the `setup.exe modify --installPath ...` line for the right one — "clang is installed" and "clang is installed where Nuitka looks" are different claims on a multi-install machine.
+
+**Per-compiler build cache** — object files and Nuitka's compile cache are compiler-specific, so a non-default compiler builds under `build/<pendix>-<compiler>/` instead of `build/<pendix>/`. Switching between `msvc` and `clang` keeps both caches warm instead of forcing a cold rebuild each way, which also makes an A/B timing comparison measure the compiler rather than the cache. Deliverable paths (`dist/<pendix>/`) are unchanged — the compiler is a build detail, not part of the release name.
+
+> Note: the first build after adding the key is a full rebuild regardless, since the new build root starts empty.
+
+**Measured on PYWOM** (32 compilations, Windows, 36 cores) — clang beat MSVC on every C compile it touched: shared packages 33–67% faster (`urllib3` 72.6s → 23.7s, `VIStk` 138.8s → 48.2s), screens 28–37s → 12–14s each, Host 393s → 354s. A *cold* clang build still came in 6% under a warm MSVC one (13m57s → 13m7s), and with its cache warm it landed ~2 min lower again (~21% total). The one regression was `pywomlib` (256s → 287s), which also happens to bound its phase — it compiles a large third-party tree (`reportlab`, the `gcsa`/`google` stack) into a single `.pyd`, so the release total moves far less than the per-module numbers suggest.
+
+---
+
 ## Planned
 
 ### 0.5.2 Screen Isolation (per-tab namespaces, wrapper `.pyd`s, always-Host)
@@ -1074,7 +1107,7 @@ A reusable right-click popup menu so screens stop hand-coding the `tkinter.Menu`
 
 ---
 
-### 0.6.4 Live Appearance Apply
+### 0.6.5 Live Appearance Apply
 
 Deferred from 0.6.0. Apply appearance settings to **already-open** windows immediately when changed in the Settings window, instead of only on next launch:
 

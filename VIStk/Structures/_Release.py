@@ -35,6 +35,38 @@ _MOD_EXT = ".pyd" if sys.platform == "win32" else ".so"
 # (#126).
 _EXE_EXT = ".exe" if sys.platform == "win32" else ""
 
+# Accepted values for ``release_info.compiler`` in project.json, per
+# platform.  The first entry of each tuple is that platform's default,
+# and the defaults reproduce pre-0.6.4 behaviour exactly: MSVC on
+# Windows (forced since #35 so Nuitka never falls back to its bundled
+# zig toolchain), gcc on Linux, clang on macOS.
+#
+# Windows clang means *clang-cl piggy-backing on the Visual Studio
+# install* — Nuitka has no independent Windows clang path — so MSVC is
+# still a hard requirement when it is selected.  MinGW64 gcc is
+# deliberately not offered on Windows; it is a different runtime, not
+# just a different compiler, and #35 is the cautionary tale.
+_PLATFORM_COMPILERS = {
+    "win32": ("msvc", "clang"),
+    "linux": ("gcc", "clang"),
+    "darwin": ("clang",),
+}
+_COMPILERS = _PLATFORM_COMPILERS.get(sys.platform, ("gcc", "clang"))
+_DEFAULT_COMPILER = _COMPILERS[0]
+
+# Preference order SCons (and therefore Nuitka's --msvc=latest) applies
+# when two Visual Studio installations report the same version — the
+# richer product wins, so a Community install is selected over a
+# BuildTools one sitting beside it.  Lower rank = selected first.
+# Without this, a machine with both installs gets a compiler pre-flight
+# that probes a different installation than the one the build uses.
+_VS_PRODUCT_RANK = {
+    "Enterprise": 0,
+    "Professional": 1,
+    "Community": 2,
+    "BuildTools": 3,
+}
+
 
 class Release(Project):
     """A VIS Release object"""
@@ -83,12 +115,53 @@ class Release(Project):
         # for back-compat in case any old project.json still has it.
         self.location = f"{self.p_project}/dist/"
 
+        # Project-level Nuitka config.  ``onefile`` applies to every
+        # entry-script compile (Host + standalones); when true, each
+        # produces a single self-contained .exe instead of a .dist
+        # folder.  Onefile entries also get a build-time bootstrap
+        # wrapper prepended (see :meth:`_make_bootstrap_wrapper`) so
+        # external Screens / modules / shared packages still resolve at
+        # runtime — Python in onefile mode runs from a temp unpack dir,
+        # not the install root, so we have to re-add the install root
+        # to ``sys.path`` ourselves.
+        #
+        # Read before ``build_dir`` below because the C compiler keys
+        # the build cache.
+        with open(self.p_sinfo, "r") as f:
+            _info = json.load(f)
+        _rel_info = _info[self.title].get("release_info", {})
+        _nuitka_cfg = _rel_info.get("nuitka", {})
+        self.onefile: bool = _nuitka_cfg.get("onefile", False)
+        self.extra_nuitka_args: list[str] = _nuitka_cfg.get("extra_args", [])
+
+        self.compiler: str = str(
+            _rel_info.get("compiler", "") or _DEFAULT_COMPILER
+        ).strip().lower()
+        """C compiler Nuitka is told to use, from ``release_info.compiler``.
+
+        ``"msvc"`` / ``"clang"`` on Windows, ``"gcc"`` / ``"clang"`` on
+        Linux, ``"clang"`` on macOS.  Absent or empty means the platform
+        default.  Validated by :meth:`_check_compiler`, which aborts the
+        release on an unsupported value rather than letting Nuitka pick
+        something of its own."""
+
         # ``pendix`` is "<title>" with no flag, or "<title>-<flag>" with one.
         # Used to suffix the final dist folder AND the per-flag Nuitka build
         # cache so concurrent / cross-platform builds do not stomp each
         # other's caches (#91).
         self.pendix = self.title if flag == "" else f"{self.title}-{flag}"
-        self.build_dir = f"{self.p_project}/build/{self.pendix}/"
+
+        # Object files and Nuitka's compile cache are compiler-specific,
+        # so a non-default compiler gets its own build root.  Switching
+        # between msvc and clang then keeps both caches warm instead of
+        # forcing a cold rebuild each way (and makes an A/B timing
+        # comparison measure the compiler, not the cache).  Deliverable
+        # paths (``final`` / ``runtime``) stay keyed on ``pendix`` alone —
+        # the compiler is a build detail, not part of the release name.
+        _cache_key = self.pendix
+        if self.compiler != _DEFAULT_COMPILER:
+            _cache_key = f"{self.pendix}-{self.compiler}"
+        self.build_dir = f"{self.p_project}/build/{_cache_key}/"
         self.final = f"{self.location}{self.pendix}"
         self.runtime = f"{self.final}/runtime"
         """Subdirectory of ``self.final`` where every Nuitka build merges.
@@ -116,21 +189,6 @@ class Release(Project):
         """Screens to compile this build, in project (screenlist) order.
 
         ``None`` indicates a validation failure — :meth:`release` aborts."""
-
-        # Project-level Nuitka config.  ``onefile`` applies to every
-        # entry-script compile (Host + standalones); when true, each
-        # produces a single self-contained .exe instead of a .dist
-        # folder.  Onefile entries also get a build-time bootstrap
-        # wrapper prepended (see :meth:`_make_bootstrap_wrapper`) so
-        # external Screens / modules / shared packages still resolve at
-        # runtime — Python in onefile mode runs from a temp unpack dir,
-        # not the install root, so we have to re-add the install root
-        # to ``sys.path`` ourselves.
-        with open(self.p_sinfo, "r") as f:
-            _info = json.load(f)
-        _nuitka_cfg = _info[self.title].get("release_info", {}).get("nuitka", {})
-        self.onefile: bool = _nuitka_cfg.get("onefile", False)
-        self.extra_nuitka_args: list[str] = _nuitka_cfg.get("extra_args", [])
 
         # Serializes the .dist → runtime/ merge step inside
         # compile_host so its ``.dist`` doesn't race on shared runtime
@@ -191,16 +249,25 @@ class Release(Project):
     _LINE_WIDTH = 70
 
     def _compiler_args(self) -> list:
-        """Return Nuitka compiler-selection flags for the current platform.
+        """Return Nuitka compiler-selection flags for ``self.compiler``.
 
-        Forces MSVC on Windows so Nuitka does not silently fall back to its
-        bundled zig toolchain, which has produced corrupt frozen-bytecode
-        binaries on Python 3.13 (see #35).  On Linux and macOS, Nuitka's
-        auto-detection picks the platform-native compiler (gcc / clang),
-        which is what we want — no flag needed.
+        Windows always passes ``--msvc=latest`` so Nuitka does not
+        silently fall back to its bundled zig toolchain, which has
+        produced corrupt frozen-bytecode binaries on Python 3.13 (see
+        #35).  ``clang`` adds ``--clang`` on top rather than replacing
+        the flag: Nuitka's Windows clang support *is* clang-cl from the
+        Visual Studio installation, so MSVC has to be selected for it to
+        have somewhere to piggy-back.
+
+        On Linux and macOS the platform-native compiler (gcc / clang)
+        needs no flag at all; only a Linux ``clang`` pick does.
         """
         if sys.platform == "win32":
+            if self.compiler == "clang":
+                return ["--msvc=latest", "--clang"]
             return ["--msvc=latest"]
+        if sys.platform == "linux" and self.compiler == "clang":
+            return ["--clang"]
         return []
 
     def _check_compiler(self) -> bool:
@@ -210,43 +277,53 @@ class Release(Project):
         updates or compilation steps if the compiler we plan to hand to
         Nuitka is missing.  See #35 for why falling back silently is bad.
 
+        Also validates ``release_info.compiler`` against what this
+        platform supports, so a typo or a Windows-only value on Linux
+        fails here with the valid set listed rather than deep inside a
+        Nuitka run.  This is the gate that keeps
+        ``--assume-yes-for-downloads`` honest: without it, a selected
+        compiler Nuitka cannot find becomes a silent toolchain download.
+
         Returns ``True`` when the compiler is available, ``False`` (with
         a printed message) otherwise.
         """
-        if sys.platform == "win32":
-            # Nuitka locates MSVC via vswhere.exe + the registry, NOT $PATH.
-            # cl.exe is only on PATH inside a Developer Command Prompt, so
-            # we must use the same discovery mechanism Nuitka does.
-            vswhere = (
-                "C:/Program Files (x86)/Microsoft Visual Studio/"
-                "Installer/vswhere.exe"
+        if self.compiler not in _COMPILERS:
+            print(
+                f"\nVIS release: release_info.compiler is "
+                f"'{self.compiler}', which is not supported on "
+                f"{sys.platform}.\n"
+                f"Valid values here: {', '.join(_COMPILERS)} "
+                f"(default {_DEFAULT_COMPILER}).\n",
+                flush=True,
             )
-            if not exists(vswhere):
+            return False
+
+        if sys.platform == "win32":
+            installs = self._list_msvc()
+            if not installs:
                 self._print_msvc_missing()
                 return False
-            try:
-                result = subprocess.run(
-                    [
-                        vswhere, "-products", "*",
-                        "-requires", "Microsoft.VisualCpp.Tools.HostX64.TargetX64",
-                        "-property", "installationPath",
-                    ],
-                    capture_output=True, text=True, timeout=15,
-                )
-            except (subprocess.TimeoutExpired, OSError):
-                self._print_msvc_missing()
-                return False
-            if not result.stdout.strip():
-                self._print_msvc_missing()
-                return False
+            # clang on Windows is clang-cl out of the VS install, so the
+            # MSVC check above is a prerequisite, not an alternative —
+            # and it has to be the *same* install Nuitka will select,
+            # not merely some install on the machine.
+            if self.compiler == "clang":
+                selected = installs[0]
+                if self._find_clang_cl(selected[2]) is None:
+                    elsewhere = [other for other in installs[1:]
+                                 if self._find_clang_cl(other[2])]
+                    self._print_clang_missing(selected, elsewhere)
+                    return False
             return True
 
         if sys.platform == "linux":
-            if shutil.which("gcc") is None:
+            binary = "clang" if self.compiler == "clang" else "gcc"
+            if shutil.which(binary) is None:
+                package = "clang" if binary == "clang" else "build-essential"
                 print(
-                    "\nVIS release requires gcc.\n"
-                    "Install via your package manager, e.g.:\n"
-                    "    sudo apt install build-essential\n",
+                    f"\nVIS release requires {binary}.\n"
+                    f"Install via your package manager, e.g.:\n"
+                    f"    sudo apt install {package}\n",
                     flush=True,
                 )
                 return False
@@ -320,6 +397,133 @@ class Release(Project):
             flush=True,
         )
         return False
+
+    @staticmethod
+    def _list_msvc() -> list[tuple[str, str, str]]:
+        """Return every C++-capable VS installation, in Nuitka's pick order.
+
+        Each entry is ``(version, product, path)``, ordered highest
+        version first and then by product preference.  That second key
+        matters on machines carrying more than one 2022 installation:
+        SCons — which Nuitka drives for MSVC — takes the richer product
+        when two report the same version, so a Community install wins
+        over a BuildTools one and ``--msvc=latest`` lands somewhere the
+        first vswhere line does not predict.
+
+        Nuitka locates MSVC via vswhere.exe + the registry, NOT $PATH —
+        cl.exe is only on PATH inside a Developer Command Prompt — so we
+        use the same discovery mechanism Nuitka does.
+        """
+        vswhere = (
+            "C:/Program Files (x86)/Microsoft Visual Studio/"
+            "Installer/vswhere.exe"
+        )
+        if not exists(vswhere):
+            return []
+        try:
+            result = subprocess.run(
+                [
+                    vswhere, "-products", "*",
+                    "-requires", "Microsoft.VisualCpp.Tools.HostX64.TargetX64",
+                    "-format", "json", "-utf8",
+                ],
+                capture_output=True, timeout=15,
+                encoding="utf-8", errors="replace",
+            )
+        except (subprocess.TimeoutExpired, OSError):
+            return []
+        try:
+            found = json.loads(result.stdout or "[]")
+        except (json.JSONDecodeError, TypeError):
+            return []
+
+        installs = []
+        for entry in found:
+            path = entry.get("installationPath")
+            if not path:
+                continue
+            installs.append((
+                entry.get("installationVersion", "0"),
+                entry.get("productId", "").rsplit(".", 1)[-1],
+                path.replace("\\", "/"),
+            ))
+
+        def _pick_order(install):
+            version, product, _ = install
+            digits = [-int(p) for p in version.split(".") if p.isdigit()]
+            return (digits, _VS_PRODUCT_RANK.get(product, 99))
+
+        return sorted(installs, key=_pick_order)
+
+    @staticmethod
+    def _find_msvc() -> str | None:
+        """Return the VS installation path Nuitka will use, or ``None``."""
+        installs = Release._list_msvc()
+        return installs[0][2] if installs else None
+
+    @staticmethod
+    def _find_clang_cl(vs_path: str) -> str | None:
+        """Return the path to ``clang-cl.exe`` in *vs_path*, else ``None``.
+
+        The 'C++ Clang Compiler for Windows' component installs its
+        toolchain under ``VC/Tools/Llvm`` inside the VS installation;
+        the x64-hosted build sits one level deeper.  Mirrors Nuitka's
+        own resolution, which derives the clang directory from wherever
+        ``cl.exe`` came from and never consults ``$PATH`` — so a
+        standalone LLVM on ``PATH`` is deliberately *not* accepted here.
+        Treating one as a pass is how this check green-lit a build that
+        then died in Scons.
+        """
+        for relative in ("VC/Tools/Llvm/x64/bin/clang-cl.exe",
+                         "VC/Tools/Llvm/bin/clang-cl.exe"):
+            candidate = f"{vs_path}/{relative}".replace("\\", "/")
+            if exists(candidate):
+                return candidate
+        return None
+
+    @staticmethod
+    def _print_clang_missing(selected: tuple, elsewhere: list):
+        """Report a clang pick with no clang-cl in the install Nuitka picks.
+
+        *selected* is the ``(version, product, path)`` Nuitka will use;
+        *elsewhere* is every other installation that *does* have
+        clang-cl.  Naming those is the whole point of the message —
+        "clang is installed" and "clang is installed where Nuitka will
+        look" are different claims on a multi-install machine.
+        """
+        version, product, path = selected
+        lines = [
+            "",
+            "release_info.compiler is 'clang', but clang-cl.exe is not present",
+            "in the Visual Studio installation Nuitka will use:",
+            f"    {product} {version}",
+            f"    {path}",
+        ]
+        if elsewhere:
+            lines += [
+                "",
+                # ASCII only: this lands in a cp1252 console, where an
+                # em dash prints as a replacement character.
+                "clang-cl IS installed in another Visual Studio installation on",
+                "this machine, but Nuitka will not select it. At equal version",
+                "the richer product wins:",
+            ]
+            for other_version, other_product, other_path in elsewhere:
+                lines += [f"    {other_product} {other_version}",
+                          f"    {other_path}"]
+            lines += ["", "Add the component to the FIRST installation above."]
+        lines += [
+            "",
+            "From an elevated shell (administrator):",
+            f'    "C:/Program Files (x86)/Microsoft Visual Studio/Installer'
+            f'/setup.exe" modify --installPath "{path}"'
+            f' --add Microsoft.VisualStudio.Component.VC.Llvm.Clang'
+            f' --passive --norestart',
+            "",
+            "Or set release_info.compiler back to 'msvc' in .VIS/project.json.",
+            "",
+        ]
+        print("\n".join(lines), flush=True)
 
     @staticmethod
     def _print_msvc_missing():

@@ -600,6 +600,98 @@ Release
 The release pipeline uses **Nuitka** for compilation (not PyInstaller). The installer and
 uninstaller are built with PyInstaller and cached between releases.
 
+.. _release-compiler:
+
+Choosing the C compiler
+~~~~~~~~~~~~~~~~~~~~~~~
+
+Nuitka translates each module to C and then hands it to a real C compiler.
+``release_info.compiler`` in ``project.json`` picks which one:
+
+.. code-block:: json
+
+   "release_info": {
+       "location": "./dist/",
+       "hidden_imports": [],
+       "compiler": "clang"
+   }
+
+.. list-table::
+   :header-rows: 1
+   :widths: 15 20 65
+
+   * - Platform
+     - Accepted values
+     - Notes
+   * - Windows
+     - ``msvc`` (default), ``clang``
+     - ``msvc`` is always passed as ``--msvc=latest``. ``clang`` adds ``--clang``
+       *on top* of it — Nuitka's Windows clang support is clang-cl piggy-backing on
+       the Visual Studio installation, so MSVC remains a hard requirement.
+   * - Linux
+     - ``gcc`` (default), ``clang``
+     - ``gcc`` needs no flag; ``clang`` maps to ``--clang``.
+   * - macOS
+     - ``clang`` (default)
+     - The platform-native compiler; no flag needed.
+
+Omitting the key (or leaving it empty) selects the platform default, which emits
+exactly the flags the pipeline used before the key existed — existing projects
+build identically.
+
+MinGW64 gcc is deliberately **not** offered on Windows. It is a different C runtime
+rather than just a different compiler, and Nuitka silently falling back to a
+non-MSVC Windows toolchain is what produced the corrupt frozen-bytecode binaries
+in #35.
+
+``Release._check_compiler()`` validates the value before any compilation starts and
+aborts with the accepted set on a typo or a platform mismatch. On Windows it locates
+the Visual Studio installation with ``vswhere.exe`` (not ``$PATH`` — ``cl.exe`` is
+only on ``PATH`` inside a Developer Command Prompt), and when ``clang`` is selected it
+additionally requires ``clang-cl.exe`` under ``VC/Tools/Llvm``. That second check
+matters because the pipeline passes ``--assume-yes-for-downloads``: without it, a
+selected compiler Nuitka cannot find turns into a silent toolchain download.
+
+.. note::
+
+   ``clang-cl.exe`` comes from the **C++ Clang Compiler for Windows** individual
+   component in the Visual Studio Installer. A VS install can already have a
+   ``VC/Tools/Llvm`` directory holding only ``clang-format.exe`` /
+   ``clang-tidy.exe`` — those ship with unrelated components and are not a compiler,
+   which is why the check probes for ``clang-cl.exe`` by name.
+
+.. warning::
+
+   The component has to be installed in **the Visual Studio installation Nuitka
+   selects**, which is not necessarily the one you reach for. On a machine with
+   several installations, ``_list_msvc()`` ranks them the way SCons (and therefore
+   ``--msvc=latest``) does: highest version first, then Enterprise > Professional >
+   Community > BuildTools on a version tie.
+
+   So a machine carrying both a Community and a BuildTools 2022 install at the same
+   version compiles with **Community**, even though ``vswhere`` lists BuildTools
+   first. Installing clang into BuildTools alone leaves the build failing in the
+   Scons backend with ``Visual Studio has no Clang component found at ...``. Run
+   ``VIS release`` (or the pre-flight directly) to see which installation is
+   selected and whether it has clang-cl:
+
+   .. code-block:: python
+
+      from VIStk.Structures._Release import Release
+      for version, product, path in Release._list_msvc():
+          print(product, version, bool(Release._find_clang_cl(path)), path)
+      print("selected:", Release._find_msvc())
+
+   ``$PATH`` is deliberately not consulted — Nuitka derives the clang directory from
+   wherever ``cl.exe`` resolved, so a standalone LLVM on ``PATH`` would be a false pass.
+
+Object files and Nuitka's compile cache are compiler-specific, so a **non-default**
+compiler builds under its own root — ``build/<pendix>-<compiler>/`` instead of
+``build/<pendix>/``. Switching between ``msvc`` and ``clang`` therefore keeps both
+caches warm rather than forcing a cold rebuild each way. Deliverable paths
+(``dist/<pendix>/``) are unaffected; the compiler is a build detail, not part of the
+release name.
+
 Compilation order
 ~~~~~~~~~~~~~~~~~
 
