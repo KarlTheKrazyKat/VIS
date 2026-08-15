@@ -20,9 +20,9 @@ palette, so a style stays scheme-aware without hardcoding greys.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 
-from VIStk.Styles._palette import Palette, base_palette
+from VIStk.Styles._palette import Palette, resolve_palette
 
 __all__ = ["TabStyle", "ResolvedStyle", "register", "get", "names",
            "resolve", "DEFAULT"]
@@ -119,29 +119,24 @@ def names() -> list[str]:
 
 
 def resolve(scheme: str | None, style_name: str | None) -> ResolvedStyle:
-    """Resolve ``(scheme, style_name)`` into a concrete :class:`ResolvedStyle`.
+    """Resolve ``(palette_name, style_name)`` into a :class:`ResolvedStyle`.
 
-    Falls back to ``classic`` for an unknown/None style name and to the light
-    scheme for an unknown/None scheme, so it never raises on bad input.
+    *scheme* is a registered palette name (``"system"`` follows the OS theme).
+    Falls back to ``classic`` for an unknown/None style name and to the app
+    default palette for an unknown/None palette, so it never raises on bad
+    input — a stale value in ``settings.json`` must not stop a window opening.
     """
     style = _REGISTRY.get(style_name) or _REGISTRY["classic"]
-    pal = base_palette(scheme)
+    pal = resolve_palette(scheme)
 
     ov = dict(style.overrides)
     if style.accent is not None:
         ov["accent"] = style.accent
 
-    # Literal overrides first, then "$role" references against the updated
-    # palette, so a ref sees any literal it depends on.
-    literal = {k: v for k, v in ov.items()
-               if hasattr(pal, k) and not (isinstance(v, str) and v.startswith("$"))}
-    if literal:
-        pal = replace(pal, **literal)
-    refs = {k: getattr(pal, v[1:]) for k, v in ov.items()
-            if isinstance(v, str) and v.startswith("$")
-            and hasattr(pal, k) and hasattr(pal, v[1:])}
-    if refs:
-        pal = replace(pal, **refs)
+    # A style's overrides are just more colours layered on the palette —
+    # ``derive`` handles the "$name" references and the bar's own states.
+    if ov:
+        pal = pal.derive(**ov)
 
     return ResolvedStyle(palette=pal, indicator=style.indicator,
                          separators=style.separators, radius=style.radius)

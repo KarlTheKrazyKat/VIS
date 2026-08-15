@@ -1022,6 +1022,113 @@ Developer-authored, user-selectable window chrome. The tab bar's colours and sha
 
 ---
 
+### 0.6.5 Live Appearance Apply
+
+*In progress.* Deferred from 0.6.0. Apply appearance settings to **already-open** windows immediately when changed in the Settings window, instead of only on next launch — and give apps a way to define the palettes the user chooses between.
+
+Still to land:
+
+- Chrome beyond the tab bar reads the palette (`TabManager`, `SplitView`, `Host`, the Settings surface itself).
+- Re-apply `appearance.font_family` / `appearance.font_size` live (walk the live widget tree / re-configure the named fonts and force a relayout).
+
+#### Palette-driven widget theming
+
+The palette drives **every widget**, not just the chrome. `VIStk/Styles/_theme.py` wraps `tkinter.BaseWidget.__init__` — the single seam every classic Tk widget passes through, carrying its real Tk class name (`"frame"`, `"entry"`, …) and the caller's own options — and offers each new widget the palette roles for its type.
+
+Two rules keep it from fighting the app:
+
+- **Explicit wins.** An option the caller passed is never touched, at construction or on a later palette switch. `bg=` and `background=` both count as explicit (the alias table resolves the spellings Tk accepts).
+- **Only repaint what we painted.** Each widget records which options came from the palette and under which role; on a switch, a tracked option is updated *only if its current value still equals the outgoing palette's* colour for that role. A colour the app set by hand afterwards survives.
+
+Painting happens immediately *after* construction rather than by injecting into the constructor's kwargs: a rejected option then costs one failed call instead of a widget that fails to exist. Options a Tk build rejects are recorded per widget class and never offered again. Nothing is mapped yet at that point, so there is no flash.
+
+- Covers `frame`, `toplevel`, `labelframe`, `panedwindow`, `label`, `message`, `button`, `checkbutton`, `radiobutton`, `entry`, `spinbox`, `text`, `listbox`, `canvas`, `scale`, `scrollbar`, `menu`, `menubutton` — and the Tk root, which is built by `Tk.__init__` rather than `BaseWidget` and so is handed over explicitly via `Theme.adopt()`.
+- VIStk's own widgets are undisturbed: they pass their colours explicitly (`TabBar`) or resolve them from their parent (`vLabel`/`vButton`/`vFrame`). Painting is defensive because the interception necessarily runs *inside* `BaseWidget.__init__` — before a `vWidget` subclass has finished its own `__init__`.
+- `Project.excludeFromTheme(widget)` stops one widget following the palette, for a widget whose colours something else owns.
+
+**ttk is a different animal, and the base theme is the developer's choice.** ttk widgets take no `bg`/`fg` at all — they arrive at the seam as `"ttk::frame"` and are skipped, then styled through `ttk.Style` from the same palette. How much of that lands is up to the theme, so `Project.setWidgetTheme(name)` / `appearance.ttk_theme` picks it, defaulting to the platform's own:
+
+- **`vista`/`xpnative` (Windows default)** — `ttk.Frame` and `ttk.Label` follow the palette, so layout surfaces stay on-theme, but `Button`, `Entry`, `Combobox`, `Notebook` tabs, `Treeview` and `Scrollbar` are drawn by the Windows theme engine and ignore colour options. That is below Tk; no amount of interception reaches it.
+- **`clam`/`alt`/`default`** — Tk-drawn throughout, so every ttk control takes the palette, at the cost of the native look.
+
+`Project.widgetThemes()` lists what the Tk build offers. Classic `tk` widgets follow the palette under any theme.
+
+**The shipped `light` palette now reproduces the Windows/Tk defaults exactly** — `SystemButtonFace` `#f0f0f0`, `SystemWindow` `#ffffff`, black text, the `#0078d7` shell selection blue — for the same reason its greys reproduce the pre-styles bar: turning widget theming on with the default palette must not restyle an existing app. A palette wanting softer text or a distinct button face declares it.
+
+#### User-selectable palettes
+
+A palette is an open **`name -> colour` mapping**, not a fixed schema. The names are the app's own, and widgets refer to them where a colour is expected. Palettes belong to the **project** — which already owns the `Settings` the user's pick is stored in — and are registered from `Screens/styles.py`:
+
+```python
+from VIStk.Structures._Project import Project
+
+Project.registerPalette("bmi Light", {
+    "page":   wColors.Lowlight.Button,
+    "card":   wColors.White,
+    "ink":    wColors.Black,
+    "muted":  wColors.Grey.Light,
+    "bar_bg": wColors.Lowlight.Button.Highlight,   # the chrome, same mapping
+})
+Project.offerPalettes(["bmi Light", "bmi Dark"], default="bmi Light")
+```
+
+- **Nothing is privileged.** The tab bar reads `bar_bg` / `tab_active` / `tab_fg` out of the same mapping as everything else — it is just a widget that gets recoloured. `Styles.CHROME_NAMES` lists what the chrome looks up; an app's own names sit beside them.
+- **Fallback, so palettes stay short.** Every palette has a *base* (`"light"` unless told otherwise) and a name it doesn't define resolves through it. Name the handful of colours you care about; the rest keep working.
+- **Naming `bar_bg` shades the strip's own states** (`focused` / `unfocused` / `empty` / `empty_hover`) from it, so an emptied or unfocused pane keeps the app's colour — the bug this release opened with, now a property of the mapping rather than a special case. A `"$name"` value copies another colour of the result.
+- **API** — `Project.registerPalette` / `getPalette` (case-insensitive) / `paletteNames` / `offerPalettes` / `offeredPalettes` / `setDefaultPalette` / `defaultPalette` / `setActivePalette` / `activePalette` / `setSystemPalettes`, all classmethods so `styles.py` needs no `Project()` (which re-parses `project.json`). `TabBar` keeps `setDefaultPalette` / `setActivePalette` / `activePalette` as the repaint mechanism they delegate to.
+- `appearance.color_scheme` now holds a palette name; its default changes from `"system"` to `None`, matching `appearance.tab_style` — *unset* means "the app's default palette".
+
+**Precedence — the user's pick wins.** `Project.setDefaultPalette` declares the app's look; a stored `appearance.color_scheme` override replaces it, and clearing the pick returns to the default. Only a genuine override counts as a pick (`ProjectSettings` drops values equal to their default), so an untouched install wears the app's colours, and a name the app has since renamed falls back the same way. `offerPalettes(default=…)` also *paints* the default, so a screen run without the Host still wears it.
+
+- `TabBar.setPalette(bar=…, tab=…, …)` keeps working as shorthand, now building the app's default palette. **Behaviour change** — these used to be permanent overrides no user pick could displace.
+
+**`"system"` follows the OS.** `VIStk.Styles._system` reads the real preference — Windows `AppsUseLightTheme`, macOS `AppleInterfaceStyle`, Linux `gsettings color-scheme` with a GTK-theme-name fallback — and polls it (4 s) on the Host's root so a theme change mid-session repaints live. Only armed while the active pick *is* `"system"`. `setSystemPalettes(light, dark)` points it at the app's own pair. Every path falls back to light rather than raising.
+
+**Settings → Appearance** replaces the fixed `system`/`light`/`dark` dropdown with the app's offered palettes plus `system` and a blank "app default" entry, applying live on selection.
+
+**Settings-file migration.** `settings.json` gains a framework-written `settings.version` stamp and a `_migrate` step. **v0 → v1:** 0.6.0–0.6.4 wrote `appearance.color_scheme: "system"` into every generated file while the setting did nothing; under the new meaning that stale value would silently pull an app off its own palette and onto the OS theme. An unstamped file has that one value dropped, and the load marks the store dirty so the shutdown flush stamps v1 — after which a deliberate `"system"` pick sticks.
+
+#### Widgets name their colours
+
+Any widget may name a palette colour where a colour is expected, and the name is resolved as the widget is built:
+
+```python
+v_label = Label(f_cc, text="Part", bg="page", fg="muted")
+```
+
+`VIStk/Styles/_theme.py` wraps `tkinter.BaseWidget.__init__` — the single seam every classic Tk widget passes through, carrying its real Tk class name and the caller's own options — and swaps names for colours **before** Tk creates the widget. The widget is built once, with real colours, exactly as if they had been written literally; nothing is configured afterwards.
+
+The rule is just what the value is:
+
+| Value where a colour is expected | Treatment |
+|----------------------------------|-----------|
+| `#rrggbb`, or a non-string (a `wColor`) | a colour — passed through, never tracked, never repainted |
+| any other string | a name — resolved through the palette |
+| a name the palette doesn't define | left for Tk, which accepts its own colour names (`"red"`) and rejects the rest normally |
+| an option that doesn't take a colour | never looked at — `text="page"` stays the word "page" |
+
+What each option was named is kept on the widget as `_vcolors` (`label._vcolors.bg == "page"`, `.as_dict()` for all of them). That is the entire switching mechanism: changing palette re-resolves those names. No comparing against old values, no deciding what belongs to whom, nothing per frame — and a widget that never named a colour is never touched. `Project.excludeFromTheme(widget)` stops one widget following along.
+
+The option dicts are copied only when something actually changes, so the common case allocates nothing, and `ttk` widgets (which take no `bg`/`fg`) arrive as `"ttk::frame"` and are skipped.
+
+**ttk styling, with a developer-selectable base theme.** ttk widgets follow the palette through `ttk.Style` instead, and how much lands depends on the theme — so `Project.setWidgetTheme(name)` / `appearance.ttk_theme` picks it, defaulting to the platform's own:
+
+- **`vista`/`xpnative` (Windows default)** — `ttk.Frame` and `ttk.Label` follow the palette, so layout surfaces stay on-theme, but `Button`, `Entry`, `Combobox`, `Notebook` tabs, `Treeview` and `Scrollbar` are drawn by the Windows theme engine and ignore colour options. That is below Tk; interception cannot reach it.
+- **`clam`/`alt`/`default`** — Tk-drawn throughout, so every ttk control takes the palette, at the cost of the native look.
+
+`Project.widgetThemes()` lists what the Tk build offers. The shipped `light` palette carries the Windows/Tk defaults (`SystemButtonFace`, `SystemWindow`, black text, the shell selection blue) under its general-UI names, so a widget naming `surface` or `field` looks like an unstyled Tk widget.
+
+#### Fixes
+
+**Tab bar lost its colour when a pane emptied** — a bar recoloured with `TabBar.setPalette(bar=…)` (or by a `TabStyle` whose `palette` overrides `bar_bg`) reverted to the scheme grey as soon as its last tab closed. The strip never paints `bar_bg` directly: it paints one of four *state* roles — `focused`, `unfocused`, `empty`, `empty_hover` — and `setPalette` only carried `bar_bg` and `focused` across, leaving `_update_empty_state()` to paint the stock `grey55` / `grey22`. The same stale-companion bug dimmed an unfocused pane to `grey52` on top of an app-coloured bar.
+
+- `Styles.bar_companions(bar, skip=…)` derives all four states from the bar colour, using `dim()` / `lift()` shading that reproduces the relationships the shipped schemes already used. Both flip direction at the extremes, so a near-white bar still gets a visible drag highlight and a near-black one still gets a visible empty state.
+- `dim` / `lift` parse hex and `greyNN` without a Tk root — `Screens/styles.py` runs before the first window opens — and fall back to `winfo_rgb` for other Tk colour names, or leave the colour untouched when it can't be resolved.
+- Applied from both `TabBar.setPalette()` (where the derived values are sticky like the rest) and `Styles.resolve()` (only when a style actually overrides `bar_bg`). Naming any of the four states explicitly still wins, and `classic` on either scheme resolves byte-identically to before.
+- `tests/test_tab_palette.py` covers the shading helpers, the derivation, and both entry points (no display required).
+
+---
+
 ## Planned
 
 ### 0.5.2 Screen Isolation (per-tab namespaces, wrapper `.pyd`s, always-Host)
@@ -1104,15 +1211,6 @@ A reusable right-click popup menu so screens stop hand-coding the `tkinter.Menu`
 - `set_items(items)` swaps the source; owned `Menu` objects are rebuilt per popup and destroyed with the bound widget.
 
 > Note: this is the native-menu approach chosen for speed of delivery. A fully VIStk-styled context menu (custom `overrideredirect` Toplevel with themed rows, icons, hover highlights) remains possible future work — see the 1.0.0 tkinter-styles exploration.
-
----
-
-### 0.6.5 Live Appearance Apply
-
-Deferred from 0.6.0. Apply appearance settings to **already-open** windows immediately when changed in the Settings window, instead of only on next launch:
-
-- Re-apply `appearance.font_family` / `appearance.font_size` live (walk the live widget tree / re-configure the named fonts and force a relayout).
-- Wire `appearance.color_scheme` to a real styles layer once the tkinter styles system lands (see 1.0.0) — in 0.6.0 it is a stored placeholder only.
 
 ---
 

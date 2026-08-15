@@ -183,6 +183,7 @@ class Host:
         # default + ttk widgets inherit it.  Applied once at launch; live
         # restyling of open windows is deferred (see 0.6.1 changelog).
         self._apply_appearance()
+        self._install_widget_theme()
 
         self.registered_tab_managers: list = []
         self.active_tab_manager = None
@@ -1804,26 +1805,96 @@ class Host:
             import traceback
             traceback.print_exc()
 
+    def _install_widget_theme(self) -> None:
+        """Let widgets name their colours from the palette.
+
+        Runs immediately after the root exists and *before* any window is
+        built: resolution happens as a widget is constructed, so it has to be
+        in place first.  The palette in force here is the pre-settings
+        default; ``Screens/styles.py`` and then the user's saved pick each
+        re-resolve through ``TabBar.set_tab_style``.
+
+        Never raises — theming must not block launch.
+        """
+        try:
+            from VIStk.Styles import _theme
+            from VIStk.Widgets import TabBar
+            _theme.apply(TabBar.activePalette())
+        except Exception:
+            import traceback
+            traceback.print_exc()
+
+    def _apply_widget_theme_setting(self) -> None:
+        """Switch ttk to the app's chosen base theme, if it named one.
+
+        ``appearance.ttk_theme`` unset means "the platform default" — on
+        Windows that is ``vista``, which draws its controls natively and takes
+        only some palette colours.  An app wanting the palette to reach every
+        ttk control picks a Tk-drawn theme (``clam``).
+        """
+        try:
+            from VIStk.Styles import _theme
+            from VIStk.Widgets import TabBar
+            name = self.Project.Settings.get("appearance.ttk_theme")
+            if name:
+                _theme.restyle_ttk(TabBar.activePalette(), theme=name)
+        except Exception:
+            import traceback
+            traceback.print_exc()
+
     def _apply_tab_style(self) -> None:
-        """Resolve the saved tab style against the scheme and make it active.
+        """Resolve the saved palette + tab style and make them active.
 
         Runs on the Host's first update — after ``host.py`` has imported
-        ``Screens/styles.py`` (which registers any custom looks and curates the
-        offered list) and before the first window is built.  A saved
-        ``appearance.tab_style`` that isn't in the app's offered list falls back
+        ``Screens/styles.py`` (which registers any custom looks/palettes and
+        curates the offered lists) and before the first window is built, so the
+        user's stored pick lands on top of whatever the app declared as its
+        default.  A saved name that isn't in the app's offered list falls back
         to the app default.  Never raises — styling must not block launch.
         """
         try:
             from VIStk.Widgets import TabBar
             settings = self.Project.Settings
-            scheme = settings.get("appearance.color_scheme") or "light"
             name = settings.get("appearance.tab_style")
             if name not in TabBar.offered_styles():
                 name = TabBar.default_style()
-            TabBar.set_tab_style(name, scheme=scheme)
+            TabBar.set_tab_style(name, scheme=self._picked_palette())
+            self._apply_widget_theme_setting()
+            self._watch_system_theme()
         except Exception:
             import traceback
             traceback.print_exc()
+
+    def _picked_palette(self) -> str:
+        """The palette name to paint with: the user's pick, else the app's.
+
+        Only a *stored override* counts as a pick — ``ProjectSettings`` drops
+        values equal to the default, so an untouched install resolves to the
+        app's own ``setDefaultPalette`` look rather than a framework grey.  An
+        unoffered name (renamed or removed by the app since it was saved) falls
+        back the same way.
+        """
+        settings = self.Project.Settings
+        if "appearance.color_scheme" not in settings:
+            return self.Project.defaultPalette()
+        picked = settings.get("appearance.color_scheme")
+        if picked == "system" or picked in self.Project.offeredPalettes():
+            return picked
+        return self.Project.defaultPalette()
+
+    def _watch_system_theme(self) -> None:
+        """Follow the OS light/dark setting while the app runs.
+
+        Only armed when the active pick is ``"system"`` — otherwise an OS theme
+        change must not disturb a palette the user (or the app) chose
+        explicitly.  Re-arming is idempotent per widget, so calling this again
+        after a settings change replaces the poll instead of stacking one.
+        """
+        from VIStk.Styles._system import watch, unwatch
+        if self._picked_palette() != "system":
+            unwatch(self.root)
+            return
+        watch(self.root, lambda _scheme: self.Project.setActivePalette("system"))
 
     # ── Application settings: UI (0.6.0) ───────────────────────────────────────
 

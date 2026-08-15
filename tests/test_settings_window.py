@@ -50,11 +50,21 @@ def main():
         panel_called["hit"] = True
         tk.Label(frame, text="custom").pack()
 
+    # The Appearance tab reads the project's palette registry (0.6.5).  Those
+    # are Project classmethods over process-wide state, so the stub can borrow
+    # them directly while keeping its own throwaway Settings.
+    from VIStk.Structures._Project import Project
     host = types.SimpleNamespace(
-        Project=types.SimpleNamespace(title="TestApp", Settings=settings),
+        Project=types.SimpleNamespace(
+            title="TestApp", Settings=settings,
+            offeredPalettes=Project.offeredPalettes,
+            defaultPalette=Project.defaultPalette,
+            setActivePalette=Project.setActivePalette,
+            activePalette=Project.activePalette),
         _settings_panels={"My Plugin": dev_panel},
         _register_startup=lambda: startup_calls.append("register"),
         unregister_startup=lambda: startup_calls.append("unregister"),
+        _watch_system_theme=lambda: None,
     )
 
     print("build:")

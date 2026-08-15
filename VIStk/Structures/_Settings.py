@@ -4,6 +4,11 @@ import os
 
 _UNSET = object()
 
+#: Schema version stamped into ``settings.json``.  Bumped when a stored value
+#: changes meaning, so :meth:`ProjectSettings._migrate` can fix files written
+#: by an older VIStk.  A file with no stamp is pre-1 (VIStk ≤ 0.6.4).
+SCHEMA_VERSION = 1
+
 
 class ProjectSettings:
     """Per-project application settings, persisted to ``.VIS/settings.json``.
@@ -55,11 +60,16 @@ class ProjectSettings:
         # ── Appearance ────────────────────────────────────────────────────
         "appearance.font_family": None,      # None → platform default
         "appearance.font_size": None,        # None → widget default
-        "appearance.color_scheme": "system",  # light | dark base palette (system → light)
+        "appearance.color_scheme": None,      # None → app's default_palette; else a
+                                             # registered palette name, or 'system'
+                                             # to follow the OS light/dark setting
         "appearance.tab_style": None,        # None → app's default_style (TabBar.offer_styles)
+        "appearance.ttk_theme": None,        # None → platform default (Windows: vista)
         # ── Notifications ─────────────────────────────────────────────────
         "notifications.enabled": True,
         "notifications.duration_ms": 5000,
+        # ── Framework bookkeeping ─────────────────────────────────────────
+        "settings.version": SCHEMA_VERSION,  # framework-written; drives _migrate
     }
 
     def __init__(self, project):
@@ -101,10 +111,33 @@ class ProjectSettings:
                 # any unknown custom keys) so reset()/``in`` stay meaningful.
                 self._store = {k: v for k, v in data.items()
                                if v != self.DEFAULTS.get(k)}
+                self._migrate(data)
             else:
                 self._warn("settings.json is not a JSON object; ignoring.")
         except (json.JSONDecodeError, OSError) as e:
             self._warn(f"could not read settings.json ({e}); using defaults.")
+
+    def _migrate(self, raw: dict) -> None:
+        """Bring a file written by an older VIStk up to :data:`SCHEMA_VERSION`.
+
+        Runs once per load against the *raw* file contents, right after the
+        store is built.  Marks the store dirty so the shutdown flush stamps the
+        new version — until it does, this simply runs again next launch, which
+        is harmless.
+
+        **v0 → v1 (0.6.5)** — ``appearance.color_scheme`` was written into every
+        generated ``settings.json`` as ``"system"`` while the setting did
+        nothing (0.6.0–0.6.4).  In 0.6.5 that value means "follow the OS
+        light/dark theme", which would silently override the app's own palette
+        for a user who never chose anything.  A stored ``"system"`` from an
+        unstamped file is therefore dropped, so the app default applies; a user
+        who really wants it re-picks it and the stamp keeps that choice.
+        """
+        if int(raw.get("settings.version") or 0) >= SCHEMA_VERSION:
+            return
+        if self._store.get("appearance.color_scheme") == "system":
+            del self._store["appearance.color_scheme"]
+        self._dirty = True
 
     @staticmethod
     def _warn(msg: str) -> None:

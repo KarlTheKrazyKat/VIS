@@ -127,7 +127,12 @@ class TabManager(Frame):
     """
 
     def __init__(self, parent, position: str = "top", menubar=None, **kwargs):
-        kwargs.setdefault("bg", TabBar._active_style.palette.bar_bg)
+        # Name the palette colours rather than resolving them here, so the
+        # pane follows a palette switch like every other widget.  ensure()
+        # arms resolution in case this is built before the Host applies one.
+        from VIStk.Styles import _theme
+        _theme.ensure()
+        kwargs.setdefault("bg", "bar_bg")
         super().__init__(parent, **kwargs)
 
         self.id: int = new_id()
@@ -159,7 +164,9 @@ class TabManager(Frame):
         self.tab_bar = TabBar(self, position=position)
         self.tab_bar.owner = self
 
-        self._content = Frame(self)
+        # The area behind the active screen: named so it follows the palette
+        # instead of sitting at Tk's default grey under a dark one.
+        self._content = Frame(self, bg="surface")
         self._tab_bar_hidden: bool = False
         self._repack_layout()
 
@@ -937,7 +944,7 @@ class TabManager(Frame):
                 return None
             tab_id = new_id()
 
-        frame = Frame(self._content)
+        frame = Frame(self._content, bg="surface")
         frame.place(relx=0, rely=0, relwidth=1, relheight=1)
 
         # Let screens call set_tab_info(parent, ...) from inside setup()

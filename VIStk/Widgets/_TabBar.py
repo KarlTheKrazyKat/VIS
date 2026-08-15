@@ -90,14 +90,12 @@ class TabBar(Frame):
     #: :meth:`set_tab_style`; falls back to ``classic`` on light before the Host
     #: resolves settings.
     _active_style = _DEFAULT_STYLE
-    _active_scheme: str = "light"
-    #: Name of the base style currently resolved (so palette overrides can be
-    #: re-applied after a re-resolve).  ``None`` when set from a raw ResolvedStyle.
+    #: Name of the palette the active style is resolved against.  ``"system"``
+    #: follows the OS theme; ``None`` means "the app default".
+    _active_palette_name: "str | None" = "light"
+    #: Name of the base style currently resolved (so a palette switch can
+    #: re-resolve it).  ``None`` when set from a raw ResolvedStyle.
     _active_style_name: "str | None" = "classic"
-    #: Sticky ``role -> colour`` overrides from :meth:`setPalette`, re-applied on
-    #: top of every resolved style so an app's custom colours survive a style
-    #: switch and the Host applying the user's saved pick at launch.
-    _palette_overrides: dict = {}
     #: App-curated subset of style names offered in the Settings menu; ``None``
     #: means "every registered style".  Set via :meth:`offer_styles`.
     _offered: "list[str] | None" = None
@@ -208,31 +206,74 @@ class TabBar(Frame):
         """Make *style* the active tab style for every open and future bar.
 
         *style* may be a registered style **name** or an already-resolved
-        :class:`~VIStk.Styles.ResolvedStyle`.  *scheme* defaults to the last
-        scheme set here.  Applies live to every bar in the registry.
+        :class:`~VIStk.Styles.ResolvedStyle`.  *scheme* is the palette name to
+        resolve it against and defaults to the last one set here.  Applies live
+        to every bar in the registry.
         """
         from VIStk.Styles import ResolvedStyle
         if scheme is not None:
-            cls._active_scheme = scheme
+            cls._active_palette_name = scheme
         if isinstance(style, ResolvedStyle):
             resolved = style
         else:
             cls._active_style_name = style
-            resolved = _resolve_style(cls._active_scheme, style)
-        # Re-apply any sticky setPalette() overrides on top of the resolved
-        # style, so app colours survive a style switch / the Host's launch pick.
-        if cls._palette_overrides:
-            from dataclasses import replace
-            resolved = ResolvedStyle(
-                palette=replace(resolved.palette, **cls._palette_overrides),
-                indicator=resolved.indicator, separators=resolved.separators,
-                radius=resolved.radius)
+            resolved = _resolve_style(cls._active_palette_name, style)
         cls._active_style = resolved
         for bar in list(_TABBAR_REGISTRY):
             try:
                 bar.apply_style(resolved)
             except TclError:
                 pass
+        # Everything outside the chrome — plain tk widgets and ttk styles —
+        # follows the same palette.  No-op until Theme.install() has run.
+        from VIStk.Styles import _theme
+        _theme.apply(resolved.palette)
+
+    # ── Palettes: the repaint mechanism ─────────────────────────────────────────
+    # Registration and curation live on ``Project`` (Project.registerPalette /
+    # offerPalettes) — a palette covers the whole chrome, not just this widget.
+    # What stays here is the part that actually paints bars.
+
+    @classmethod
+    def setDefaultPalette(cls, palette, name: "str | None" = None) -> None:
+        """Set the app's default palette — the look before the user chooses.
+
+        *palette* is a registered palette **name**, or a
+        :class:`~VIStk.Styles.Palette` to register under *name* (default
+        ``"app"``) and make the default.  A user's stored
+        ``appearance.color_scheme`` pick overrides this, so an app can ship a
+        branded look without taking the choice away.
+
+        Applies live, so a screen run directly (no Host) wears the app look.
+        Under the Host this runs from ``Screens/styles.py`` at import time and
+        the user's stored pick is applied *after* it, so the pick still wins.
+        """
+        from VIStk.Styles import Palette, register_palette, set_default_palette
+        if isinstance(palette, Palette):
+            register_palette(name or "app", palette)
+            name = name or "app"
+        else:
+            name = palette
+        set_default_palette(name)
+        cls.setActivePalette(name)
+
+    @classmethod
+    def setActivePalette(cls, name: "str | None") -> None:
+        """Repaint every open and future bar with the palette named *name*.
+
+        ``"system"`` follows the OS light/dark preference; ``None`` falls back
+        to the app default.  This is what the Settings dropdown drives — the
+        user's pick, applied live and persisted separately.
+        """
+        from VIStk.Styles import default_palette
+        cls._active_palette_name = name or default_palette()
+        cls.set_tab_style(cls._active_style_name or cls._active_style)
+
+    @classmethod
+    def activePalette(cls):
+        """The :class:`~VIStk.Styles.Palette` every bar is currently painting
+        with — the resolved object, not the name."""
+        return cls._active_style.palette
 
     @classmethod
     def setStyle(cls, name: str) -> None:
@@ -254,17 +295,26 @@ class TabBar(Frame):
                    selected: "str | None" = None, text: "str | None" = None,
                    close: "str | None" = None,
                    selected_text: "str | None" = None) -> None:
-        """Recolour the active tab style, live, on every bar.
+        """Recolour the chrome, live, on every bar — the shorthand form of
+        :meth:`setDefaultPalette`.
 
         Each argument is a Tk colour (a name like ``"grey62"`` or a hex
         ``"#1e90ff"``); omitted arguments keep their current colour.  The
-        overrides are **sticky**: they are stored and re-applied on top of every
-        resolved style, so they survive a later :meth:`setStyle` and the Host
-        applying the user's saved pick at launch.  Call with no arguments and
-        nothing changes.
+        result is registered as the app's ``"app"`` palette and made the
+        **default**, so it survives a later :meth:`setStyle` — but a user's
+        stored ``appearance.color_scheme`` pick still wins over it (0.6.5;
+        before that these were permanent overrides no pick could displace).
+        Repeated calls accumulate onto the same app palette.  Call with no
+        arguments and nothing changes.
+
+        For anything beyond these six roles — surfaces, text, fields, buttons —
+        build a :class:`~VIStk.Styles.Palette` and pass it to
+        :meth:`setDefaultPalette` instead.
 
         Args:
-            bar:            The tab-strip background.
+            bar:            The tab-strip background.  The strip's other
+                            states are shaded from it, so the bar keeps its
+                            colour when a pane is unfocused or holds no tabs.
             tab:            An unselected tab.
             selected:       The selected tab.
             text:           Label + ✕ colour, on every tab (also the selected
@@ -272,10 +322,13 @@ class TabBar(Frame):
             close:          The ✕ close-button highlight (hover / press).
             selected_text:  Label + ✕ colour on the selected tab only.
         """
+        from VIStk.Styles import Palette, default_palette, resolve_palette
         changes: dict = {}
         if bar is not None:
+            # from_preset shades the strip's own focused/unfocused/empty/
+            # empty_hover states off bar_bg, so an empty or unfocused bar keeps
+            # the app colour instead of reverting to the palette grey.
             changes["bar_bg"] = bar
-            changes["focused"] = bar
         if tab is not None:
             changes["tab_inactive"] = tab
         if selected is not None:
@@ -289,9 +342,11 @@ class TabBar(Frame):
             changes["close_hover"] = close
         if not changes:
             return
-        cls._palette_overrides = {**cls._palette_overrides, **changes}
-        # Re-resolve the current base style; set_tab_style layers the overrides.
-        cls.set_tab_style(cls._active_style_name or cls._active_style)
+        # Build onto whatever is already the default, so successive calls
+        # accumulate rather than each one starting from the shipped greys.
+        cls.setDefaultPalette(
+            Palette.from_preset(resolve_palette(default_palette()), **changes),
+            name="app")
 
     @property
     def _pal(self):

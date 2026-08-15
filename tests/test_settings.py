@@ -9,7 +9,7 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from VIStk.Structures._Settings import ProjectSettings
+from VIStk.Structures._Settings import ProjectSettings, SCHEMA_VERSION
 
 
 class _FakeProject:
@@ -144,6 +144,38 @@ def main():
         check("ensure_file leaves an existing file untouched",
               sf2.ensure_file() is False
               and sf2.get("notifications.duration_ms") == 1234)
+
+    # v0 -> v1 migration: 0.6.0-0.6.4 wrote appearance.color_scheme="system"
+    # into every generated file while the setting did nothing.  In 0.6.5 that
+    # value means "follow the OS", so an unstamped one must not read as a pick.
+    with tempfile.TemporaryDirectory() as d3:
+        vinfo3 = os.path.join(d3, ".VIS")
+        os.makedirs(vinfo3)
+        proj3 = _FakeProject(vinfo3)
+
+        print("schema migration (v0 -> v1):")
+        with open(proj3.p_settings, "w") as f:
+            json.dump({"appearance.color_scheme": "system",
+                       "window.min_width": 400}, f)
+        legacy = ProjectSettings(proj3)
+        check("legacy 'system' is not treated as a pick",
+              "appearance.color_scheme" not in legacy)
+        check("unrelated override survives migration",
+              legacy.get("window.min_width") == 400)
+        check("migration marks dirty so the stamp gets written",
+              legacy.dirty is True)
+        legacy.save()
+        with open(proj3.p_settings) as f:
+            check("save stamps the schema version",
+                  json.load(f)["settings.version"] == SCHEMA_VERSION)
+
+        with open(proj3.p_settings, "w") as f:
+            json.dump({"settings.version": SCHEMA_VERSION,
+                       "appearance.color_scheme": "system"}, f)
+        chosen = ProjectSettings(proj3)
+        check("a 'system' pick in a stamped file is kept",
+              "appearance.color_scheme" in chosen)
+        check("a stamped file does not re-migrate", chosen.dirty is False)
 
     print()
     if _failures:

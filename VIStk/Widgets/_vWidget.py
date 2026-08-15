@@ -285,9 +285,12 @@ class vWidget:
         self._v_master = master
         self._v_radius = int(radius or 0)
         self._v_radius_style = _norm_radius_style(radius_style)
-        self._v_outline = outline
+        # These are consumed here rather than handed to Tk, so they never reach
+        # the constructor seam that resolves palette names in native options —
+        # _v_set_color is the one place a widget-held colour is taken in.
+        self._v_set_color("_v_outline", outline)
         self._v_outline_width = int(outline_width or 0)
-        self._v_corner_bg = corner_bg
+        self._v_set_color("_v_corner_bg", corner_bg)
         self._v_corners = corners            # per-corner rounding (None = all four)
         self._v_bg_image = None              # keep a ref so Tk won't GC it
         self._v_last_size = (0, 0)           # debounce identical-size redraws
@@ -310,6 +313,51 @@ class vWidget:
             # Precompute the corner-blend colour string (parent bg by default).
             self._v_corner = self._v_corner_bg or self._parent_bg(master)
             self._install_render_binding()
+
+        if self._v_color_names:
+            from VIStk.Styles import _theme
+            _theme.track(self, self._v_color_names, self._apply_palette_colors)
+
+    # ── Widget-held colours ────────────────────────────────────────────────────
+
+    def _v_set_color(self, attribute: str, value) -> None:
+        """Take in a colour the widget holds itself, resolving a palette name.
+
+        Every ``v``-widget colour that is *consumed* rather than passed to Tk —
+        ``outline``, ``corner_bg``, a button's ``active_fill`` — comes in
+        through here, so a palette name works in any of them without each
+        class repeating the resolution.  The name is remembered so a palette
+        switch can re-resolve it; a literal colour records nothing and is
+        therefore never repainted.
+
+        Subclasses call this **before** ``super().__init__``, which registers
+        whatever has accumulated (see :meth:`_apply_palette_colors`).
+        """
+        from VIStk.Styles import _theme
+        colour, name = _theme.name_to_color(value)
+        setattr(self, attribute, colour)
+        names = getattr(self, "_v_color_names", None)
+        if names is None:
+            names = self._v_color_names = {}
+        if name:
+            names[attribute] = name
+        else:
+            names.pop(attribute, None)
+
+    def _apply_palette_colors(self, colors: dict) -> None:
+        """Re-resolve the palette-named colours this widget holds itself.
+
+        Called by :mod:`VIStk.Styles._theme` on a palette switch with
+        ``{attribute: colour}``.  Unlike a native option these aren't Tcl
+        state, so the rounded artwork is regenerated rather than reconfigured.
+        """
+        for attribute, colour in colors.items():
+            setattr(self, attribute, colour)
+        if self._v_radius > 0:
+            if "_v_corner_bg" in colors:
+                self._v_corner = self._v_corner_bg or self._parent_bg(self._v_master)
+            self._v_last_size = (0, 0)       # force a redraw at the current size
+            self._render_rounded()
 
     def _install_render_binding(self) -> None:
         """Repaint on resize via a dedicated bindtag (see :data:`_RENDER_TAG`),

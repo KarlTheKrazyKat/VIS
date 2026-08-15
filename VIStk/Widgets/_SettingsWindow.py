@@ -40,7 +40,6 @@ from VIStk.Objects._WindowGeometry import WindowGeometry
 
 
 _ALIGN_CHOICES = ["center", "n", "ne", "e", "se", "s", "sw", "w", "nw"]
-_SCHEME_CHOICES = ["system", "light", "dark"]
 
 
 class _SettingsUI:
@@ -165,17 +164,43 @@ class _SettingsUI:
                         families, editable=True)
         self._row_int(app, 1, "Default font size", "appearance.font_size",
                       "pt (blank = default)")
-        self._row_combo(app, 2, "Color scheme", "appearance.color_scheme",
-                        _SCHEME_CHOICES)
+        self._build_palette_row(app, 2)
         self._build_tab_style_row(app, 3)
-        ttk.Label(app, text="Font changes apply on next launch; tab style "
-                  "applies immediately.", foreground="grey").grid(
+        ttk.Label(app, text="Font changes apply on next launch; palette and "
+                  "tab style apply immediately.", foreground="grey").grid(
                       row=4, column=0, columnspan=3, sticky="w", pady=(4, 0))
 
         note = ttk.LabelFrame(parent, text="Notifications", padding=10)
         note.grid(row=3, column=0, sticky="ew")
         self._row_check(note, 0, "Enable notifications", "notifications.enabled")
         self._row_int(note, 1, "Notification duration", "notifications.duration_ms", "ms")
+
+    def _build_palette_row(self, parent, row: int) -> None:
+        """The Colour-palette dropdown — offered names come from the app's
+        curated list (``offer_palettes``), plus ``system`` (follow the OS) and
+        a blank entry meaning "the app's default".  Selecting one applies live
+        so the user sees it on every open window before saving."""
+        choices = ["", "system"] + [n for n in self.host.Project.offeredPalettes()
+                                    if n != "system"]
+        cb = self._row_combo(parent, row, "Colour palette",
+                             "appearance.color_scheme", choices)
+        var = self._vars["appearance.color_scheme"][0]
+        cb.bind("<<ComboboxSelected>>",
+                lambda e: self._preview_palette(var.get()))
+        ttk.Label(parent, text="(blank = app default)", foreground="grey").grid(
+            row=row, column=2, sticky="w", padx=(6, 0))
+
+    def _preview_palette(self, name: str) -> None:
+        """Apply *name* live to every open bar (persisted on Save).
+
+        A blank pick means "no override", so the preview shows the app's own
+        default — the same thing Save will resolve to.
+        """
+        try:
+            self.host.Project.setActivePalette(name or None)
+            self.host._watch_system_theme()
+        except Exception:
+            pass
 
     def _build_tab_style_row(self, parent, row: int) -> None:
         """The Tab-style dropdown — offered names come from the app's curated
@@ -193,11 +218,15 @@ class _SettingsUI:
                 lambda e: self._preview_tab_style(var.get()))
 
     def _preview_tab_style(self, name: str) -> None:
-        """Apply *name* live to every open tab bar (persisted on Save)."""
+        """Apply *name* live to every open tab bar (persisted on Save).
+
+        No scheme is passed, so the style resolves against whatever palette is
+        currently active — including one previewed from the row above but not
+        yet saved.
+        """
         try:
             from VIStk.Widgets import TabBar
-            scheme = self.Settings.get("appearance.color_scheme") or "light"
-            TabBar.set_tab_style(name, scheme=scheme)
+            TabBar.set_tab_style(name)
         except Exception:
             pass
 

@@ -85,9 +85,11 @@ class vButton(RoundedLeaf, vWidget, Button):
                            exactly as on a native Button.
         """
         # Hover / disabled state — set before super().__init__ so the render (which
-        # may run on the first <Configure>) sees them.
-        self._v_active_fill = active_fill
-        self._v_disabled_fill = disabled_fill
+        # may run on the first <Configure>) sees them.  Both are consumed here
+        # rather than passed to Tk, so they come in through _v_set_color like
+        # every other widget-held colour; super() registers the accumulated set.
+        self._v_set_color("_v_active_fill", active_fill)
+        self._v_set_color("_v_disabled_fill", disabled_fill)
         self._v_hover = False
         self._v_rest_bg = None            # the button's non-hover/non-disabled bg
         super().__init__(master, radius=radius, radius_style=radius_style,

@@ -564,6 +564,170 @@ class Project(VINFO):
                 return scr.docs
         return self.default_docs or None
 
+    # ── Colour palettes (0.6.5) ────────────────────────────────────────────
+    # The project owns which palettes exist, which the user may pick from, and
+    # which one is painted — it already owns Settings, where the pick is
+    # stored.  These are classmethods over a process-wide registry, so
+    # ``Screens/styles.py`` can call them as ``Project.registerPalette(...)``
+    # without re-parsing project.json; ``Project().registerPalette(...)`` on a
+    # held instance is identical.
+
+    @classmethod
+    def registerPalette(cls, name: str, colors, base="light") -> None:
+        """Register (or replace) the palette *name*.
+
+        *colors* is an open ``{name: colour}`` mapping — the names are yours,
+        and widgets refer to them (``Label(f, bg="page")``).  Names you leave
+        out resolve through *base*, so a palette is as short as you want.
+        Re-registering a name keeps its slot in the offered order.
+
+        Call from ``Screens/styles.py``, which the Host imports before the
+        first window opens::
+
+            from VIStk.Structures._Project import Project
+
+            Project.registerPalette("bmi Light", {
+                "page":  wColors.Lowlight.Button,
+                "card":  wColors.White,
+                "ink":   wColors.Black,
+                "muted": wColors.Grey.Light,
+            })
+
+        Naming ``bar_bg`` also shades the tab strip's own states from it — the
+        chrome reads the same mapping as everything else, so restyling it is
+        just naming its colours.
+        """
+        from VIStk.Styles import register_palette
+        register_palette(name, colors, base=base)
+
+    @classmethod
+    def getPalette(cls, name):
+        """The registered :class:`~VIStk.Styles.Palette` for *name*, or
+        ``None``.  Lookup is case-insensitive."""
+        from VIStk.Styles import get_palette
+        return get_palette(name)
+
+    @classmethod
+    def paletteNames(cls) -> list:
+        """Every registered palette name, in registration order."""
+        from VIStk.Styles import palette_names
+        return palette_names()
+
+    @classmethod
+    def offerPalettes(cls, names, default: str | None = None) -> None:
+        """Curate the palettes **Settings → Appearance** offers the user.
+
+        *names* is the ordered list shown in the dropdown; *default* also sets
+        the app default (what a user who has never chosen sees) and **paints
+        it now**, so a screen run without the Host still wears the app's look.
+        Under the Host the user's stored pick is applied afterwards and still
+        wins.  Leave this uncalled and every registered palette is offered.
+        """
+        from VIStk.Styles import offer_palettes
+        offer_palettes(names)
+        if default is not None:
+            cls.setDefaultPalette(default)
+
+    @classmethod
+    def offeredPalettes(cls) -> list:
+        """The palette names the Settings dropdown offers (curated or all)."""
+        from VIStk.Styles import offered_palettes
+        return offered_palettes()
+
+    @classmethod
+    def setDefaultPalette(cls, palette, name: str | None = None) -> None:
+        """Declare the app's palette — the look before the user picks one.
+
+        *palette* is a registered name, or a :class:`~VIStk.Styles.Palette` to
+        register under *name* (default ``"app"``) and default to.  A stored
+        ``appearance.color_scheme`` pick overrides this, so an app can ship a
+        branded look without taking the choice away.  Applied live.
+        """
+        from VIStk.Widgets import TabBar
+        TabBar.setDefaultPalette(palette, name)
+
+    @classmethod
+    def defaultPalette(cls) -> str:
+        """The app's default palette name."""
+        from VIStk.Styles import default_palette
+        return default_palette()
+
+    @classmethod
+    def setActivePalette(cls, name: str | None) -> None:
+        """Repaint the chrome with the palette named *name*, now.
+
+        ``"system"`` follows the OS light/dark preference; ``None`` returns to
+        the app default.  This is what the Settings dropdown drives — the
+        user's pick, applied live and persisted separately.
+        """
+        from VIStk.Widgets import TabBar
+        TabBar.setActivePalette(name)
+
+    @classmethod
+    def activePalette(cls):
+        """The resolved :class:`~VIStk.Styles.Palette` currently painted."""
+        from VIStk.Widgets import TabBar
+        return TabBar.activePalette()
+
+    @classmethod
+    def setSystemPalettes(cls, light: str, dark: str) -> None:
+        """Name the pair ``"system"`` chooses between when following the OS.
+
+        Defaults to the shipped ``("light", "dark")``; an app with its own
+        pair points ``"system"`` at those instead.
+        """
+        from VIStk.Styles import set_system_palettes
+        set_system_palettes(light, dark)
+
+    # ── Widget theming (0.6.5) ─────────────────────────────────────────────
+
+    @classmethod
+    def setWidgetTheme(cls, name: str) -> None:
+        """Choose the ``ttk`` base theme the palette is painted onto.
+
+        This is the app's call because it is visible.  The platform default
+        (Windows ``vista``) draws buttons, entries, comboboxes, notebook tabs
+        and scrollbars with **native** elements that ignore colour options —
+        ``ttk.Frame`` and ``ttk.Label`` still follow the palette, so layout
+        surfaces stay on-theme while controls keep their native look.  A
+        Tk-drawn theme (``"clam"``, ``"alt"``, ``"default"``) hands every ttk
+        control to the palette instead, at the cost of that native appearance.
+
+        Classic ``tk`` widgets follow the palette under any theme.
+
+        Raises ``ValueError`` for a theme this Tk build doesn't have; see
+        :meth:`widgetThemes`.  Persist the choice as ``appearance.ttk_theme``
+        to have it applied at launch.
+        """
+        from VIStk.Styles import _theme
+        from VIStk.Widgets import TabBar
+        if name not in cls.widgetThemes():
+            raise ValueError(
+                f"Unknown ttk theme {name!r}; have {cls.widgetThemes()}")
+        _theme.restyle_ttk(TabBar.activePalette(), theme=name)
+
+    @classmethod
+    def widgetThemes(cls) -> list:
+        """Every ``ttk`` theme this Tk build offers.
+
+        Needs a Tk root to exist; returns ``[]`` before one does.
+        """
+        from tkinter import ttk, TclError
+        try:
+            return list(ttk.Style().theme_names())
+        except (TclError, RuntimeError):
+            return []
+
+    @classmethod
+    def excludeFromTheme(cls, widget) -> None:
+        """Leave *widget* out of palette repainting from now on.
+
+        For a widget whose colours something else owns — a canvas-drawn
+        control, or a third-party widget with its own theming.
+        """
+        from VIStk.Styles import _theme
+        _theme.exclude(widget)
+
     # ── Internal JSON read/write helpers ───────────────────────────────────
 
     def _load_info(self) -> dict:

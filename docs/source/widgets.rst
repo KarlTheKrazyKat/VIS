@@ -139,10 +139,11 @@ call them at runtime.
      - Switch to a built-in style by name (``"classic"``, ``"underline"``,
        ``"topline"``, ``"pill"``). Raises ``ValueError`` for an unknown name.
    * - ``TabBar.setPalette(*, bar=, tab=, selected=, text=, close=, selected_text=)``
-     - Recolour the active style. Each argument is a Tk colour (``"grey62"``
-       or ``"#1e90ff"``); omitted ones are unchanged. Overrides are
-       **sticky** --- re-applied on top of every style, so they survive a
-       ``setStyle`` switch and the user's saved pick at launch.
+     - Recolour the chrome --- shorthand for building a palette and passing it
+       to ``setDefaultPalette``. Each argument is a Tk colour (``"grey62"`` or
+       ``"#1e90ff"``); omitted ones are unchanged, and repeated calls
+       accumulate. Since 0.6.5 the result is the app **default**, which a
+       user's saved pick overrides (before that it was a permanent override).
    * - ``TabBar.offer_styles(names, default=None)``
      - Curate which style names the Settings dropdown offers, and set the
        fallback default.
@@ -153,7 +154,17 @@ call them at runtime.
 ``setPalette`` colour roles: ``bar`` (the tab-strip background), ``tab`` (an
 unselected tab), ``selected`` (the selected tab), ``text`` (label + ✕ colour on
 every tab), ``close`` (the ✕ close-button highlight), ``selected_text``
-(label + ✕ on the selected tab only).
+(label + ✕ on the selected tab only). For anything past these six --- surfaces,
+body text, fields, buttons --- build a ``Palette`` instead (see
+:ref:`palettes`).
+
+The strip does not paint ``bar`` directly — it paints one of four *states*
+(``focused``, ``unfocused``, ``empty``, ``empty_hover``), so those are shaded
+from the ``bar`` colour whenever it is set. A pane that is unfocused or holds
+no tabs therefore keeps the app's bar colour instead of reverting to the
+scheme grey. The same derivation applies to a ``TabStyle`` whose ``palette``
+overrides ``bar_bg``; naming any of the four states explicitly wins over the
+derived value.
 
 .. code-block:: python
 
@@ -163,6 +174,175 @@ every tab), ``close`` (the ✕ close-button highlight), ``selected_text``
     TabBar.setStyle("pill")
     TabBar.setPalette(bar="#dddddd", tab="#f6f6f6", selected="#5d9edc",
                       text="#0000cd", close="#cd0000")
+
+.. _palettes:
+
+Palettes (0.6.5)
+~~~~~~~~~~~~~~~~
+
+A **palette** is an open ``name -> colour`` mapping. The names are the app's
+own, and widgets refer to them where a colour is expected::
+
+    v_label = Label(f_cc, text="Part", bg="page", fg="muted")
+
+There is no fixed schema to map onto: name the colours you care about, and
+anything you leave out falls through to a *base* palette (the shipped
+``light`` unless told otherwise). The chrome is not special --- the tab bar
+reads ``bar_bg`` / ``tab_active`` / ``tab_fg`` out of the same mapping, so
+restyling it is just naming those colours. A tab *style* is the shape; a
+palette is the colour, and they compose.
+
+The end user picks in **Settings > Appearance > Colour palette**.
+
+Palettes belong to the **project**, which also owns the ``Settings`` the user's
+pick is stored in. Every method below is a ``Project`` classmethod, so
+``Screens/styles.py`` calls them without instantiating (and re-parsing
+``project.json``); ``Project().registerPalette(...)`` on a held instance is
+identical.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 45 55
+
+   * - Method
+     - Description
+   * - ``Project.registerPalette(name, colors, base="light")``
+     - Register (or replace) a ``{name: colour}`` mapping. Names it omits
+       resolve through *base*. Re-registering keeps its slot in the offered
+       order.
+   * - ``Project.offerPalettes(names, default=None)``
+     - Curate the Settings dropdown, and set the app default.
+   * - ``Project.offeredPalettes()`` / ``Project.paletteNames()``
+     - The curated list / every registered name.
+   * - ``Project.getPalette(name)``
+     - The registered ``Palette``, or ``None``. Case-insensitive.
+   * - ``Project.setDefaultPalette(palette, name=None)``
+     - Declare the app's look --- a registered name, or a ``Palette`` to
+       register under *name* and default to. Applied live.
+   * - ``Project.setActivePalette(name)``
+     - Repaint the chrome with *name* now. ``"system"`` follows the OS;
+       ``None`` returns to the app default. This is what the Settings
+       dropdown drives.
+   * - ``Project.activePalette()``
+     - The resolved ``Palette`` currently being painted.
+   * - ``Project.setSystemPalettes(light, dark)``
+     - The pair ``"system"`` chooses between.
+
+``TabBar`` keeps ``setDefaultPalette`` / ``setActivePalette`` /
+``activePalette`` as the repaint mechanism the ``Project`` methods delegate to.
+
+**Precedence.** The app's default is what a user who has never chosen sees; a
+stored ``appearance.color_scheme`` pick overrides it, and clearing the pick
+returns to the default. Only a genuine override counts as a pick, so an
+untouched install wears the app's colours.
+
+**Names the chrome reads** (``VIStk.Styles.CHROME_NAMES``): ``bar_bg``,
+``tab_active``, ``tab_inactive``, ``tab_hover``, ``close_hover``,
+``separator``, ``accent``, ``empty``, ``empty_hover``, ``focused``,
+``unfocused``, ``active_unfocused``, ``tab_drag``, ``tab_fg``,
+``tab_active_fg``, ``info_bg``, ``info_fg``. The shipped palettes also carry a
+general-UI set (``surface``, ``surface_alt``, ``border``, ``text``,
+``text_muted``, ``field``, ``button``, ``selection`` …) which is what
+``ttk`` styling reads. Nothing is enforced --- these are just the names VIStk
+itself looks up, and an app's own names sit beside them.
+
+Naming ``bar_bg`` also shades the strip's own ``focused`` / ``unfocused`` /
+``empty`` / ``empty_hover`` states from it, so an emptied or unfocused pane
+keeps the app's colour. A ``"$name"`` value copies another colour of the
+result.
+
+.. code-block:: python
+
+    # Screens/styles.py
+    from VIStk.Structures._Project import Project
+
+    Project.registerPalette("bmi Light", {
+        "page":   wColors.Lowlight.Button,
+        "card":   wColors.White,
+        "ink":    wColors.Black,
+        "muted":  wColors.Grey.Light,
+        "bar_bg": wColors.Lowlight.Button.Highlight,   # the chrome, same mapping
+    })
+    Project.registerPalette("bmi Dark", {
+        "page":   wColors.Grey.Dark,
+        "card":   wColors.Grey,
+        "ink":    wColors.White.Dark.Light,
+        "muted":  wColors.White.Dark.Dark,
+        "bar_bg": wColors.Grey,
+    }, base="dark")
+
+    Project.offerPalettes(["bmi Light", "bmi Dark"], default="bmi Light")
+    Project.setSystemPalettes("bmi Light", "bmi Dark")  # what "system" means
+
+``"system"`` reads the real OS light/dark preference (Windows
+``AppsUseLightTheme``, macOS ``AppleInterfaceStyle``, Linux ``gsettings``) and
+is polled while the app runs, so an OS theme change repaints live. The poll is
+armed only while the active pick *is* ``"system"``.
+
+Widget theming (0.6.5)
+~~~~~~~~~~~~~~~~~~~~~~
+
+Any widget may **name** a palette colour where a colour is expected, and VIStk
+resolves the name as the widget is built::
+
+    v_label = Label(f_cc, text="Part", bg="page", fg="muted")
+
+VIStk wraps ``tkinter.BaseWidget.__init__`` --- the single seam every classic
+Tk widget passes through --- and swaps the name for the colour *before* Tk
+creates the widget, so the widget is built once, with real colours, exactly as
+if they had been written literally. Nothing is configured afterwards.
+
+The rule is simply what the value is:
+
+* a ``#rrggbb`` literal (or a non-string such as a ``wColor``) **is** a
+  colour --- passed straight through, never tracked, never repainted;
+* any other string is a **name** --- resolved through the palette;
+* a name the palette doesn't define is left for Tk, which accepts its own
+  colour names (``"red"``) and rejects the rest with a normal error;
+* options that don't take colours are never looked at, so ``text="page"``
+  stays the word "page".
+
+What each option was named is kept on the widget::
+
+    v_label._vcolors.bg          # -> "page"
+    v_label._vcolors.as_dict()   # -> {"bg": "page", "fg": "muted"}
+
+which is the whole switching mechanism: changing palette re-resolves those
+names. There is nothing to compare and nothing to do per frame --- a widget
+that never named a colour is never touched.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 45 55
+
+   * - Method
+     - Description
+   * - ``Project.excludeFromTheme(widget)``
+     - Leave one widget out of repainting --- for a widget whose colours
+       something else owns.
+   * - ``Project.setWidgetTheme(name)``
+     - Choose the ``ttk`` base theme. Also ``appearance.ttk_theme``.
+   * - ``Project.widgetThemes()``
+     - Every ``ttk`` theme this Tk build offers.
+
+**ttk is a different animal.** ttk widgets accept no ``bg``/``fg`` at all; they
+are styled through :class:`ttk.Style` from the same palette, and how much lands
+depends on the base theme --- which is the developer's choice, defaulting to
+the platform's own:
+
+* ``vista`` / ``xpnative`` (the Windows default) --- ``ttk.Frame`` and
+  ``ttk.Label`` follow the palette, so layout surfaces stay on-theme, but
+  ``Button``, ``Entry``, ``Combobox``, ``Notebook`` tabs, ``Treeview`` and
+  ``Scrollbar`` are drawn by the Windows theme engine and ignore colour
+  options. That is below Tk; interception cannot reach it.
+* ``clam`` / ``alt`` / ``default`` --- Tk-drawn throughout, so every ttk
+  control takes the palette, at the cost of the native appearance.
+
+Classic ``tk`` widgets name their colours under any theme. The shipped
+``light`` palette carries the Windows/Tk defaults (``SystemButtonFace``,
+``SystemWindow``, black text, the shell selection blue) under the general-UI
+names, so a widget naming ``surface`` or ``field`` looks like an unstyled Tk
+widget.
 
 Registry
 ~~~~~~~~
