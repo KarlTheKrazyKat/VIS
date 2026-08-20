@@ -1,3 +1,5 @@
+import traceback
+
 from tkinter import Menu, Tk, Toplevel, TclError
 
 
@@ -45,7 +47,25 @@ class HostMenu:
 
         {"label": str, "command": callable}              # simple command
         {"label": str, "items": [<item spec>, ...]}      # cascade submenu
+        {"label": str, "items": callable}                # dynamic submenu
         {"separator": True}                              # separator
+
+    **Dynamic submenus.**  A cascade's ``items`` may be a zero-arg callable
+    returning the usual item-spec list instead of the list itself.  The
+    submenu is then wired to Tk's native ``postcommand`` and rebuilt from
+    the callable every time the user opens it, so its entries can reflect
+    state that changed long after the menu was built::
+
+        {"label": "Open Recent", "items": recents.items}
+
+    The callable runs on the UI thread while the menu is posting, so keep it
+    cheap — in-memory state or a small local file, never the network.  When
+    it returns an empty list the submenu shows a single disabled placeholder
+    ("(empty)", or an ``empty_label`` given alongside ``items``) rather than
+    an empty floating panel.  A list-valued ``items`` behaves exactly as
+    before.  Dynamic cascades survive :meth:`clear_screen_items` /
+    :meth:`restore_defaults` like static ones do — the stored spec holds the
+    callable, not an expanded list.
 
     On Windows, top-level entries added with :meth:`add_project_command` can
     additionally carry a **native bitmap** (pass a ``PIL.Image.Image``) and be
@@ -312,12 +332,17 @@ class HostMenu:
                     {"separator": True},
                     {"label": "Exit", "command": exit_fn},
                     {"label": "New", "items": [...]},  # submenu — not patchable
+                    {"label": "Open Recent", "items": recents.items},  # dynamic
                 ],
                 "Edit": [...],
             }
 
         Only top-level items (direct children of a cascade) are tracked for
-        override/reset. Nested submenu items are static.
+        override/reset. Nested submenu items are static, unless their
+        ``items`` is a zero-arg callable — see the class docstring — in
+        which case they rebuild themselves on every open.  A whole cascade
+        may also be given as such a callable (``{"Recent": recents.items}``);
+        a dynamic cascade tracks no override defaults.
 
         Args:
             structure: Mapping of cascade label to list of item spec dicts.
@@ -329,12 +354,21 @@ class HostMenu:
         for label, items in structure.items():
             cascade = Menu(self.menubar, tearoff=0)
             defaults: dict[str, dict] = {}
+            if callable(items):
+                # Whole cascade is dynamic — nothing to track for overrides.
+                self._bind_dynamic(cascade, items)
+                items = []
             for item in items:
                 if item.get("separator"):
                     cascade.add_separator()
                 elif "items" in item:
                     sub = Menu(cascade, tearoff=0)
-                    self._populate(sub, item["items"])
+                    spec = item["items"]
+                    if callable(spec):
+                        self._bind_dynamic(sub, spec,
+                                           item.get("empty_label", "(empty)"))
+                    else:
+                        self._populate(sub, spec)
                     cascade.add_cascade(label=item.get("label", ""), menu=sub)
                 else:
                     kw = {
@@ -631,16 +665,69 @@ class HostMenu:
     def _build_base(self):
         pass
 
-    def _populate(self, menu: Menu, items: list[dict]):
+    def _populate(self, menu: Menu, items):
+        """Fill *menu* from an item-spec list.
+
+        *items* may instead be a zero-arg callable returning such a list, in
+        which case *menu* is wired for dynamic repopulation (see
+        :meth:`_bind_dynamic`) rather than filled once.
+        """
+        if callable(items):
+            self._bind_dynamic(menu, items)
+            return
         for item in items:
             if item.get("separator"):
                 menu.add_separator()
             elif "items" in item:
                 sub = Menu(menu, tearoff=0)
-                self._populate(sub, item["items"])
+                spec = item["items"]
+                if callable(spec):
+                    self._bind_dynamic(sub, spec,
+                                       item.get("empty_label", "(empty)"))
+                else:
+                    self._populate(sub, spec)
                 menu.add_cascade(label=item.get("label", ""), menu=sub)
             else:
                 menu.add_command(
                     label=item.get("label", ""),
                     command=item.get("command"),
                 )
+
+    def _bind_dynamic(self, menu: Menu, factory, empty_label: str = "(empty)"):
+        """Wire *menu* to rebuild itself from *factory* every time it opens.
+
+        *factory* is a zero-arg callable returning an item-spec list.  It is
+        hooked up as the menu's Tk ``postcommand``, so it runs on the UI
+        thread while the menu is posting — it must stay cheap (in-memory
+        state or a small local file; never the network).
+
+        The menu is also filled once here, at build time: a Tk menu with no
+        entries is never posted by the Windows menu manager, so an initially
+        empty submenu would never get the chance to fill itself.
+        """
+        self._fill_dynamic(menu, factory, empty_label)
+        menu.configure(
+            postcommand=lambda: self._fill_dynamic(menu, factory, empty_label)
+        )
+
+    def _fill_dynamic(self, menu: Menu, factory, empty_label: str):
+        """Clear *menu* and repopulate it from *factory*.
+
+        The factory runs before anything is deleted, so a raising factory
+        leaves the previously shown entries in place (the traceback still
+        goes to stderr).  An empty result renders *empty_label* as a single
+        disabled entry rather than an empty floating panel.
+        """
+        try:
+            items = factory() or []
+        except Exception:
+            traceback.print_exc()
+            return
+        try:
+            menu.delete(0, "end")
+            if items:
+                self._populate(menu, items)
+            else:
+                menu.add_command(label=empty_label, state="disabled")
+        except TclError:
+            pass

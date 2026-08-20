@@ -1129,6 +1129,49 @@ The option dicts are copied only when something actually changes, so the common 
 
 ---
 
+### 0.6.6 Data Files for Compiled Packages
+
+Nuitka's `--module` output holds the Python and nothing else, so a shared package compiled to a single `.pyd` lost every non-`.py` file that lived beside it. 0.6.3 fixed this for `collect_packages` by dir-shipping them whole, but that is not an option for a package that must ship as compiled machine code rather than bytecode.
+
+`_compile_one_shared()` now mirrors each compiled package's data files into `runtime/<pkg>/` after the build.
+
+- **`runtime/<pkg>/`, not `runtime/`** — a compiled package reports a *synthesized* `__file__` of `<dir-of-pyd>/<pkg>/__init__.py`, as though it were still a real package directory beside the `.pyd`. `Path(__file__).parent` therefore resolves into that folder, and data written there is found exactly where the source package would have put it.
+- The sibling directory does **not** shadow the `.pyd`: a folder with no `__init__` is only a namespace portion, which loses to an extension module, and compiled submodules keep resolving from inside the `.pyd`.
+- Python sources are skipped — they are already compiled in — so this ships the same payload `collect_packages` would deliver, minus the code. Nothing is created for a package with no data files, and each package writes only under its own destination, so the parallel shared-package phase stays threadsafe.
+
+The motivating case is pywomlib, whose `__init__` runs `json.loads((Path(__file__).parent / "paths.json").read_text())` at **import** time — a release missing that file could not import the library at all, and the failure surfaced as a broken app rather than a failed build. It ships 48 data files (`paths.json`, `.dll`s, fonts, images) totalling ~8.8 MB.
+
+
+---
+
+### 0.6.7 Dynamic Menu Cascades
+
+A cascade's contents were fixed the moment the menu was built: `HostMenu._populate()` walked the item specs once, and a nested `{"label": ..., "items": [...]}` was expanded there and then. Any menu whose entries are *data* rather than *structure* — a recent-files list, recently used machines, a jump list — was stuck with whatever it held at Host startup. The per-screen override mechanism was no help: it patches leaf `command`/`state` only, never submenus, and only on tab activate.
+
+A cascade's `items` may now be a **zero-arg callable** returning the usual item-spec list:
+
+```python
+{"label": "New",         "items": [{"label": "Work Order", "command": new_wo}]}   # static, unchanged
+{"label": "Open Recent", "items": recents.items}                                  # rebuilt on every open
+```
+
+The submenu is wired to Tk's own `postcommand`, so the OS menu widget does the work — no custom widget, no polling, no restart. Every time the user opens it, the menu is cleared and repopulated from the callable.
+
+- **Works at every layer** — `set_project_items`, `set_screen_items` and `build_shared_menu` all route through `_populate`, so a dynamic cascade can come from the project layer, a screen's `configure_menu`, or the shared menu. `build_shared_menu` additionally accepts a callable as a whole top-level cascade (`{"Recent": recents.items}`); such a cascade tracks no override defaults, since it has no build-time leaves to restore.
+- **Seeded at build time as well as on post.** The Windows menu manager never posts a menu with no entries, so a submenu that started empty would never get the chance to fill itself — the callable therefore runs once when the cascade is created, too.
+- **An empty result renders a disabled placeholder**, `(empty)` by default or an `empty_label` given alongside `items`, rather than an empty floating panel.
+- **A raising callable leaves the last good entries in place** — the factory runs before anything is deleted, and the traceback still goes to stderr.
+- **Purely additive.** A list-valued `items` behaves exactly as before, and dynamic cascades survive `clear_screen_items()` / `restore_defaults()` the same way static ones do — the stored spec holds the callable, not an expanded list.
+
+The callable runs on the UI thread while the menu is posting, so it must stay cheap: in-memory state or a small local file, never the network.
+
+`tests/test_hostmenu_dynamic.py` covers all of it, including the real native Windows menubar path (`WM_INITMENUPOPUP`) driven with actual keystrokes.
+
+Closes #193; unblocks PYWOM #106 (File ▸ Open Recent).
+
+
+---
+
 ## Planned
 
 ### 0.5.2 Screen Isolation (per-tab namespaces, wrapper `.pyd`s, always-Host)

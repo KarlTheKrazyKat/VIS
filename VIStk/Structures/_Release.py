@@ -1616,7 +1616,51 @@ class Release(Project):
             return False, f"no {_MOD_EXT} produced at {self.build_dir}{pkg}*{_MOD_EXT}"
         for bp in built:
             shutil.move(bp, f"{self.runtime}/{pkg}{_MOD_EXT}")
+        self._copy_package_data(pkg, pkg_path)
         return True, ""
+
+    def _copy_package_data(self, pkg: str, pkg_dir: str) -> int:
+        """Ship a compiled package's non-Python files to ``runtime/<pkg>/``.
+
+        Nuitka's ``--module`` output holds the Python and nothing else, so
+        a package that reads a data file relative to itself loses it at
+        release time.  pywomlib is the motivating case: its ``__init__``
+        does ``json.loads((Path(__file__).parent / "paths.json").read_text())``
+        at *import* time, so a release without that file cannot even
+        import the library.
+
+        ``runtime/<pkg>/`` is the correct destination, not ``runtime/``.
+        A compiled package reports a synthesized ``__file__`` of
+        ``<dir-of-pyd>/<pkg>/__init__.py`` — as though it were still a
+        real package directory beside the ``.pyd`` — so
+        ``Path(__file__).parent`` resolves into exactly this folder.
+        The directory does not shadow the ``.pyd``: a folder with no
+        ``__init__`` is only a namespace portion, which loses to an
+        extension module, and compiled submodules keep resolving from
+        inside the ``.pyd``.
+
+        Python sources are skipped (they are already compiled in), so
+        this ships data only — the same payload ``collect_packages``
+        dir-shipping would deliver, minus the code.  Nothing is created
+        for a package that has no data files.
+
+        Threadsafe: each package writes only under its own destination.
+
+        Returns the number of files copied.
+        """
+        dest_root = os.path.join(self.runtime, pkg)
+        copied = 0
+        for walk_root, walk_dirs, walk_files in os.walk(pkg_dir):
+            walk_dirs[:] = [d for d in walk_dirs if d != "__pycache__"]
+            for f in walk_files:
+                if f.endswith((".py", ".pyc", ".pyo")):
+                    continue
+                rel = os.path.relpath(walk_root, pkg_dir)
+                out_dir = dest_root if rel == "." else os.path.join(dest_root, rel)
+                os.makedirs(out_dir, exist_ok=True)
+                shutil.copy2(os.path.join(walk_root, f), os.path.join(out_dir, f))
+                copied += 1
+        return copied
 
     # NOTE (0.5.X+): Standalone per-screen .exes are gone.  Every
     # installed project ships exactly one binary — the Host .exe —
