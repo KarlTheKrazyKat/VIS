@@ -1022,7 +1022,7 @@ Developer-authored, user-selectable window chrome. The tab bar's colours and sha
 
 ---
 
-### 0.6.5 Live Appearance Apply
+### 0.6.5 Live Appearance Apply, Data Files for Compiled Packages, & Dynamic Menu Cascades
 
 *In progress.* Deferred from 0.6.0. Apply appearance settings to **already-open** windows immediately when changed in the Settings window, instead of only on next launch — and give apps a way to define the palettes the user chooses between.
 
@@ -1129,8 +1129,6 @@ The option dicts are copied only when something actually changes, so the common 
 
 ---
 
-### 0.6.6 Data Files for Compiled Packages
-
 Nuitka's `--module` output holds the Python and nothing else, so a shared package compiled to a single `.pyd` lost every non-`.py` file that lived beside it. 0.6.3 fixed this for `collect_packages` by dir-shipping them whole, but that is not an option for a package that must ship as compiled machine code rather than bytecode.
 
 `_compile_one_shared()` now mirrors each compiled package's data files into `runtime/<pkg>/` after the build.
@@ -1141,10 +1139,7 @@ Nuitka's `--module` output holds the Python and nothing else, so a shared packag
 
 The motivating case is pywomlib, whose `__init__` runs `json.loads((Path(__file__).parent / "paths.json").read_text())` at **import** time — a release missing that file could not import the library at all, and the failure surfaced as a broken app rather than a failed build. It ships 48 data files (`paths.json`, `.dll`s, fonts, images) totalling ~8.8 MB.
 
-
 ---
-
-### 0.6.7 Dynamic Menu Cascades
 
 A cascade's contents were fixed the moment the menu was built: `HostMenu._populate()` walked the item specs once, and a nested `{"label": ..., "items": [...]}` was expanded there and then. Any menu whose entries are *data* rather than *structure* — a recent-files list, recently used machines, a jump list — was stuck with whatever it held at Host startup. The per-screen override mechanism was no help: it patches leaf `command`/`state` only, never submenus, and only on tab activate.
 
