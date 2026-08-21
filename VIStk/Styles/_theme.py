@@ -110,7 +110,10 @@ def install() -> None:
 
     def __init__(self, master, widgetName, cnf={}, kw={}, extra=()):
         named = None
-        if _current is not None and not widgetName.startswith("ttk::"):
+        # ``widgetName`` can be None for base ``tk.Widget(master, None)``
+        # construction (e.g. tkinterweb's Tkhtml binding); such widgets take
+        # no palette options, so skip resolution rather than crash on None.
+        if _current is not None and widgetName is not None and not widgetName.startswith("ttk::"):
             cnf, kw, named = _resolve(cnf, kw)
         _orig_init(self, master, widgetName, cnf, kw, extra)
         if named:
