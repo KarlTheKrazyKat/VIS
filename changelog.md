@@ -1164,6 +1164,124 @@ The callable runs on the UI thread while the menu is posting, so it must stay ch
 
 Closes #193; unblocks PYWOM #106 (File ▸ Open Recent).
 
+**`Tooltip` — placement, persistence and theme colours**
+
+Driven by PYWOM's event log, where a tooltip hangs off every cell of a dense
+18px-row grid — the placement and dismissal behaviour that passed unnoticed on
+sparse Help buttons became obvious there.
+
+- **`anchor` names which corner of the tip lands on the pointer** — `"nw"`,
+  `"ne"`, `"sw"`, `"se"`. The new default `"sw"` puts the **bottom-left corner
+  on the cursor**, so the tip rises above the pointer with its left edge lined
+  up. `"nw"` is the previous below-right placement. Anchoring needs the tip's
+  measured size, so positioning moved to after the label is built; the popup is
+  created withdrawn and deiconified once placed, so it never flashes at the
+  wrong spot first.
+- **`offset` is now a nudge applied after anchoring**, defaulting to `(0, 1)` —
+  one pixel down, so the bottom border clears the cursor hotspot instead of
+  sharing that pixel row with it. It replaces the old hardcoded `+12/+16`,
+  which no caller could tune.
+- **The tip no longer vanishes when you point at it.** Leaving the widget starts
+  a grace period (`grace_ms`, default 250) instead of destroying the popup, and
+  the tip's own `<Enter>` cancels it; while the pointer is on the tip it stays
+  up indefinitely, and leaving it restarts the grace period. This is what makes
+  a `"sw"`-anchored tip usable at all — it sits directly above the cursor, so
+  moving onto it fires `<Leave>` on the widget first, and the old code destroyed
+  the tip the instant you tried to reach it. Re-entering the widget while a tip
+  is up cancels the pending hide and does not schedule a second show, so
+  crossing back and forth never rebuilds the popup.
+- **Clamped to the desktop.** The position was previously applied raw, so a tip
+  near the right or bottom edge ran off-screen — worst on the widest content,
+  which is what most needs a tooltip. It now flips to the pointer's other side
+  rather than sliding along the edge, so the cursor never ends up on top of the
+  text.
+
+  Bounds come from the **virtual root** (`winfo_vrootx/y` + `winfo_vrootwidth/
+  height`), not `winfo_screenwidth/height`. On a multi-monitor setup the latter
+  report the *primary monitor only* — measured on a two-monitor machine, screen
+  is 2560×1440 while vroot is 5760×1440 — so clamping to them would drag a tip
+  shown on a secondary display back onto the primary one, a worse bug than the
+  overflow being fixed. A tip can still straddle the seam between monitors and
+  does not account for the taskbar; both are cosmetic, and fixing them needs the
+  work area of the monitor under the cursor (`MonitorFromPoint` +
+  `GetMonitorInfo`), which brings a DPI-virtualisation mismatch with Tk's
+  coordinate space.
+- **Colours follow the theme.** `background` / `foreground` now default to
+  `None`, meaning the active palette's `surface` / `text` roles — a light grey
+  (`#f0f0f0`) on the light scheme, dark (`#2b2b2b`) on the dark one — instead of
+  the fixed `#FFFFE0` tooltip yellow. Resolved per show rather than cached at
+  construction, so a tip built before a theme switch paints in the current
+  theme. Plain `tk` widgets do not resolve role names themselves (only vWidgets
+  and ttk styles do), so the lookup goes through `Styles._theme.current()`
+  directly, falling back to literals when no theme is installed. Passing an
+  explicit colour still overrides.
+
+All five are defaults, so every existing tooltip changes appearance and
+behaviour without touching its call site — that is intended, not incidental.
+
+Closes #194.
+
+#### `ScrollableFrame` keeps the wheel while the pointer is over its content
+
+Hovering a `ScrollableFrame`'s *contents* and turning the wheel did nothing.
+Scrolling only worked over a bare patch of canvas — a margin, a gap between
+widgets, the strip beside the scrollbar — which made it read as intermittent,
+because most screens leave some canvas showing. Any frame whose content tiles
+the viewport never scrolled at all.
+
+The wheel is routed through one class-level "who is under the pointer" pointer,
+armed on the canvas's `<Enter>` and cleared on its `<Leave>`. But Tk delivers a
+`<Leave>` to a widget when the pointer merely crosses into one of its
+*descendants*, and the content frame is a child of the canvas — so the pointer
+touching any content cleared the owner, and the wheel had no target for exactly
+as long as the user wanted to scroll.
+
+Tk distinguishes the two crossings with a detail field (`NotifyInferior`), but
+tkinter's `Event` never carries it: `%d` is absent from `_subst_format`, so
+`event.detail` does not exist on any platform — not a portability risk to test
+around, simply unavailable. The frame instead asks what is *actually* under the
+pointer on `<Leave>` and walks up from there, releasing the wheel only when
+nothing on that chain is itself.
+
+Ownership is still cleared on a genuine exit, so one frame going sticky cannot
+starve the others. Nested scroll frames hand the wheel to the innermost one
+under the pointer: `<Enter>` re-arms at every level, and because only the
+current owner may release, the result does not depend on the order Tk delivers
+a crossing's `<Leave>`/`<Enter>` pair in. The content frame now claims ownership
+on `<Enter>` too, re-arming if a stray `<Leave>` ever does get through.
+
+The smooth-scroll animation (`_tick_scroll`, `yscrollincrement=1`) is untouched
+— the bug was entirely in the Enter/Leave bookkeeping above it.
+
+#### The global wheel binding survives a third party's `unbind_all`
+
+A second, worse way to lose the wheel, and the one that bites hardest in a
+tabbed app. `bind_all` / `unbind_all` is a common Tk idiom for "scroll this
+canvas while the pointer is over it":
+
+```python
+canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", _on_wheel))
+canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
+```
+
+`unbind_all` takes **every** handler for the sequence with it — including
+`ScrollableFrame`'s. The loss is app-wide and permanent: `_bound` stays `True`,
+so no later construction re-binds, and not even a brand-new `ScrollableFrame`
+brings the wheel back. One such canvas anywhere in the process (PYWOM has three
+— PNEditor's design canvas, ProcessFlowEditor's library and step canvases) kills
+the wheel on every scroll frame in every tab for the rest of the session, which
+is what made the failure look sporadic and unrelated to the frame being used.
+
+`_on_enter` now re-asserts the binding instead of trusting the one made at
+construction, so the wheel comes back as soon as the pointer next enters a
+scroll frame. It is a single Tk call on an infrequent event, and `bind_all`
+without `add` replaces rather than accumulates, so exactly one binding stays
+installed. Apps using the idiom above keep working: each side re-claims on its
+own `<Enter>`.
+
+Fixing it here rather than at the call sites means no app has to know the idiom
+is hazardous.
+
 
 ---
 

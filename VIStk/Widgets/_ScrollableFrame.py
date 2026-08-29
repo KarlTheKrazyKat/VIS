@@ -42,6 +42,11 @@ class ScrollableFrame(Frame):
 
         self.canvas.bind("<Enter>", self._on_enter)
         self.canvas.bind("<Leave>", self._on_leave)
+        # The content lives in a child of the canvas, so the canvas stops being
+        # the widget under the pointer as soon as the pointer touches anything.
+        # Claiming ownership from the content frame too re-arms us if a stray
+        # <Leave> ever does get through.
+        self.scrollable_frame.bind("<Enter>", self._on_enter, add="+")
 
         if not ScrollableFrame._bound:
             ScrollableFrame._bind_scroll_global(self.canvas)
@@ -57,10 +62,45 @@ class ScrollableFrame(Frame):
 
     def _on_enter(self, event):
         ScrollableFrame._active = self
+        # Re-assert the global wheel binding rather than trusting the one made
+        # at construction. `bind_all`/`unbind_all` is a common Tk idiom for
+        # "scroll this canvas while the pointer is over it", and `unbind_all`
+        # takes every handler for the sequence with it, ours included — app-wide
+        # and permanently, since `_bound` stays True so construction never
+        # re-binds. One such widget anywhere in the process would otherwise kill
+        # the wheel on every ScrollableFrame in it. Re-binding here is a single
+        # Tk call on a rare event, and leaves exactly one binding installed.
+        ScrollableFrame._bind_scroll_global(self.canvas)
 
     def _on_leave(self, event):
-        if ScrollableFrame._active is self:
-            ScrollableFrame._active = None
+        """Give up the wheel only when the pointer really left this frame.
+
+        Tk delivers a <Leave> to the canvas when the pointer merely crosses into
+        one of its descendants, and `scrollable_frame` — with all of the content
+        in it — is a descendant. Clearing `_active` on every <Leave> therefore
+        dropped the wheel the instant the pointer touched any content, which is
+        normally the whole time the user wants to scroll.
+
+        Tk's crossing detail (NotifyInferior) would tell the two apart, but
+        tkinter never asks for %d, so `event.detail` does not exist on any
+        platform. Ask what is actually under the pointer instead.
+
+        The `is not self` guard keeps nested scroll frames correct regardless of
+        the order Tk delivers the crossing events in: whoever claimed ownership
+        last on <Enter> keeps it, and only that instance can release it.
+        """
+        if ScrollableFrame._active is not self:
+            return
+        try:
+            widget = self.winfo_containing(event.x_root, event.y_root)
+        except KeyError:
+            # A window Tk knows about but tkinter has no wrapper for.
+            widget = None
+        while widget is not None:
+            if widget is self:
+                return  # still somewhere inside our own content
+            widget = getattr(widget, "master", None)
+        ScrollableFrame._active = None
 
     @staticmethod
     def _dispatch_scroll(event):
