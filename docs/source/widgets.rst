@@ -1365,6 +1365,82 @@ that in tile mode a differing active colour is exactly what repaints the square
 face. ``active_fill`` is the supported way to colour hover. ``radius=0`` buttons are
 left entirely alone.
 
+Colour is only half of it in **tile mode**. Once Tk enters ``-state active`` it
+also **stops painting the overlay children entirely**, and never resumes — the
+button goes square and stays square even after the state returns to ``normal``,
+while Tk still reports every tile mapped, correctly placed and holding the right
+image. ``lift()`` does not recover it; re-asserting each overlay's existing
+``PhotoImage`` does.
+
+So a tile-mode button binds ``_v_refresh_overlays`` to the events bracketing that
+state change (``<Button-1>``, ``<ButtonRelease-1>``, ``<Enter>``, ``<Leave>``,
+deferred with ``after_idle`` so Tk's class binding has run). The same pass leaves
+the active state and restores ``relief="flat"``, since Tk's ``tk::ButtonDown``
+forces ``sunken`` over the flat ``overrelief`` the widget declares. Clicks are
+unaffected — ``tk::ButtonUp`` keys its invoke off ``Priv(buttonWindow)``, not off
+``-state``. Fill mode installs none of this: its artwork is the button's own
+image, which Tk redraws in every state.
+
+Hit testing the rounded outline
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A rounded v-widget is still a **rectangular** Tk window — only the painting is
+rounded — so the cut-off corners would otherwise stay live: the hand cursor comes
+up, and a click lands, out in the blank triangle beyond the arc where the button
+visibly is not. On a full-percent pill (radius = half the height) that dead zone
+is a sizeable slice of each end.
+
+``vButton`` therefore hit-tests the painted shape:
+
+- ``_v_point_inside(x, y)`` checks a widget-relative point against each rounded
+  corner's arc centre. A corner squared by ``corners=`` stays live, and
+  ``radius=0`` is inside everywhere.
+- ``<Motion>`` drives the cursor from that test — bound on the corner tiles too,
+  since in tile mode those are what the pointer is actually over out there.
+- ``<Button-1>`` returns ``"break"`` outside the outline, stopping the ``Button``
+  class binding so ``tk::ButtonDown`` never records the press and
+  ``tk::ButtonUp`` never invokes.
+- ``active_fill`` follows the same rule, so the fill never lights while the
+  cursor says the button is not clickable.
+
+Calling ``_on_enter()`` with no event still hovers unconditionally — a
+programmatic call has no pointer position to honour.
+
+Tk's own disabled state
+~~~~~~~~~~~~~~~~~~~~~~~
+
+For the same reason, rounded mode owns ``state`` and ``command`` and never hands
+Tk ``state="disabled"``.
+
+Tk stipples **any** disabled button carrying an ``image`` — its test is
+``disabledFg == NULL || image != NULL``, so ``disabledforeground`` cannot
+suppress it — and a rounded ``vButton`` always carries one: the rounded fill
+occupies the image slot in fill mode, the caller's icon in tile mode. ``Button``
+exposes no ``-stipple`` option, so the disabled button came out dithered with a
+50% checkerboard. Rounded mode reproduces what the state bought instead:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 45 55
+
+   * - What ``-state disabled`` did
+     - What replaces it
+   * - greyed the text *and stippled*
+     - ``foreground`` ← ``disabledforeground`` (``SystemDisabledText`` default)
+   * - gated ``$w invoke``
+     - ``_v_dispatch``, installed as the real ``-command``, returns early
+   * - dropped out of tab traversal
+     - ``takefocus=0`` (``tk::FocusOK`` → 0, exactly as before)
+
+The gate must live in ``-command`` rather than an ``invoke()`` override, because
+``tk::ButtonUp`` calls the **Tcl** widget command and never sees a Python
+override. Owning the ``-command`` slot also means a callback assigned *while*
+disabled is kept and fires on re-enable.
+
+``cget("state")`` and ``cget("command")`` (and ``w["state"]``) report what you
+set, not the faked-normal native state — so ``state`` behaves as a normal option
+in both directions. ``radius=0`` buttons keep Tk's own state handling untouched.
+
 ----
 
 vFrame (0.6.0)

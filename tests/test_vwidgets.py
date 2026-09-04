@@ -216,6 +216,65 @@ def run_vbutton(root, tk):
     dbtn.invoke()
     check("re-enabled button fires command", dcalls == [1])
 
+    # Tk stipples ANY disabled button carrying an image (its test is
+    # disabledFg == NULL || image != NULL) and a rounded vButton always carries
+    # one, so rounded mode drives state itself and never hands Tk "disabled".
+    dbtn.configure(state="disabled")
+    root.update()
+    check("rounded never hands Tk state=disabled (no stipple)",
+          str(tk.Button.cget(dbtn, "state")) == "normal")
+    check("cget('state') still reports what was set",
+          str(dbtn.cget("state")) == "disabled")
+    check("w['state'] reads back through the override",
+          str(dbtn["state"]) == "disabled")
+    check("disabled greys the foreground",
+          str(dbtn.cget("foreground")) != "white")
+    check("disabled leaves tab traversal",
+          root.tk.call("tk::FocusOK", str(dbtn)) == 0)
+
+    # The gate must sit in -command: tk::ButtonUp calls the TCL widget command,
+    # so a real click never passes through a Python invoke() override.
+    dcalls.clear()
+    dbtn.tk.call(str(dbtn), "invoke")
+    check("tcl-level invoke is gated while disabled", dcalls == [])
+
+    # A command assigned while disabled must survive to the re-enable.
+    dbtn.configure(command=lambda: dcalls.append("new"))
+    check("cget('command') reports the caller's callback, not the dispatcher",
+          callable(dbtn.cget("command")))
+    dbtn.configure(state="normal")
+    root.update()
+    check("re-enable restores the foreground", str(dbtn.cget("foreground")) == "white")
+    check("re-enable restores tab traversal",
+          root.tk.call("tk::FocusOK", str(dbtn)) == 1)
+    dcalls.clear()
+    dbtn.tk.call(str(dbtn), "invoke")
+    check("command set while disabled fires once re-enabled", dcalls == ["new"])
+
+    # Constructing already-disabled used to bypass configure() entirely, so
+    # disabled_fill was silently ignored and the button looked enabled.
+    ctor = vButton(pane, text="C", bg="#2f78d3", radius=8,
+                   disabled_fill="#eceef1", state="disabled",
+                   command=lambda: dcalls.append("ctor"))
+    ctor.place(x=100, y=140, width=60, height=34)
+    root.update()
+    check("state='disabled' at construction applies disabled_fill",
+          ctor.cget("background") == "#eceef1")
+    check("state='disabled' at construction reports back",
+          str(ctor.cget("state")) == "disabled")
+    dcalls.clear()
+    ctor.tk.call(str(ctor), "invoke")
+    check("button constructed disabled does not fire", dcalls == [])
+
+    # radius=0 must keep the stock Button behaviour untouched.
+    plain = vButton(pane, text="P", state="disabled",
+                    command=lambda: dcalls.append("plain"))
+    check("radius=0 hands state straight to Tk",
+          str(tk.Button.cget(plain, "state")) == "disabled")
+    dcalls.clear()
+    plain.tk.call(str(plain), "invoke")
+    check("radius=0 gating is Tk's own", dcalls == [])
+
     # radius=0: image= reaches the native widget untouched, no tiles.
     icon = PIL.ImageTk.PhotoImage(Image.new("RGBA", (16, 16), (255, 0, 255, 255)))
     flat = vButton(pane, image=icon, radius=0)
@@ -240,7 +299,79 @@ def run_vbutton(root, tk):
     check("corner tiles forward clicks to the button",
           ib._v_tiles["tl"].bind("<ButtonRelease-1>") != "")
 
-    for w in (btn, cbtn, chip, mirror, keep, hov, sib, dbtn, flat, ib, pane):
+    # Entering Tk's -state active stops it painting the overlay children for
+    # good — the button goes square and stays square, while Tk still reports the
+    # tiles mapped with the right images.  Tk sets that state from Tcl, so the
+    # bracketing events re-assert the overlays instead.
+    check("tile mode installs the overlay refresh",
+          ib.bind("<ButtonRelease-1>") != "" and ib.bind("<Enter>") != "")
+    check("fill mode needs no overlay refresh (its artwork is the button image)",
+          not getattr(mirror, "_v_tile_mode", False)
+          and mirror.bind("<ButtonRelease-1>") == "")
+
+    tl = ib._v_tiles["tl"]
+    tl.configure(image="")                    # simulate Tk dropping the overlay
+    check("overlay can be blanked", str(tl.cget("image")) == "")
+    ib._v_refresh_overlays()
+    check("refresh re-asserts the overlay image", str(tl.cget("image")) != "")
+
+    # tk::ButtonDown sets -state active AND -relief sunken from Tcl; the refresh
+    # undoes both, since the widget renders its own face.
+    ib.tk.call(str(ib), "configure", "-state", "active")
+    ib.tk.call(str(ib), "configure", "-relief", "sunken")
+    ib._v_refresh_overlays()
+    check("refresh leaves Tk's active state",
+          str(tk.Button.cget(ib, "state")) == "normal")
+    check("refresh restores the flat relief", str(ib.cget("relief")) == "flat")
+
+    # A rounded v-widget is still a rectangular Tk window, so the cut-off
+    # corners stayed live: hand cursor and a working click out in the blank
+    # triangle beyond the arc.  _v_point_inside hit-tests the painted shape.
+    hit = vButton(pane, text="Hit", radius=20, bg="#cfe3cf", outline="#888")
+    hit.place(x=150, y=20, width=120, height=60)
+    root.update()
+    hw, hh = hit.winfo_width(), hit.winfo_height()
+    hr = hit._effective_radius(hw, hh)
+    check("extreme corner is outside the rounded outline",
+          hit._v_point_inside(0, 0) is False)
+    check("inside the arc is inside", hit._v_point_inside(hr, hr) is True)
+    check("straight edges stay inside",
+          hit._v_point_inside(hw // 2, 0) and hit._v_point_inside(0, hh // 2))
+    check("all four corners are cut", not any(
+        hit._v_point_inside(x, y) for x, y in
+        ((0, 0), (hw - 1, 0), (0, hh - 1), (hw - 1, hh - 1))))
+    check("beyond the widget is outside",
+          hit._v_point_inside(hw + 5, hh // 2) is False)
+
+    # a squared corner (per corners=) must stay live
+    cap = vButton(pane, text="Cap", radius=100, radius_style="percent",
+                  corners=(True, False, False, True), bg="#cfe3cf")
+    cap.place(x=150, y=95, width=120, height=40)
+    root.update()
+    check("rounded end is cut", cap._v_point_inside(0, 0) is False)
+    check("squared end stays live",
+          cap._v_point_inside(cap.winfo_width() - 1, 0) is True)
+    check("radius=0 is inside everywhere", btn._v_point_inside(0, 0) is True)
+
+    class _Ev:                       # a positioned stand-in for a real event
+        pass
+    ev = _Ev(); ev.x_root = hit.winfo_rootx(); ev.y_root = hit.winfo_rooty()
+    check("a press in a cut corner is swallowed", hit._v_gate_press(ev) == "break")
+    ev.x_root = hit.winfo_rootx() + hw // 2
+    ev.y_root = hit.winfo_rooty() + hh // 2
+    check("a press on the face is let through", hit._v_gate_press(ev) is None)
+
+    # the active_fill hover path must still recolour, in tile mode too
+    tf = vButton(pane, text="T", image=icon, compound="left", bg="#eef1f6",
+                 radius=8, active_fill="#dbe6f6")
+    tf.place(x=10, y=180, width=90, height=32)
+    root.update()
+    tf._on_enter()
+    root.update()
+    check("tile mode still honours active_fill on hover",
+          tf.cget("background") == "#dbe6f6")
+
+    for w in (btn, cbtn, chip, mirror, keep, hov, sib, dbtn, ctor, plain, flat, ib, tf, hit, cap, pane):
         w.destroy()
 
 

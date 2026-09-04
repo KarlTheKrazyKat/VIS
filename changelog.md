@@ -1120,6 +1120,44 @@ The option dicts are copied only when something actually changes, so the common 
 
 #### Fixes
 
+**Rounded `vButton`s were clickable outside their rounded outline** — a rounded v-widget is still a rectangular Tk window; only the *painting* is rounded. So the cut-off corners stayed fully live: the hand cursor came up, and a click landed, out in the blank triangle beyond the arc where the button visibly isn't. On a full-percent pill — where the radius is half the height — that dead zone is a substantial slice of each end.
+
+- `vButton._v_point_inside(x, y)` tests a widget-relative point against the painted outline, checking each rounded corner against its arc centre. A corner squared by `corners=` stays live, and `radius=0` is inside everywhere.
+- `<Motion>` drives the cursor from that test, so the hand appears only over the real shape — bound on the corner tiles too, since in tile mode those *are* what the pointer is over out there. Their static `cursor="hand2"` is gone.
+- `<Button-1>` returns `"break"` outside the outline, which stops the `Button` class binding: `tk::ButtonDown` never records the press, so `tk::ButtonUp` never invokes. Tile clicks (`_on_overlay_click`) are gated the same way.
+- The `active_fill` hover follows the same rule, since a fill that lights up while the cursor says "not clickable" would just be a second bug. `<Enter>` fires once for the whole rectangle, so `<Motion>` both lights the fill on entering the arc and drops it on leaving — entering *through* a corner no longer misses it.
+- Calling `_on_enter()` / `_on_overlay_click()` with no event still hovers/invokes unconditionally: with no event there is no pointer position to honour, and the physical cursor is irrelevant to a programmatic call.
+
+**Rounded `vButton`s in tile mode still lost their corners — permanently** — this is the other half of the 0.6.3 fix. That release neutralised Tk's *active colours*, which is the whole story in **fill mode** (verified: hovering or pressing now produces a 0-pixel change). It is **not** the story in **tile mode** — any rounded button with a caller `image=`, which includes every icon'd tab pill — so 0.6.3's claim to have fixed "rounded `vButton` losing its shape" was true only for fill mode.
+
+The real tile-mode mechanism is not colour at all: once Tk enters `-state active`, it **stops painting the button's overlay children**, and never resumes. The button goes square and *stays* square after the state returns to normal; `lift()` does not recover it. Nothing about the widget reveals the problem — Tk still reports every tile and strip mapped, at the correct geometry, holding the correct image — which is why a colour-based fix sailed straight past it.
+
+Tk sets that state from Tcl (`tk::ButtonDown` on press everywhere; `tk::ButtonEnter` on plain hover under X11/Aqua), so there is no Python call to intercept.
+
+- `vButton._v_refresh_overlays()` re-asserts each overlay's **existing** `PhotoImage`, which is what makes Tk draw it again. Bound to the events bracketing the state change (`<Button-1>`, `<ButtonRelease-1>`, `<Enter>`, `<Leave>`) via `after_idle`, so Tk's class binding has already run. Re-setting the image costs ~0.4 ms and regenerates no artwork — a full `_render_rounded()` restores the same pixels for ~13x the cost.
+- The same pass leaves `-state active` and restores `-relief flat`. While Tk is *in* the active state the overlays refuse to paint at all, so a held press would stay square until release; and `tk::ButtonDown` forces `-relief sunken` over the `overrelief="flat"` the widget declares, nudging the label a pixel on every press. Neither costs anything to undo — the active colours are already mirrored, and `tk::ButtonUp` keys its invoke off `Priv(buttonWindow)`, not off `-state`, so clicks still fire.
+- Fill mode installs none of this: its rounded artwork is the button's own image, which Tk redraws in every state.
+
+Measured on the reported case (tile mode, no `active_fill`): hover, press, release and a stuck-active state now all render pixel-identically to rest.
+
+**Disabled rounded `vButton`s were stippled** — disabling a rounded `vButton` dithered it with a 50% checkerboard: the fill washed out, the label went mottled, and a tile-mode icon became an unreadable checkerboard of its own colour against the fill.
+
+Tk stipples **any** disabled button that carries an `image`, whatever `disabledforeground` says — its test is `disabledFg == NULL || image != NULL` — and a rounded `vButton` always carries one: the rounded fill occupies the image slot in fill mode, the caller's icon in tile mode. `Button` exposes no `-stipple` option, so passing `disabledforeground` (as PYWOM's BOM bar does) could not suppress it.
+
+Rounded mode therefore owns `state` and `command` outright and never hands Tk `state="disabled"`, reproducing what that state bought instead:
+
+| what `-state disabled` did | what replaces it |
+| --- | --- |
+| greyed the text *and stippled* | `foreground` ← `disabledforeground` (`SystemDisabledText` by default) |
+| gated `$w invoke` | `vButton._v_dispatch`, installed as the real `-command`, returns early |
+| dropped out of tab traversal | `takefocus=0` (`tk::FocusOK` → 0, same as before) |
+
+- The gate has to live in `-command`, not in an `invoke()` override: `tk::ButtonUp` calls the **Tcl** widget command, so a Python override never sees a real mouse click. Owning the `-command` slot also means a callback assigned *while* disabled is kept and fires on re-enable, with no save/restore to fall out of sync.
+- `cget("state")` / `cget("command")` (and `w["state"]`, which `Misc` binds to its own `cget`) report what the caller set, not the faked-normal native state.
+- `state=` is now intercepted in `__init__` as well as `configure`. It previously reached `Button.__init__` → Tcl unseen, so **a button constructed already disabled silently ignored `disabled_fill`** and rendered as if enabled — fixed by the same change.
+- Disabled colours are applied through `vWidget.configure`, bypassing `vButton.configure`'s resting-colour tracking; recording `disabled_fill` as the resting colour would have made re-enabling restore the greyed one.
+- `radius=0` is untouched — `state` and `command` pass straight to Tk, gating and all.
+
 **Tab bar lost its colour when a pane emptied** — a bar recoloured with `TabBar.setPalette(bar=…)` (or by a `TabStyle` whose `palette` overrides `bar_bg`) reverted to the scheme grey as soon as its last tab closed. The strip never paints `bar_bg` directly: it paints one of four *state* roles — `focused`, `unfocused`, `empty`, `empty_hover` — and `setPalette` only carried `bar_bg` and `focused` across, leaving `_update_empty_state()` to paint the stock `grey55` / `grey22`. The same stale-companion bug dimmed an unfocused pane to `grey52` on top of an app-coloured bar.
 
 - `Styles.bar_companions(bar, skip=…)` derives all four states from the bar colour, using `dim()` / `lift()` shading that reproduces the relationships the shipped schemes already used. Both flip direction at the extremes, so a near-white bar still gets a visible drag highlight and a near-black one still gets a visible empty state.
