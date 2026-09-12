@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 
 class Tooltip:
     """Hover tooltip bound to a single widget."""
-    def __init__(self, widget: Widget, text: str | Callable[[], str],
+    def __init__(self, widget: Widget, text: str | Callable[[], str] | StringVar,
         *, delay: int = 500,
         wrap: int = 240,
         bg: str | None = None,
@@ -28,12 +28,15 @@ class Tooltip:
         self.funcid = None
 
         #Special assignment to resolve callables
-        self.text = StringVar(value="")
-        if callable(text):
-            try: self.text.set(str(text()))
-            except: pass
+        if type(text) == type(StringVar()):
+            self.text = text 
         else:
-            self.text.set(text)
+            self.text = StringVar(value="")
+            if callable(text):
+                try: self.text.set(str(text()))
+                except: pass
+            else:
+                self.text.set(text)
 
         #Not sure yet
         self.tip: Toplevel | None = None
