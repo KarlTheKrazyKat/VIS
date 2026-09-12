@@ -3,8 +3,6 @@ from __future__ import annotations
 from tkinter import *
 from typing import Callable
 from VIStk.Objects import Layout
-from datetime import datetime, timedelta
-
 
 class Tooltip:
     """Hover tooltip bound to a single widget."""
@@ -18,17 +16,18 @@ class Tooltip:
 
         #Assign Arguments
         self.widget = widget
-        self.delay = timedelta(milliseconds=delay)
+        self.delay = delay
         self.wrap  = wrap
         self.bg = bg or "#f0f0f0"
         self.fg = fg or "#000000"
         self.bd = borderwidth
         self.anchor = anchor
-        self.checked = None
         self.funcid = None
+        self.tip: Toplevel | None = None
+        self.after = None
 
         #Special assignment to resolve callables
-        if type(text) == type(StringVar()):
+        if isinstance(text, Variable):
             self.text = text 
         else:
             self.text = StringVar(value="")
@@ -38,10 +37,7 @@ class Tooltip:
             else:
                 self.text.set(text)
 
-        #Not sure yet
-        self.tip: Toplevel | None = None
-        self.after_id: str | None = None
-
+        #Bindings
         widget.bind("<Enter>", self.on_enter, add="+")
         widget.bind("<Leave>", self.on_leave, add="+")
         widget.bind("<Destroy>", self.on_destroy, add="+")
@@ -52,15 +48,18 @@ class Tooltip:
     def on_leave(self, _event=None) -> None:
         """Destroy tip on leave
         """
-        self.widget.unbind("<Motion>", self.funcid)
+        if not self.funcid is None:
+            self.widget.unbind("<Motion>", self.funcid, add="+")
+        self.funcid=None
 
     def on_destroy(self, _event=None) -> None:
         if not self.tip is None: self.tip.destroy(); self.tip = None
+        if not self.after is None: self.widget.after_cancel(self.after)
 
     def check(self, _event=None) -> None:
-        if not self.checked is None:
-            if (datetime.now() - self.checked) >= self.delay: self.show()
-        self.checked = datetime.now()
+        if not self.after is None:
+            self.widget.after_cancel(self.after)
+        self.after = self.widget.after(self.delay,self.show)
 
     def show(self) -> None:
         if not self.tip is None: return None
@@ -97,24 +96,24 @@ class Tooltip:
         py = self.widget.winfo_pointery()
         x, y = px, py
 
-        #Screen Bounds
+        #Window Size
         w, h = self.tip.winfo_reqwidth(), self.tip.winfo_reqheight()
 
         #Y Alignment
         match self.anchor[0]:
             case "n":
-                pass #Aligned by default
+                y -= 1
             case "s":
-                y -= h
+                y -= h - 1
             case _:
                 y -= h//2
 
         #X Alignment
         match self.anchor[-1]:
             case "w":
-                pass #Aligned by default
+                x -= 1
             case "e":
-                x -= w
+                x -= w - 1
             case _:
                 x -= w//2
         
