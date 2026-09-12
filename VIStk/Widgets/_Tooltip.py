@@ -7,7 +7,7 @@ from VIStk.Objects import Layout
 
 class Tooltip:
     """Hover tooltip bound to a single widget."""
-    def _init__(self, widget: Widget, text: str | Callable[[], str],
+    def __init__(self, widget: Widget, text: str | Callable[[], str],
         *, delay: int = 500,
         wrap: int = 240,
         bg: str | None = None,
