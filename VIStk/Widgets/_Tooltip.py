@@ -3,6 +3,7 @@ from __future__ import annotations
 from tkinter import *
 from typing import Callable
 from VIStk.Objects import Layout
+from datetime import datetime, timedelta
 
 
 class Tooltip:
@@ -17,17 +18,19 @@ class Tooltip:
 
         #Assign Arguments
         self.widget = widget
-        self.delay = delay
+        self.delay = timedelta(milliseconds=delay)
         self.wrap  = wrap
-        self.bg = bg or self.role("surface", "#f0f0f0")
-        self.fg = fg or self.role("text", "#000000")
+        self.bg = bg or "#f0f0f0"
+        self.fg = fg or "#000000"
         self.bd = borderwidth
         self.anchor = anchor
+        self.checked = None
+        self.funcid = None
 
         #Special assignment to resolve callables
         self.text = StringVar(value="")
         if callable(text):
-            try: self.text.set(str(self.text()))
+            try: self.text.set(str(text()))
             except: pass
         else:
             self.text.set(text)
@@ -37,18 +40,27 @@ class Tooltip:
         self.after_id: str | None = None
 
         widget.bind("<Enter>", self.on_enter, add="+")
+        widget.bind("<Leave>", self.on_leave, add="+")
         widget.bind("<Destroy>", self.on_destroy, add="+")
+
+    def on_enter(self, _event=None) -> None:
+        self.funcid = self.widget.bind("<Motion>", self.check)
 
     def on_leave(self, _event=None) -> None:
         """Destroy tip on leave
         """
-        self.cancel()
+        self.widget.unbind("<Motion>", self.funcid)
 
     def on_destroy(self, _event=None) -> None:
         if not self.tip is None: self.tip.destroy(); self.tip = None
-        
+
+    def check(self, _event=None) -> None:
+        if not self.checked is None:
+            if (datetime.now() - self.checked) >= self.delay: self.show()
+        self.checked = datetime.now()
 
     def show(self) -> None:
+        if not self.tip is None: return None
         #Tooltip Widget
         self.tip = Toplevel(self.widget)
         self.tip.withdraw()
@@ -57,7 +69,7 @@ class Tooltip:
         self.tip.Layout = Layout(self.tip)
         self.tip.Layout.colSize([1])
         self.tip.Layout.rowSize([1])
-        self.tip.bind("<Leave>", self.tip.destroy, add="+")
+        self.tip.bind("<Leave>", lambda e: self.destroy_tip(), add="+")
         try: self.tip.attributes("-toolwindow", True)  #Win32 only
         except TclError: pass
 
@@ -101,9 +113,9 @@ class Tooltip:
             case "e":
                 x -= w
             case _:
-                x -= h//2
+                x -= w//2
         
-        self.tip.geometry(f"+{x}+{y}")
+        self.tip.geometry(f"{w}x{h}+{x}+{y}")
         self.tip.deiconify()
 
     def destroy_tip(self) -> None:
