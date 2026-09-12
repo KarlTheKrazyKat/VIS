@@ -43,18 +43,23 @@ class Tooltip:
         widget.bind("<Destroy>", self.on_destroy, add="+")
 
     def on_enter(self, _event=None) -> None:
-        self.funcid = self.widget.bind("<Motion>", self.check)
+        if not self.funcid is None:
+            self.widget.unbind("<Motion>", self.funcid)
+        self.funcid = self.widget.bind("<Motion>", self.check, add="+")
 
     def on_leave(self, _event=None) -> None:
         """Destroy tip on leave
         """
         if not self.funcid is None:
-            self.widget.unbind("<Motion>", self.funcid, add="+")
+            self.widget.unbind("<Motion>", self.funcid)
         self.funcid=None
+        if not self.after is None: self.widget.after_cancel(self.after)
 
     def on_destroy(self, _event=None) -> None:
         if not self.tip is None: self.tip.destroy(); self.tip = None
-        if not self.after is None: self.widget.after_cancel(self.after)
+        try:
+            if not self.after is None: self.widget.after_cancel(self.after)
+        except: pass
 
     def check(self, _event=None) -> None:
         if not self.after is None:
