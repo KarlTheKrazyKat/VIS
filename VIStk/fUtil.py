@@ -47,14 +47,34 @@ class fUtil():
         width (which depends on the string) is measured per widget — and widgets
         whose height clearly binds skip even that during the fit search.
         """
-        if e is None: #Setup mode: bind <Configure> on the whole group, then done
+        if e is None: #Setup mode: bind <Configure>, then fit once the layout settles
             if relations is None:
                 raise ValueError("autosize() needs an event or a relations list")
             group = list(relations)
+
+            def _settle_fit(_w, _kin): #one sizing pass driven from a synthetic event
+                if not _w.winfo_exists():
+                    return
+                ev = Event(); ev.widget = _w
+                fUtil.autosize(ev, relations=_kin, offset=offset, shrink=shrink)
+
             for w in group:
                 kin = [x for x in group if x is not w] #the other members
+                #<Configure> refits on every resize.  But a proportional child's
+                #box on first paint is smaller than its settled size, so a
+                #Configure-only fit lands tiny and stays tiny until a user resize
+                #supplies a fresh Configure.  So also fit when the widget first
+                #becomes viewable (<Map>) and once the initial layout has settled
+                #(after_idle, plus a short delayed pass to catch a late settle such
+                #as a restored window geometry) — each pass just re-fits to the box
+                #it sees, converging on the correct size without a manual resize.
                 w.bind("<Configure>", lambda ev, _kin=kin:
                        fUtil.autosize(ev, relations=_kin, offset=offset, shrink=shrink))
+                w.bind("<Map>", lambda ev, _kin=kin:
+                       fUtil.autosize(ev, relations=_kin, offset=offset, shrink=shrink),
+                       add="+")
+                w.after_idle(lambda _w=w, _kin=kin: _settle_fit(_w, _kin))
+                w.after(80, lambda _w=w, _kin=kin: _settle_fit(_w, _kin))
             return None
         _root = e.widget.winfo_toplevel()
         geom_re = re.compile(r"(\d+)x(\d+)") #parses "WxH+X+Y" from winfo_geometry()

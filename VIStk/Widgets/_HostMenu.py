@@ -95,7 +95,7 @@ class HostMenu:
         # menu and drops out-of-band patches).
         self._native_patches: dict[str, dict] = {}
         self._image_refs: list = []          # keep PhotoImages alive (Tk GC)
-        self._native_refresh_pending = False
+        self._native_refresh_id = None       # outstanding after_idle, if any
         parent.bind("<Map>", self._on_map, add="+")
         parent.bind("<Destroy>", self._on_destroy, add="+")
 
@@ -596,21 +596,40 @@ class HostMenu:
     def _schedule_native_refresh(self):
         """Queue one coalesced :meth:`refresh_native` on the Tk idle loop.
 
-        Every menubar-mutating method ends here; the pending flag collapses
-        a burst of mutations (e.g. a full ``configure_menu`` pass) into a
-        single re-patch after Tk has rebuilt the native menu.
+        Every menubar-mutating method ends here.  The outstanding callback is
+        **cancelled and re-queued** on each call rather than suppressed while
+        one is already pending, so a burst of mutations (e.g. a full
+        ``configure_menu`` pass) still costs a single re-patch — but one that
+        is guaranteed to run *after* the last of them.
+
+        That ordering is the whole point.  Tk defers its own native menu
+        rebuild to an idle callback too, so whichever is queued first runs
+        first.  A method that schedules a refresh **without** mutating Tk —
+        ``restore_defaults`` with nothing to delete, or ``apply_overrides``,
+        which only touches submenus — would otherwise put ours ahead of Tk's
+        rebuild: it would re-patch a menu Tk is about to overwrite, and once
+        Tk rebuilt, nothing would be left queued to re-apply the patch.  A tab
+        switch opens with exactly that call, which left right-aligned entries
+        (and native bitmaps) sitting at the left edge until some unrelated
+        caller happened to invoke :meth:`refresh_native`.
         """
-        if not self._native_patches or self._native_refresh_pending:
+        if not self._native_patches:
             return
-        self._native_refresh_pending = True
+        if self._native_refresh_id is not None:
+            try:
+                self._parent.after_cancel(self._native_refresh_id)
+            except (TclError, ValueError):
+                pass
+            self._native_refresh_id = None
         try:
-            self._parent.after_idle(self._do_native_refresh)
+            self._native_refresh_id = self._parent.after_idle(
+                self._do_native_refresh)
         except TclError:
-            self._native_refresh_pending = False
+            self._native_refresh_id = None
 
     def _do_native_refresh(self):
-        """after_idle target: clear the pending flag and re-patch."""
-        self._native_refresh_pending = False
+        """after_idle target: clear the pending id and re-patch."""
+        self._native_refresh_id = None
         try:
             if not self._parent.winfo_exists():
                 return

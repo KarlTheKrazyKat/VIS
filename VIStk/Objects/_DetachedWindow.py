@@ -97,8 +97,12 @@ class DetachedWindow:
         """When True the tab bar is hidden and the window adopts the
         screen's own icon and name (set by ``Host._open_standalone``)."""
 
-        # Toplevel on the hidden root
+        # Toplevel on the hidden root.  Created withdrawn and revealed only at
+        # the end of __init__, after it has been sized and its content built —
+        # so the window never flashes at the Toplevel's tiny default size, and
+        # every screen's setup()/autosize sees the final geometry on first paint.
         self.win = Toplevel(host.root)
+        self.win.withdraw()
         self.win.title(host.Project.title)
         self.win.protocol("WM_DELETE_WINDOW", self._on_close)
 
@@ -186,6 +190,16 @@ class DetachedWindow:
         # Bind focus tracking
         self.win.bind("<FocusIn>", self._on_window_focus)
 
+        # Size a normally-opened window BEFORE building its tab content, so the
+        # first paint — and every screen's setup()/autosize — sees the final
+        # geometry instead of the Toplevel's tiny default.  A drop-positioned
+        # pop-out (drag-detach) is placed AFTER open (below) because it needs the
+        # tab's laid-out position to sit the tab under the cursor.
+        drop = x_root is not None and y_root is not None
+        if not drop:
+            self._apply_startup_geometry()
+            self.win.update_idletasks()
+
         # Open the first tab if a screen was provided.  TabManager.open_screen
         # builds the per-tab namespace and exec's the entry script into it.
         if scr is not None:
@@ -193,13 +207,14 @@ class DetachedWindow:
             display = host._unique_display_name(scr.name)
             self.tab_manager.open_screen(scr, display, icon=icon, args=args)
 
-        # Position window.  An explicit drop point (drag-detach / pop-out)
-        # is honoured verbatim; otherwise apply the project's window
-        # application settings (first window) or the legacy cascade default.
-        if x_root is not None and y_root is not None:
+        # An explicit drop point (drag-detach / pop-out) is honoured verbatim,
+        # now that the tab is laid out.
+        if drop:
             self._position_window(x_root, y_root, btn_offset_x, btn_offset_y)
-        else:
-            self._apply_startup_geometry()
+
+        # Reveal the fully-sized, fully-built window (created withdrawn above).
+        self.win.update_idletasks()
+        self.win.deiconify()
 
     # ── Property shim ─────────────────────────────────────────────────────────
 

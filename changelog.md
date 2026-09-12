@@ -1165,6 +1165,13 @@ Rounded mode therefore owns `state` and `command` outright and never hands Tk `s
 - Applied from both `TabBar.setPalette()` (where the derived values are sticky like the rest) and `Styles.resolve()` (only when a style actually overrides `bar_bg`). Naming any of the four states explicitly still wins, and `classic` on either scheme resolves byte-identically to before.
 - `tests/test_tab_palette.py` covers the shading helpers, the derivation, and both entry points (no display required).
 
+**Right-aligned menubar entries jumped to the left on every tab switch** — a native patch (`MFT_RIGHTJUSTIFY`, or a bitmap) survives only until Tk's next menu mutation, so `HostMenu` re-applies it on `after_idle`. But **Tk defers its own native menu rebuild to an idle callback too**, and whichever is queued first runs first — so the re-patch only lands correctly when the burst's first scheduling call also mutated Tk.
+
+A tab switch opens with `restore_defaults()`, and for a screen that only *replaces* shared cascades (`set_screen_items(…, label="Edit")` — an in-place `entryconfigure`, adding no menubar entry) there is nothing to delete, so it mutates nothing and merely schedules. That queued the re-patch **ahead** of Tk's rebuild: it re-applied a patch that was still intact, cleared the pending flag, and then Tk rebuilt and wiped it — with every later call in the burst suppressed by that same flag, nothing was left queued to put it back. PYWOM's Help button therefore sat at the left edge, and the user badge lost its bitmap, until an unrelated caller happened to invoke `refresh_native()` — in PYWOM, the badge's own 1-second self-heal tick, so the entry visibly snapped back up to a second later.
+
+- `_schedule_native_refresh()` now **cancels and re-queues** the outstanding callback instead of suppressing new requests while one is pending. A burst still costs a single re-patch — but one guaranteed to run after the last mutation in it, and so after Tk's rebuild. `_native_refresh_pending` (a bool) becomes `_native_refresh_id` (the `after_idle` id).
+- Screens that add a top-level cascade of their own (PYWOM's `"Navigate"`) were never affected: the deletion in `restore_defaults()` put Tk's rebuild first by luck. That asymmetry is gone.
+
 ---
 
 Nuitka's `--module` output holds the Python and nothing else, so a shared package compiled to a single `.pyd` lost every non-`.py` file that lived beside it. 0.6.3 fixed this for `collect_packages` by dir-shipping them whole, but that is not an option for a package that must ship as compiled machine code rather than bytecode.
@@ -1320,6 +1327,46 @@ own `<Enter>`.
 Fixing it here rather than at the call sites means no app has to know the idiom
 is hazardous.
 
+**v-widgets follow their parent's background live**
+
+Inherited props were read off the parent once, at construction, so recolouring a
+parent left every v-child on the old colour until something called `refresh()` by
+hand. A screen that recolours a panel — or a palette switch reaching a container
+whose children named no colour of their own — visibly came apart.
+
+Tk offers nothing to bind to here. `<Configure>` is a *geometry* event (size,
+position, border width, stacking); a colour-only change fires no event at all, and
+there is no such thing as an option-changed event. The only place the change is
+observable is the call that makes it, so `Misc.configure` — the single seam every
+widget's `configure` / `config` / `widget[opt] = value` bottoms out in — is wrapped
+to notify the children after the colour lands. Armed by the first v-widget built,
+alongside the palette's existing `BaseWidget.__init__` seam.
+
+- **The parent needn't be a v-widget.** The child does the inheriting, so a plain
+  `Frame`, a `LayoutFrame`, a `Label` used as a container all propagate. Wrapping
+  the v-widgets instead would have covered only v-parents, which is the case that
+  needed it least.
+- **Cascades to any depth with no recursion.** `refresh()` reconfigures the child's
+  own background, which re-enters the same seam for the grandchildren.
+- **Explicit options are still untouchable**, exactly as at construction — and an
+  explicit `bg` therefore stops the cascade for its own subtree.
+- **Rounded children re-blend.** `corner_bg` defaults to the parent's background, so
+  a rounded child follows a recolour even when its own fill is explicit; one given a
+  `corner_bg` outright keeps it.
+- **Nothing is registered or tracked** — no registry, no weakrefs, no bindings to
+  install or clean up. The notify runs only when a background option was part of the
+  call, then walks `winfo_children()` skipping anything without `_on_parent_bg`.
+- `refresh()` now skips writing a prop whose value is unchanged, so a no-op recolour
+  doesn't walk the subtree.
+
+`RoundedContainer` also syncs its lowered background label on every render: the image
+that normally hides that label can't be built before the frame has a real size, so a
+recolour while the frame is still unmapped — what a parent-background change during
+screen build looks like — used to leave the old fill showing until first `<Map>`.
+
+`tests/test_vwidget_inherit.py` covers plain/`LayoutFrame`/v parents, all three
+spellings of the call, depth-3 cascade, explicit-bg stops, rounded corner blend, and
+a palette switch.
 
 ---
 

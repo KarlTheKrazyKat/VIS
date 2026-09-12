@@ -109,6 +109,15 @@ class RoundedContainer:
         self._v_bg_label.lower()
 
     def _render_rounded(self, event=None) -> None:
+        # Sync the lowered label's own colour first.  The image that normally
+        # hides it can't be built before the frame has a real size, so a
+        # recolour while the frame is still unmapped — which is exactly what a
+        # parent-background change during screen build looks like — would leave
+        # the old fill showing until the first <Map> render.
+        fill_name = self.cget("background")
+        if str(self._v_bg_label.cget("background")) != str(fill_name):
+            self._v_bg_label.configure(background=fill_name)
+
         w, h = self.winfo_width(), self.winfo_height()
         if w <= 1 or h <= 1 or (w, h) == self._v_last_size:
             return
@@ -123,7 +132,8 @@ class RoundedContainer:
         # every resize so a percentage radius_style tracks the frame.
         r = self._effective_radius(w, h)
         pil = rounded_pil_image(w, h, r, fill, corner,
-                                outline=outline, outline_width=ow)
+                                outline=outline, outline_width=ow,
+                                corners=getattr(self, "_v_corners", None))
         self._v_border_pil = pil
         self._v_eff_ow = ow
         self._v_bg_image = PIL.ImageTk.PhotoImage(pil)

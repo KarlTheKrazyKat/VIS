@@ -1227,9 +1227,14 @@ radius can therefore never exceed what the widget can actually show.
 Common behaviour
 ~~~~~~~~~~~~~~~~
 
-- **Inheritance is a snapshot** taken at construction. Call ``refresh()`` after the
-  parent's appearance changes to re-pull the inherited options (the ones you never set
-  explicitly) and repaint.
+- **The parent's background is followed live.** Recolour a parent and its v-children
+  re-inherit on their own — a rounded child re-blends its corners too — cascading to
+  any depth. The parent does **not** have to be a v-widget: a plain ``Frame``,
+  ``LayoutFrame`` or ``Label`` propagates just the same, since the child is what does
+  the inheriting. Options you set explicitly are never touched, so an explicit ``bg``
+  both holds its own colour and stops the cascade for its subtree.
+- **Every other inherited option is a snapshot** taken at construction. Call
+  ``refresh()`` after the parent's *font* or *foreground* changes to re-pull them.
 - **Runtime recolouring works** — ``configure(bg=...)`` repaints the rounded corners
   live; ``vButton`` also repaints on ``state``.
 - **The resize repaint is clobber-proof.** It lives on a dedicated bindtag rather than

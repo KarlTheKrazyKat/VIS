@@ -22,7 +22,9 @@ It adds two capabilities on top of the native widget:
    tuple of option names (``"background"``, ``"foreground"``, ``"font"``);
    any of those the caller did *not* pass explicitly are filled in from the
    parent widget at construction time.  Explicitly-passed options always
-   win.  Inheritance is a one-time snapshot; call :meth:`refresh` to re-pull.
+   win.  A later change to the parent's *background* re-inherits on its own
+   (see :func:`_install_bg_hook`); every other inherited prop is a snapshot
+   taken at construction, so call :meth:`refresh` to re-pull those.
 
 2. **Optional rounded corners.**  Opt-in via ``radius`` (default ``0`` → a
    plain native widget, no extra machinery).  When ``radius > 0`` the corner
@@ -231,6 +233,81 @@ def _render_dispatch(event):
         fn(event)
 
 
+def _map_dispatch(event):
+    #?<Map>: the widget has just become visible, so its geometry is now final
+    # even when the <Configure> that set it arrived while the widget was still
+    # an unrealised, provisional size during screen build.  In that case
+    # _render_rounded already ran once against the too-small size, stamped
+    # _v_last_size, and inset the children for it — and no distinct later
+    # <Configure> arrives to correct them (which is why a user resize was
+    # needed to un-clip content).  Drop the debounce cache and re-render once
+    # at the real, mapped size so a rounded container re-insets its children on
+    # first paint.  Only rounded widgets carry this bindtag, so the render is
+    # always meaningful.
+    widget = event.widget
+    fn = getattr(widget, "_render_rounded", None)
+    if fn is not None:
+        widget._v_last_size = (0, 0)
+        fn(event)
+
+
+# ── Parent background → child re-inheritance ──────────────────────────────────
+# Inherited props are read off the parent when the child is built, but Tk has no
+# event for an option *change*: ``<Configure>`` is geometry only — size, position,
+# border width, stacking — so recolouring a parent fires nothing at all.  The one
+# place the change is observable is the call that makes it, so ``Misc.configure``
+# is wrapped: it is the single seam every widget's ``configure`` / ``config`` /
+# ``widget[opt] = value`` bottoms out in, including this class's own override.
+#
+# Wrapping there rather than on the v-widgets is the point — the child does the
+# inheriting, so the parent shouldn't have to be a v-widget to be inherited from.
+# A plain ``Frame``, a ``LayoutFrame``, a ``Label`` used as a container: recolour
+# any of them and their v-children follow.
+#
+# Nothing is registered or tracked.  The notify only runs when a background option
+# was actually part of the call, and then walks ``winfo_children()`` skipping
+# anything without ``_on_parent_bg`` (one ``getattr`` per child).  The cascade to
+# grandchildren needs no recursion here: ``refresh`` reconfigures the child's own
+# background, which re-enters this same seam.
+
+_orig_configure = None
+
+
+def _install_bg_hook() -> None:
+    """Make a background change re-inherit down to the widget's children.
+
+    Idempotent, and armed by the first :class:`vWidget` built rather than at
+    import, so pulling in this module never patches tkinter on its own.
+    """
+    global _orig_configure
+    if _orig_configure is not None:
+        return
+    _orig_configure = _tk.Misc.configure
+
+    def configure(self, cnf=None, **kw):
+        result = _orig_configure(self, cnf, **kw)
+        if ("bg" in kw or "background" in kw
+                or (isinstance(cnf, dict)
+                    and ("bg" in cnf or "background" in cnf))):
+            _notify_children(self)
+        return result
+
+    _tk.Misc.configure = configure
+    _tk.Misc.config = configure
+
+
+def _notify_children(widget) -> None:
+    """Tell *widget*'s v-children that their parent's background just changed."""
+    try:
+        children = widget.winfo_children()
+    except _tk.TclError:
+        return                      # mid-destroy; nothing left to re-inherit
+    for child in children:
+        follow = getattr(child, "_on_parent_bg", None)
+        if follow is not None:
+            follow()
+
+
 class vWidget:
     """Shared base/mixin for the v-prefixed widgets (combine with a tk class).
 
@@ -280,6 +357,8 @@ class vWidget:
         round — ``100`` is fully rounded (half the short side, i.e. a circle on a
         square widget) — recomputed on every resize.
         """
+        _install_bg_hook()       # first v-widget arms the parent-background seam
+
         # Stash rounded config (set before super().__init__ — safe, these are
         # plain Python attributes on the object, not Tcl options).
         self._v_master = master
@@ -362,9 +441,14 @@ class vWidget:
     def _install_render_binding(self) -> None:
         """Repaint on resize via a dedicated bindtag (see :data:`_RENDER_TAG`),
         so a caller's ``self.bind("<Configure>", ...)`` can't clobber rendering."""
-        # Install the shared dispatcher once per Tk interpreter.
+        # Install the shared dispatchers once per Tk interpreter.  <Configure>
+        # repaints on resize; <Map> forces one re-render at the real size on
+        # first display, so a rounded container self-corrects its child inset
+        # without waiting for a user resize.
         if not self.bind_class(_RENDER_TAG, "<Configure>"):
             self.bind_class(_RENDER_TAG, "<Configure>", _render_dispatch, add="+")
+        if not self.bind_class(_RENDER_TAG, "<Map>"):
+            self.bind_class(_RENDER_TAG, "<Map>", _map_dispatch, add="+")
         # Give this widget the tag (after its own tags, so a user's instance
         # <Configure> binding still runs — it just can no longer replace ours).
         tags = self.bindtags()
@@ -427,11 +511,28 @@ class vWidget:
                 merged[prop] = val
         return merged
 
+    def _on_parent_bg(self) -> None:
+        """The parent's background changed — re-inherit from it.
+
+        Called by the :func:`_install_bg_hook` seam, not by Tk, so it takes no
+        event.  ``winfo_exists`` guards the walk: the notify reads the parent's
+        live child list, which can still name a widget that is mid-destroy.
+
+        A widget that inherits nothing is not exempt — an explicitly-coloured
+        *rounded* one still blends its corners into the parent's background, and
+        :meth:`refresh` is what recomputes that.
+        """
+        if self.winfo_exists():
+            self.refresh()
+
     def refresh(self) -> None:
         """Re-pull inherited props (those never set explicitly) and repaint.
 
-        Use after the parent's appearance changes, since inheritance is a
-        one-time snapshot taken at construction.
+        Runs by itself whenever the parent's *background* changes (see
+        :func:`_install_bg_hook`).  Call it directly after any other change to
+        the parent — a new font, say — which inheritance still snapshots at
+        construction, or to re-inset a rounded container's children immediately
+        after adding some.
         """
         master = self._v_master
         if master is not None:
@@ -439,11 +540,16 @@ class vWidget:
                 if prop in self._v_explicit:
                     continue
                 val = self._read_parent_option(master, prop, prop)
-                if val:
-                    try:
+                if not val:
+                    continue
+                try:
+                    # Only write a prop that actually differs.  Setting a
+                    # background re-enters the notify seam, so re-writing an
+                    # unchanged one would walk the whole subtree for nothing.
+                    if str(self.cget(prop)) != val:
                         self.configure(**{prop: val})
-                    except Exception:
-                        pass
+                except Exception:
+                    pass
         if self._v_radius > 0:
             self._v_corner = self._v_corner_bg or self._parent_bg(master)
             self._v_last_size = (0, 0)   # force a redraw at current size
