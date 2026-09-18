@@ -1174,6 +1174,7 @@ cooperative ``super().__init__()``, so the Tcl widget is created exactly once.
 
     vLabel(RoundedLeaf, vWidget, Label)
     vButton(RoundedLeaf, vWidget, Button)
+    vCheckbutton(vWidget, Checkbutton)
     vImage(vWidget, Label)
     vFrame(RoundedContainer, vWidget, LayoutFrame)
     vLabelFrame(RoundedContainer, vWidget, LabelFrame)
@@ -1445,6 +1446,64 @@ disabled is kept and fires on re-enable.
 ``cget("state")`` and ``cget("command")`` (and ``w["state"]``) report what you
 set, not the faked-normal native state — so ``state`` behaves as a normal option
 in both directions. ``radius=0`` buttons keep Tk's own state handling untouched.
+
+----
+
+vCheckbutton (0.6.5)
+--------------------
+
+``vCheckbutton(vWidget, Checkbutton)`` — a ``tk.Checkbutton`` that inherits
+``background``, ``foreground`` and ``font`` from its parent. ``variable``,
+``command``, ``select()`` / ``deselect()`` / ``toggle()`` / ``invoke()`` and every
+native checkbutton option pass through unchanged.
+
+.. code-block:: python
+
+    from tkinter import BooleanVar, Frame
+    from VIStk.Widgets import vCheckbutton
+
+    pane = Frame(root, bg="white")
+    shown = BooleanVar(value=True)
+
+    vCheckbutton(pane, text="Show closed", variable=shown).pack()
+
+Constructor: ``vCheckbutton(master=None, **checkbutton_options)``. There is no
+``radius`` — the widget paints no fill of its own to round, and the indicator box
+is Tk's.
+
+Inheriting ``bg`` alone does not get the scheme grey off a coloured surface,
+because a Checkbutton has three *other* colours that default to it:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 28 40 32
+
+   * - Option
+     - When Tk paints it
+     - What ``vCheckbutton`` does
+   * - ``activebackground``
+     - The whole time the pointer is inside the widget.
+     - Follows the resting ``background``.
+   * - ``activeforeground``
+     - Likewise.
+     - Follows the resting ``foreground``.
+   * - ``highlightbackground``
+     - Always — ``highlightthickness`` is ``1`` on a Checkbutton, unlike a
+       Label's ``0``.
+     - Follows the resting ``background``.
+
+Without that, an inherited-``bg`` checkbutton still flashed grey on hover and wore
+a permanent grey hairline at rest. The mirror is re-run after every change to the
+resting colours — a direct ``configure(bg=...)``, the re-inherit that follows a
+parent recolour, and a palette switch (which goes through that same
+``configure``). Passing any of the three explicitly keeps your value, the same
+"explicit wins" rule as the inherited options.
+
+``selectcolor`` is deliberately left at the system field colour: it is what makes
+the box read as a box on any surface. On a dark panel with a light ``fg``, Tk
+draws its check glyph in the foreground colour and it can vanish into that light
+box — native behaviour, identical to a hand-coloured ``tk.Checkbutton``. Name a
+``selectcolor`` to get the check back.
 
 ----
 

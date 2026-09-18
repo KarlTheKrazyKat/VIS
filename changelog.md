@@ -1118,6 +1118,26 @@ The option dicts are copied only when something actually changes, so the common 
 
 `Project.widgetThemes()` lists what the Tk build offers. The shipped `light` palette carries the Windows/Tk defaults (`SystemButtonFace`, `SystemWindow`, black text, the shell selection blue) under its general-UI names, so a widget naming `surface` or `field` looks like an unstyled Tk widget.
 
+#### `vCheckbutton`
+
+**`vCheckbutton`** — `VIStk/Widgets/_vCheckbutton.py`
+
+`class vCheckbutton(vWidget, Checkbutton)` — a drop-in `tk.Checkbutton` (every native option and method works: `variable`, `command`, `select`/`deselect`/`toggle`, `invoke`, `indicatoron`, …) that inherits `background`, `foreground` and `font` from its parent like `vLabel`, and follows a later parent recolour or palette switch. There is no `radius`: the widget paints no fill of its own to round, and the indicator box is Tk's.
+
+Inheriting `bg` alone does not get the scheme grey off a coloured surface, because a Checkbutton has **three** other colours that default to it:
+
+| option | when Tk paints it | what it does instead |
+| --- | --- | --- |
+| `activebackground` | the whole time the pointer is inside | follows the resting `background` |
+| `activeforeground` | likewise | follows the resting `foreground` |
+| `highlightbackground` | always — `highlightthickness` is `1` on a Checkbutton, unlike a Label's `0` | follows the resting `background` |
+
+So an inherited-`bg` checkbutton still flashed grey on hover and wore a permanent grey hairline at rest. `_sync_mirrored_colors()` points all three at the resting colours, and re-runs on every change to those — a direct `configure(bg=…)`, the re-inherit after a parent recolour, and the palette switch that goes through that same `configure`. Passing any of the three explicitly keeps it, the same "explicit wins" rule as the inherited props.
+
+`selectcolor` is deliberately left at the system field colour: it is what makes the box read as a box on any surface. On a dark panel with a light `fg`, Tk draws its check glyph in the foreground colour and it can vanish into that light box — native behaviour, identical to a hand-coloured `tk.Checkbutton`; name a `selectcolor` to get the check back.
+
+Covered by `run_vcheckbutton` in `tests/test_vwidgets.py`.
+
 #### Fixes
 
 **Rounded `vButton`s were clickable outside their rounded outline** — a rounded v-widget is still a rectangular Tk window; only the *painting* is rounded. So the cut-off corners stayed fully live: the hand cursor came up, and a click landed, out in the blank triangle beyond the arc where the button visibly isn't. On a full-percent pill — where the radius is half the height — that dead zone is a substantial slice of each end.

@@ -681,12 +681,14 @@ def run_docs():
     """No Tk needed — just verifies native options were composed into the docs."""
     from VIStk.Widgets._vLabel import vLabel
     from VIStk.Widgets._vButton import vButton
+    from VIStk.Widgets._vCheckbutton import vCheckbutton
     from VIStk.Widgets._vFrame import vFrame
     from VIStk.Widgets._vLabelFrame import vLabelFrame
 
     print("docs:")
     ldoc = vLabel.__init__.__doc__ or ""
     bdoc = vButton.__init__.__doc__ or ""
+    cdoc = vCheckbutton.__init__.__doc__ or ""
     fdoc = vFrame.__init__.__doc__ or ""
     lfdoc = vLabelFrame.__init__.__doc__ or ""
 
@@ -695,10 +697,59 @@ def run_docs():
           "Native tkinter.Label options" in ldoc and "wraplength" in ldoc)
     check("vButton doc lists button-specific native option (command)",
           "Native tkinter.Button options" in bdoc and "command" in bdoc)
+    check("vCheckbutton doc appends native Checkbutton options (variable)",
+          "Native tkinter.Checkbutton options" in cdoc and "variable" in cdoc)
     check("vFrame doc lists frame-specific native option (colormap)",
           "Native tkinter.Frame options" in fdoc and "colormap" in fdoc)
     check("vLabelFrame doc appends native LabelFrame options (labelanchor)",
           "Native tkinter.LabelFrame options" in lfdoc and "labelanchor" in lfdoc)
+
+
+def run_vcheckbutton(root, tk):
+    """vCheckbutton inherits like vLabel, and mirrors the three colours that
+    would otherwise put the scheme grey back (hover fill/text, focus ring)."""
+    from VIStk.Widgets._vWidget import vWidget
+    from VIStk.Widgets._vCheckbutton import vCheckbutton
+
+    print("vCheckbutton:")
+
+    pane = tk.Frame(root, bg="#ffffff")
+    pane.place(x=0, y=0, width=300, height=200)
+
+    var = tk.BooleanVar(value=True)
+    box = vCheckbutton(pane, text="on", variable=var)
+    check("is a tk.Checkbutton", isinstance(box, tk.Checkbutton))
+    check("is a vWidget", isinstance(box, vWidget))
+    check("inherits parent background", box.cget("background") == "#ffffff")
+    check("mirrors activebackground", box.cget("activebackground") == "#ffffff")
+    check("mirrors highlightbackground",
+          box.cget("highlightbackground") == "#ffffff")
+    check("leaves the indicator box alone",
+          str(box.cget("selectcolor")) == "SystemWindow")
+
+    # Native behaviour is untouched.
+    box.toggle()
+    check("toggle drives the variable", var.get() is False)
+
+    # Explicit wins, for the mirrored options as well as the inherited ones.
+    fixed = vCheckbutton(pane, text="x", bg="#00ff00", activebackground="#ff0000")
+    check("explicit activebackground kept",
+          fixed.cget("activebackground") == "#ff0000")
+
+    # A parent recolour re-inherits *and* re-mirrors.
+    pane.configure(bg="#223344")
+    check("follows parent recolour", box.cget("background") == "#223344")
+    check("re-mirrors after parent recolour",
+          box.cget("activebackground") == "#223344"
+          and box.cget("highlightbackground") == "#223344")
+
+    # So does a direct reconfigure.
+    box.configure(bg="#101010", fg="#eeeeee")
+    check("re-mirrors after configure",
+          box.cget("activebackground") == "#101010"
+          and box.cget("activeforeground") == "#eeeeee")
+
+    pane.destroy()
 
 
 def main():
@@ -720,6 +771,7 @@ def main():
         run_docs()
         run_vlabel(root, tk)
         run_vbutton(root, tk)
+        run_vcheckbutton(root, tk)
         run_vframe(root, tk)
         run_vlabelframe(root, tk)
         run_vimage(root, tk)

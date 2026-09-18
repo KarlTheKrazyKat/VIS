@@ -71,6 +71,21 @@ class _ButtonKw(_TextKw, total=False):
     repeatinterval: int
 
 
+class _CheckbuttonKw(_TextKw, total=False):
+    """Native :class:`tkinter.Checkbutton` options."""
+    command: Callable[[], Any]
+    indicatoron: bool
+    offrelief: str
+    offvalue: Any
+    onvalue: Any
+    overrelief: str
+    selectcolor: str
+    selectimage: Any
+    tristateimage: Any
+    tristatevalue: Any
+    variable: Variable
+
+
 class _FrameKw(_CommonKw, total=False):
     """Native :class:`tkinter.Frame` options."""
     class_: str
