@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from tkinter import *
+from tkinter import font
 from typing import Callable
 from VIStk.Objects import Layout
 
@@ -25,6 +26,12 @@ class Tooltip:
         self.funcid = None
         self.tip: Toplevel | None = None
         self.after = None
+
+        #Built on the first show and kept, rather than rebuilt every time.  It
+        #cannot be built here: the label takes its font from the option
+        #database, and the pattern is resolved against the tip's own path, so
+        #the only thing that can answer is the label itself.
+        self.face = None
 
         #Special assignment to resolve callables
         if isinstance(text, Variable):
@@ -54,12 +61,14 @@ class Tooltip:
             self.widget.unbind("<Motion>", self.funcid)
         self.funcid=None
         if not self.after is None: self.widget.after_cancel(self.after)
+        self.after = None
 
     def on_destroy(self, _event=None) -> None:
         if not self.tip is None: self.tip.destroy(); self.tip = None
         try:
             if not self.after is None: self.widget.after_cancel(self.after)
         except: pass
+        self.after = None
 
     def check(self, _event=None) -> None:
         if not self.after is None:
@@ -68,6 +77,7 @@ class Tooltip:
 
     def show(self) -> None:
         if not self.tip is None: return None
+        if not self.text.get(): return None   #nothing to say
         #Tooltip Widget
         self.tip = Toplevel(self.widget)
         self.tip.withdraw()
@@ -87,7 +97,7 @@ class Tooltip:
             background=self.bg,
             foreground=self.fg,
             borderwidth=self.bd,
-            relief="flat",
+            relief="solid",
             wraplength=self.wrap,
             justify="left"
         )
@@ -102,7 +112,42 @@ class Tooltip:
         x, y = px, py
 
         #Window Size
-        w, h = self.tip.winfo_reqwidth(), self.tip.winfo_reqheight()
+        #The placer does not set a container's requested size, so the toplevel
+        #cannot be asked how big the label made it -- the text is measured here
+        #instead, wrapped the way the label will wrap it.
+        if self.face is None:
+            self.face = font.Font(font=lbl.cget("font"))
+
+        lines = []
+        for paragraph in self.text.get().split("\n"):
+            line = ""
+            for word in paragraph.split(" "):
+                #Nothing can be done with a word wider than a whole line but
+                #cut it, which is what the label does too.
+                while self.face.measure(word) > self.wrap:
+                    cut = 1
+                    while (cut < len(word)
+                           and self.face.measure(word[:cut + 1]) <= self.wrap):
+                        cut += 1
+                    if line:
+                        lines.append(line)
+                        line = ""
+                    lines.append(word[:cut])
+                    word = word[cut:]
+                trial = f"{line} {word}" if line else word
+                if line and self.face.measure(trial) > self.wrap:
+                    lines.append(line)   #too wide with it, so it starts the next
+                    line = word
+                else:
+                    line = trial
+            lines.append(line)
+
+        #The label's own chrome, on both sides of each axis.
+        edge = int(lbl.cget("borderwidth")) + int(lbl.cget("highlightthickness"))
+        w = (max((self.face.measure(line) for line in lines), default=0)
+             + 2 * (edge + int(lbl.cget("padx"))))
+        h = (self.face.metrics("linespace") * len(lines)
+             + 2 * (edge + int(lbl.cget("pady"))))
 
         #Y Alignment
         match self.anchor[0]:
