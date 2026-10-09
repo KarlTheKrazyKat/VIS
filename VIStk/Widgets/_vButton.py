@@ -24,7 +24,8 @@ two conveniences as :class:`~VIStk.Widgets.vLabel`::
   image slot free so ``image`` / ``compound`` / ``anchor`` behave exactly like a
   native ``Button`` — an icon and text lay out side by side with no overlap
   (keep the radius modest in that mode — the tiles are opaque).  An optional
-  ``active_fill`` recolours the button on hover (``<Enter>``/``<Leave>``) and
+  ``active_fill`` recolours the button on hover (``<Enter>``/``<Leave>``;
+  changed later with :meth:`vButton.set_active_fill`) and
   ``disabled_fill`` greys it when ``state="disabled"`` (gating the click).  At
   ``radius=0`` it is an ordinary ``Button``.
 * **Tk's own active state** — in rounded mode ``activebackground`` /
@@ -133,9 +134,11 @@ class vButton(RoundedLeaf, vWidget, Button):
             # triangle beyond the arc.
             self.bind("<Motion>", self._v_on_motion, add="+")
             self.bind("<Button-1>", self._v_gate_press, add="+")
-            if active_fill:
-                self.bind("<Enter>", self._on_enter, add="+")
-                self.bind("<Leave>", self._on_leave, add="+")
+            # Bound with or without a hover fill, so set_active_fill can give
+            # one to a button that started without; _on_enter does nothing
+            # while there is none.
+            self.bind("<Enter>", self._on_enter, add="+")
+            self.bind("<Leave>", self._on_leave, add="+")
 
     # ── Rounded overrides ──────────────────────────────────────────────────────
 
@@ -155,9 +158,8 @@ class vButton(RoundedLeaf, vWidget, Button):
         :meth:`_v_on_motion` raises the hand only inside the arc."""
         overlay.bind("<ButtonRelease-1>", self._on_overlay_click, add="+")
         overlay.bind("<Motion>", self._v_on_motion, add="+")
-        if self._v_active_fill:
-            overlay.bind("<Enter>", self._on_enter, add="+")
-            overlay.bind("<Leave>", self._on_leave, add="+")
+        overlay.bind("<Enter>", self._on_enter, add="+")
+        overlay.bind("<Leave>", self._on_leave, add="+")
 
     # ── Rounded hit testing: the corners are painted away, so treat them so ────
 
@@ -412,8 +414,27 @@ class vButton(RoundedLeaf, vWidget, Button):
 
     # ── Hover / disabled: recolour the real bg; the tiles follow on repaint ─────
 
+    def set_active_fill(self, color) -> None:
+        """Change the hover fill after construction -- None for no hover fill.
+
+        For a button whose look follows what it stands for: the chosen segment
+        of a segmented toggle keeps its own colour under the pointer rather
+        than washing out to the fill the other segments light up with.  Takes
+        effect at once if the pointer is on the button.  Rounded mode only,
+        like the constructor's *active_fill*.
+        """
+        self._v_set_color("_v_active_fill", color)
+        if not self._v_hover:
+            return
+        if not self._v_active_fill:
+            self._v_drop_hover()
+            return
+        super().configure(background=self._v_active_fill)
+        self._sync_active_colors()
+        self._repaint_now()
+
     def _on_enter(self, event=None) -> None:
-        if self._v_hover or str(self.cget("state")) == "disabled":
+        if self._v_hover or not self._v_active_fill or str(self.cget("state")) == "disabled":
             return
         # Only second-guess a *real* pointer event: called with no event this is
         # a deliberate programmatic hover, and the physical pointer is irrelevant.
@@ -438,8 +459,7 @@ class vButton(RoundedLeaf, vWidget, Button):
         # A child's path is ours + "." + its name, so the separator has to be part
         # of the test: a bare prefix match also caught *siblings* (".!vbutton" is
         # a prefix of ".!vbutton2"), and moving between two vButtons in the same
-        # parent left the first one stuck in hover — and, because configure()
-        # stops tracking _v_rest_bg while _v_hover is set, stuck for good.
+        # parent left the first one stuck in hover.
         me = str(self)
         if under is not None and (under is self or str(under).startswith(me + ".")):
             return                                  # still over the button / a tile
@@ -503,7 +523,10 @@ class vButton(RoundedLeaf, vWidget, Button):
         keys = set(kw) | (set(cnf) if isinstance(cnf, dict) else set())
 
         # Track the caller's resting colours so hover/disable can restore them.
-        if rounded and not self._v_hover:
+        # Mid-hover too: a toggle recoloured by its own click is recoloured with
+        # the pointer still on it.  The new colour shows at once, over the hover
+        # fill, and leaving keeps it rather than restoring the one before.
+        if rounded:
             found, value = self._v_peek(cnf, kw, "background", "bg")
             if found:
                 self._v_rest_bg = value

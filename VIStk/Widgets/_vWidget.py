@@ -555,6 +555,23 @@ class vWidget:
             self._v_last_size = (0, 0)   # force a redraw at current size
             self._render_rounded()
 
+    def set_outline(self, color, width: int | None = None) -> None:
+        """Change the rounded border after construction, and repaint it.
+
+        *color* is any colour the constructor's ``outline`` takes, or None for
+        no border; *width* changes the stroke too when given.  A border that
+        comes and goes -- a selection ring, say -- is drawn into the rounded
+        image like the constructor's, so it never changes the widget's size
+        or moves anything inside it.  No effect on a widget without a radius,
+        which has no rounded border to draw.
+        """
+        self._v_set_color("_v_outline", color)
+        if width is not None:
+            self._v_outline_width = int(width)
+        if getattr(self, "_v_radius", 0) > 0:
+            self._v_last_size = (0, 0)   # force a redraw at the current size
+            self._render_rounded()
+
     # ── Rounded rendering ────────────────────────────────────────────────────
 
     def _resolve_color(self, color: str | None) -> tuple[int, int, int] | None:

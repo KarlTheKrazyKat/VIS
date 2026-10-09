@@ -198,6 +198,39 @@ def run_vbutton(root, tk):
     check("leaving onto a sibling restores the resting bg",
           hov.cget("background") == "#eef1f6")
 
+    # A toggle recoloured by its own click is recoloured mid-hover: the new
+    # colour shows at once, and leaving keeps it instead of restoring the old.
+    tog = vButton(pane, text="T", bg="#ffffff", fg="#555555", radius=8,
+                  active_fill="#dbe6f6")
+    tog.place(x=150, y=180, width=60, height=30)
+    root.update()
+    tog._on_enter()
+    tog.configure(bg="#2f78d3", fg="#ffffff")
+    root.update()
+    check("bg set mid-hover shows at once", tog.cget("background") == "#2f78d3")
+    tog._v_drop_hover()
+    root.update()
+    check("bg set mid-hover survives leaving", tog.cget("background") == "#2f78d3")
+
+    # set_active_fill: None takes the hover fill off, at once if hovered.
+    tog._on_enter()
+    root.update()
+    check("hover fill still applies before set_active_fill",
+          tog.cget("background") == "#dbe6f6")
+    tog.set_active_fill(None)
+    root.update()
+    check("set_active_fill(None) drops a live hover", tog._v_hover is False
+          and tog.cget("background") == "#2f78d3")
+    tog._on_enter()
+    root.update()
+    check("no hover fill once set to None", tog.cget("background") == "#2f78d3")
+    tog.set_active_fill("#dbe6f6")
+    tog._on_enter()
+    root.update()
+    check("set_active_fill gives the hover fill back", tog.cget("background") == "#dbe6f6")
+    tog._v_drop_hover()
+    root.update()
+
     # disabled state: greys the button and gates the command
     dcalls = []
     dbtn = vButton(pane, text="X", bg="#2f78d3", fg="white", radius=8,
