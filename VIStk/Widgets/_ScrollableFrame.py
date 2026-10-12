@@ -104,9 +104,29 @@ class ScrollableFrame(Frame):
 
     @staticmethod
     def _dispatch_scroll(event):
+        """Scroll the frame that owns the wheel -- only while the pointer is
+        really over it.
+
+        Ownership is taken on <Enter> and given up on the canvas's <Leave>, and
+        the pointer can get out without the canvas ever seeing one: across the
+        scrollbar, which sits beside the canvas rather than in it, or into a
+        window Tk keeps to itself, like a combobox's dropdown list.  The wheel
+        then went on scrolling a frame the pointer was nowhere near.  So what
+        is under the pointer is asked here, when the wheel turns.
+        """
         active = ScrollableFrame._active
-        if active is not None:
-            active.scroll(event)
+        if active is None:
+            return
+        try:
+            widget = active.winfo_containing(event.x_root, event.y_root)
+        except KeyError:
+            # A window Tk knows about but tkinter has no wrapper for.
+            widget = None
+        while widget is not None:
+            if widget is active:
+                active.scroll(event)
+                return
+            widget = getattr(widget, "master", None)
 
 
     def _on_inner_configure(self, event=None):
